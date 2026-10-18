@@ -694,21 +694,44 @@ class HighwaySimulator:
             )
         )
 
-        # This is the physical action sent to Highway.
-        executed_action = np.asarray([acceleration, steering], dtype=np.float32,)
+        # Physical action sent to Highway
+        executed_action = np.asarray([acceleration, steering], dtype=np.float32)
+
+        base_env = self.env.unwrapped
+        ego_before = base_env.vehicle
+
+        speed_before = float(ego_before.speed)
+        crashed_before = bool(getattr(ego_before, "crashed", False))
+        max_speed = getattr(ego_before, "MAX_SPEED", None)
 
         print(
-            "[HYBRID ACTION] "
-            f"acceleration={acceleration:.3f}, "
-            f"lane_action={lane_action_id}, "
-            f"target_lane={self.target_lane_index}, "
-            f"lateral={lateral:.3f}, "
-            f"heading_error={heading_error:.3f}, "
-            f"executed_steering={steering:.3f}"
+            f"\n[SPEED BEFORE] "
+            f"speed={speed_before:.4f} m/s, "
+            f"max_speed={max_speed}, "
+            f"crashed={crashed_before}, "
+            f"normalized_accel={acceleration:.4f}, "
+            f"executed_action={executed_action}"
         )
 
-        obs, env_reward, terminated, truncated, info = self.env.step(executed_action)
+        obs, env_reward, terminated, truncated, info = (self.env.step(executed_action))
 
+        ego_after = self.env.unwrapped.vehicle
+        speed_after = float(ego_after.speed)
+        crashed_after = bool(getattr(ego_after, "crashed", False))
+
+        dt = 1.0 / float(self.env.unwrapped.config["policy_frequency"])
+
+        observed_acceleration = (speed_after - speed_before) / dt
+
+        print(
+            f"[SPEED AFTER] "
+            f"speed={speed_after:.4f} m/s, "
+            f"delta_v={speed_after - speed_before:+.4f} m/s, "
+            f"observed_accel={observed_acceleration:+.4f} m/s^2, "
+            f"crashed={crashed_after}, "
+            f"terminated={terminated}, "
+            f"truncated={truncated}"
+        )
 
         self.step_count += 1
         next_state = self._encode_state(obs)
