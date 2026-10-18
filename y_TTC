@@ -538,47 +538,6 @@ class HighwaySimulator:
 
 
 
-        #ego = self.env.unwrapped.vehicle
-        #pos_after = np.array(ego.position, dtype=float).copy()
-        #heading_after = float(ego.heading)
-        #speed_after = float(ego.speed)
-        #print(
-            #"[MOTION DEBUG]",
-            #f"action={np.asarray(action)}",
-            #f"pos_before={pos_before}",
-            #f"pos_after={pos_after}",
-            #f"heading_before={heading_before:.3f}",
-            #f"heading_after={heading_after:.3f}",
-            #f"speed_before={speed_before:.2f}",
-            #f"speed_after={speed_after:.2f}",
-        #)
-
-        '''
-        base_env = self.env.unwrapped
-        road_vehicles = base_env.road.vehicles
-        ego = base_env.vehicle
-        
-        print("\n=== TRAFFIC vs OBSERVATION ===")
-        print("Total road vehicles:", len(road_vehicles))
-        print("Other road vehicles:", len(road_vehicles) - 1)
-        print("Ego position:", ego.position)
-        print("Ego speed:", ego.speed)
-        for i, vehicle in enumerate(road_vehicles):
-            if vehicle is ego:
-                continue
-            dx = vehicle.position[0] - ego.position[0]
-            dy = vehicle.position[1] - ego.position[1]
-            print(
-                f"Vehicle {i}: "
-                f"dx={dx:.1f}, dy={dy:.1f}, "
-                f"speed={vehicle.speed:.1f}, "
-                f"crashed={vehicle.crashed}"
-            )
-        print("Raw observation presence:", obs[:, 0])
-        print("==============================\n")
-        '''
-
-
         self.step_count += 1
         next_state = self._encode_state(obs)
         vehicle = self.env.unwrapped.vehicle
@@ -599,7 +558,7 @@ class HighwaySimulator:
             self,
             k_lateral=0.08,
             k_heading=0.8,
-            max_steering=0.5,
+            max_steering=0.02,
     ):
         """
         Return normalized steering to keep the ego vehicle
@@ -617,31 +576,6 @@ class HighwaySimulator:
         longitudinal, lateral = lane.local_coordinates(ego_vehicle.position)
         target_heading = lane.heading_at(longitudinal)
         heading_error = (ego_vehicle.heading - target_heading + np.pi) % (2.0 * np.pi) - np.pi
-
-        '''
-        # TEMPORARY DIAGNOSTIC ONLY:
-        # Simulate a small steering disturbance.
-        # Diagnostic controller: explicitly separate each contribution
-        k_lateral = 0.15
-        k_heading = 0.8
-        test_steering_disturbance = 0.10 if self.steering_test_step == 0 else 0.0
-
-        self.steering_test_step += 1
-        lateral_term = -k_lateral * lateral
-        heading_term = -k_heading * heading_error
-        steering_raw = lateral_term + heading_term + test_steering_disturbance
-
-        max_steering = 0.5
-        steering = float(np.clip(steering_raw, -max_steering, max_steering))
-        print(
-            f"[STEER TERMS] lateral={lateral:.3f}, "
-            f"heading_error={heading_error:.3f}, "
-            f"lateral_term={lateral_term:.3f}, "
-            f"heading_term={heading_term:.3f}, "
-            f"raw={steering_raw:.3f}, "
-            f"executed={steering:.3f}"
-        )
-        '''
 
         # Feedback controller: correct lateral and heading errors.
         steering = -k_lateral * lateral - k_heading * heading_error
@@ -680,65 +614,6 @@ def create_highway_simulator(render_mode=None):
 def create_carla_simulator():
     """Backward-compatible factory; currently returns Highway-env, not CARLA."""
     return create_highway_simulator()
-
-
-#===============================================
-# inspect the simulator's actual encoding
-# print the raw observation returned by highway-env alongside the encoded state
-'''
-def inspect_observation_encoding(simulator):
-    """Print the raw Highway-env observation and its encoded state."""
-
-    obs, info = simulator.env.reset(seed=42)
-
-    raw_obs = np.asarray(obs, dtype=np.float32)
-    print("raw obs: ")
-    print(np.asarray(raw_obs))
-
-    encoded_state = simulator._encode_state(raw_obs)
-    print("after _encode_state:")
-    print(np.asarray(encoded_state))
-
-
-    feature_names = [
-        "presence", "x", "y", "vx", "vy", "cos_h", "sin_h"
-    ]
-
-    print("\n=== Raw Highway-env observation ===")
-    print("Shape:", raw_obs.shape)
-    print("raw observation: ", np.asarray(raw_obs))
-
-    for i, row in enumerate(raw_obs):
-        print(
-            f"Row {i}: "
-            + ", ".join(
-                f"{name}={value:.4f}"
-                for name, value in zip(feature_names, row[:7])
-            )
-        )
-
-    print("\n=== Encoded state ===")
-    print("Shape:", encoded_state.shape)
-
-    vehicle_rows = encoded_state[:28].reshape(4, 7)
-
-    for i, row in enumerate(vehicle_rows):
-        print(
-            f"Encoded row {i}: "
-            + ", ".join(
-                f"{name}={value:.4f}"
-                for name, value in zip(feature_names, row)
-            )
-        )
-
-    print("\n=== Context features ===")
-    print("Ego speed / 40:", encoded_state[28])
-    print("Lane ID / 3:", encoded_state[29])
-    print("Collision flag:", encoded_state[30])
-    print("Episode progress:", encoded_state[31])
-
-    simulator.env.close()
-'''
 
 
 
@@ -796,19 +671,23 @@ def collect_rollouts(
 
             # Keep RL acceleration, but use lane-keeping steering.
             action = policy_action.copy()
-
-            lane_steering, lateral, heading_error = simulator.get_lane_keeping_steering()
-
-            action[1] = lane_steering
-
             print(
-                f"[LANE KEEP | REF] "
-                f"lateral={lateral:.3f}, "
-                f"heading_error={heading_error:.3f}, "
+                f"[RL CONTROL] "
                 f"RL_accel={policy_action[0]:.3f}, "
                 f"RL_steer={policy_action[1]:.3f}, "
                 f"executed_steer={action[1]:.3f}"
             )
+            lane_steering, lateral, heading_error = simulator.get_lane_keeping_steering()
+            action[1] = lane_steering
+
+            #print(
+            #    f"[LANE KEEP | REF] "
+            #    f"lateral={lateral:.3f}, "
+            #    f"heading_error={heading_error:.3f}, "
+            #    f"RL_accel={policy_action[0]:.3f}, "
+            #    f"RL_steer={policy_action[1]:.3f}, "
+            #    f"executed_steer={action[1]:.3f}"
+            #)
 
             next_state, reward, done, info = simulator.step(action)
 
@@ -2181,11 +2060,10 @@ def AROOD(simulator, policy):
             # Preserve the RL acceleration command.
             action = policy_action.copy()
 
+
             # Override only steering with lane-keeping control.
             lane_steering, lateral, heading_error = simulator.get_lane_keeping_steering()
-
             action[1] = lane_steering
-
             print(
                 f"[LANE KEEP | ONLINE] "
                 f"step={t}, "
@@ -2195,6 +2073,7 @@ def AROOD(simulator, policy):
                 f"RL_steer={policy_action[1]:.3f}, "
                 f"executed_steer={action[1]:.3f}"
             )
+
 
             print("AROOD action:", action)
 
