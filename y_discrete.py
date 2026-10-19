@@ -678,7 +678,15 @@ class HighwaySimulator:
                 elif closing_speed > 0.1:
                     ttc = bumper_gap / closing_speed
 
-                lane_ttc[other_lane]["front_ttc"] = min(lane_ttc[other_lane]["front_ttc"], ttc)
+                lane_data = lane_ttc[other_lane]
+                # Store the nearest front vehicle, not merely the
+                # vehicle with the smallest TTC.
+                if bumper_gap < lane_data["front_gap"]:
+                    lane_data["front_gap"] = bumper_gap
+                    lane_data["front_speed"] = other_speed
+                    lane_data["nearest_front_ttc"] = ttc
+
+                lane_data["front_ttc"] = min(lane_data["front_ttc"], ttc)
 
 
             elif center_gap < 0.0:
@@ -914,32 +922,7 @@ class HighwaySimulator:
 
         # Prioritize speed matching over initiating a new lane change.
         # Only report a deferred lane change if LEFT or RIGHT was requested.
-        '''
-        if (speed_match_active and not self._lane_change_active and policy_requested_lane_action in (0, 2)):
-            requested_lane_action = 1
-            filtered_action[1] = 1.0
 
-            print(
-                "[LANE CHANGE DEFERRED]",
-                f"policy_requested="
-                f"{lane_action_names[policy_requested_lane_action]}"
-                f"({policy_requested_lane_action})",
-                "executed_lane_action=KEEP(1)",
-                "reason=speed_matching",
-            )
-        else:
-            print(
-                "[LANE ACTION DIAGNOSTIC]",
-                f"policy_requested="
-                f"{lane_action_names[policy_requested_lane_action]}"
-                f"({policy_requested_lane_action})",
-                f"speed_match_active={speed_match_active}",
-                f"lane_change_active={self._lane_change_active}",
-                f"request_after_speed_match_check="
-                f"{lane_action_names[requested_lane_action]}"
-                f"({requested_lane_action})",
-            )
-        '''
 
         if requested_lane_action == 0:
             candidate_lane = current_lane + 1
@@ -1095,11 +1078,13 @@ class HighwaySimulator:
             f"filtered={filtered_lane_name}",
         )
 
-        print(
-            "[TTC FILTER RESULT]",
-            f"sampled={sampled_action.tolist()}",
-            f"[FILTER RETURN]{filtered_action.tolist()}",
-        )
+
+
+        # Immediately before the final return in filter_ttc_action()
+        print("[FILTER EXIT] sampled =", sampled_action.tolist())
+        print("[FILTER EXIT] filtered =", filtered_action.tolist())
+
+
 
 
         return filtered_action, safety_info
