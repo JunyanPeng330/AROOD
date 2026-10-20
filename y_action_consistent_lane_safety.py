@@ -26,9 +26,20 @@ offroad_penalty = 0.5
 policy_frequency = 5
 simulation_frequency = 15
 
-lane_keeping_weight = 0.1
+lane_keeping_weight = 0.20
 
-ttc_weight = 2.0
+# Initial weights for the long-term driving objective. Numeric safety and
+# headway terms are authoritative; semantic similarity is auxiliary.
+INITIAL_TRACKING_WEIGHT = 0.20
+INITIAL_PROGRESS_WEIGHT = 0.35
+INITIAL_HEADWAY_WEIGHT = 1.50
+INITIAL_REAR_TTC_WEIGHT = 1.50
+INITIAL_TTC_WEIGHT = 2.50
+INITIAL_COLLISION_PENALTY = 10.0
+INITIAL_OFFROAD_PENALTY = 5.0
+INITIAL_LANE_CHANGE_COST = 0.03
+
+ttc_weight = INITIAL_TTC_WEIGHT
 ttc_critical_threshold = 2.0
 ttc_danger_threshold = 3.0
 ttc_caution_threshold = 4.0
@@ -3557,17 +3568,27 @@ def AROOD(simulator, policy):
             "offers a useful improvement. Avoid unnecessary "
             "lane changes and never sacrifice safety for speed."
         ),
-        "tracking_weight": 1.0,
-        "safety_weight": 1.0,
-        "action_weight": 0.02,
-        "progress_weight": 0.20,
+        "tracking_weight": INITIAL_TRACKING_WEIGHT,
+        "safety_weight": INITIAL_COLLISION_PENALTY,
+        "action_weight": 0.01,
+        "progress_weight": INITIAL_PROGRESS_WEIGHT,
         "target_speed": 25.0,
+        "headway_weight": INITIAL_HEADWAY_WEIGHT,
+        "headway_time_headway": DESIRED_TIME_HEADWAY,
+        "headway_min_gap": MIN_FOLLOWING_GAP,
+        "rear_ttc_weight": INITIAL_REAR_TTC_WEIGHT,
+        "lane_change_cost": INITIAL_LANE_CHANGE_COST,
+        "headway_weight": INITIAL_HEADWAY_WEIGHT,
+        "headway_time_headway": DESIRED_TIME_HEADWAY,
+        "headway_min_gap": MIN_FOLLOWING_GAP,
+        "rear_ttc_weight": INITIAL_REAR_TTC_WEIGHT,
+        "lane_change_cost": INITIAL_LANE_CHANGE_COST,
         "shift_score": 0.0,
         "risk_score": 0.0,
         # Lane-keeping and road-boundary constraints
         "lane_keeping_weight": lane_keeping_weight,
         "max_lateral_deviation": 2.0,
-        "offroad_penalty": offroad_penalty,
+        "offroad_penalty": INITIAL_OFFROAD_PENALTY,
         "ttc_weight": 2.0,
         "ttc_critical_threshold": ttc_critical_threshold,
         "ttc_safe_threshold": ttc_caution_threshold,
