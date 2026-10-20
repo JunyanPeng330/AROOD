@@ -622,8 +622,15 @@ class HighwaySimulator:
         self._lane_change_source_index = None
         self._lane_change_active = False
         self._lane_change_cooldown = 0
-        self._lane_change_stats = {"requested": 0, "accepted": 0, "rejected": 0, "completed": 0, "completed_LEFT": 0, "completed_RIGHT": 0}
+        self._lane_change_stats = {
+            "requested": 0, "accepted": 0, "rejected": 0,
+            "started": 0, "completed": 0, "timed_out": 0,
+            "completed_LEFT": 0, "completed_RIGHT": 0,
+        }
         self._lane_change_started_step = None
+        self._lane_maneuver_sequence = 0
+        self._active_lane_maneuver_id = None
+        self._lane_change_timeout_logged = False
 
         print(
             "[TARGET LANE]",
@@ -1748,23 +1755,54 @@ class HighwaySimulator:
                 source_lane_id = int(self._lane_change_source_index[2]) if self._lane_change_source_index is not None else int(ego.lane_index[2])
                 target_lane_id = int(self.target_lane_index[2])
                 completed_direction = "LEFT" if target_lane_id > source_lane_id else "RIGHT"
+                completed_maneuver_id = self._active_lane_maneuver_id
+                source_lane_completed = source_lane_id
                 self._lane_change_active = False
                 self._lane_change_cooldown = 10
                 self._lane_change_source_index = None
                 self._lane_change_started_step = None
+                self._active_lane_maneuver_id = None
+                self._lane_change_timeout_logged = False
                 if getattr(self, "_lane_change_stats", None) is not None:
                     self._lane_change_stats["completed"] += 1
                     self._lane_change_stats[f"completed_{completed_direction}"] += 1
                 print(
-                    "[LANE CHANGE COMPLETED]",
+                    "[LANE MANEUVER TERMINAL]",
+                    f"maneuver_id={completed_maneuver_id}",
+                    "outcome=COMPLETED",
+                    f"direction={completed_direction}",
+                    f"source_lane={source_lane_completed}",
+                    f"target_lane={target_lane_id}",
                     f"physical_lane={getattr(ego, 'lane_index', None)}",
-                    f"target_lane={self.target_lane_index}",
                     f"steps_since_start={completed_steps}",
                     f"cooldown_started={self._lane_change_cooldown}",
                     f"stats={getattr(self, '_lane_change_stats', {})}",
                 )
             elif lane_action_delta != 0:
-                print("[LANE TARGET REJECTED] reason=lane_change_already_in_progress")
+                print(
+                    "[LANE REQUEST DURING MANEUVER]",
+                    f"active_maneuver_id={self._active_lane_maneuver_id}",
+                    f"requested_action={lane_action_delta:+d}",
+                    "outcome=IGNORED_WHILE_ACTIVE",
+                )
+            elapsed_steps = (
+                int(self.step_count - self._lane_change_started_step)
+                if self._lane_change_started_step is not None else 0
+            )
+            if elapsed_steps >= 25 and not self._lane_change_timeout_logged:
+                self._lane_change_timeout_logged = True
+                if getattr(self, "_lane_change_stats", None) is not None:
+                    self._lane_change_stats["timed_out"] += 1
+                print(
+                    "[LANE MANEUVER TIMEOUT WARNING]",
+                    f"maneuver_id={self._active_lane_maneuver_id}",
+                    f"direction={'LEFT' if int(self.target_lane_index[2]) > int(self._lane_change_source_index[2]) else 'RIGHT' if self._lane_change_source_index is not None else 'UNKNOWN'}",
+                    f"source_lane={self._lane_change_source_index}",
+                    f"target_lane={self.target_lane_index}",
+                    f"elapsed_steps={elapsed_steps}",
+                    f"lateral_error={float(lateral):+.3f}",
+                    "outcome=STILL_ACTIVE_NOT_COMPLETED",
+                )
             return
 
         if self._lane_change_cooldown > 0:
@@ -1818,7 +1856,21 @@ class HighwaySimulator:
         self.target_lane_index = candidate_lane_index
         self._lane_change_active = True
         self._lane_change_started_step = int(self.step_count)
+        self._lane_maneuver_sequence = int(getattr(self, "_lane_maneuver_sequence", 0)) + 1
+        self._active_lane_maneuver_id = self._lane_maneuver_sequence
+        self._lane_change_timeout_logged = False
+        if getattr(self, "_lane_change_stats", None) is not None:
+            self._lane_change_stats["started"] = self._lane_change_stats.get("started", 0) + 1
+            self._lane_change_stats["accepted"] = self._lane_change_stats.get("accepted", 0) + 1
 
+        print(
+            "[LANE MANEUVER STARTED]",
+            f"maneuver_id={self._active_lane_maneuver_id}",
+            f"direction={'LEFT' if candidate_lane_id > current_lane_id else 'RIGHT'}",
+            f"source_lane={current_lane_id}",
+            f"target_lane={candidate_lane_id}",
+            f"start_step={self._lane_change_started_step}",
+        )
         print(
             "[LANE CHANGE REQUEST]",
             f"policy_lane_action_index={lane_action_id}",
@@ -4333,7 +4385,10 @@ def AROOD(simulator, policy):
             f"rejected={getattr(simulator, '_lane_change_stats', {}).get('rejected', 0)}",
             f"completed={getattr(simulator, '_lane_change_stats', {}).get('completed', 0)}",
             f"active_at_episode_end={getattr(simulator, '_lane_change_active', False)}",
+            f"active_maneuver_id={getattr(simulator, '_active_lane_maneuver_id', None)}",
             f"target_lane_at_episode_end={getattr(simulator, 'target_lane_index', None)}",
+            f"started={getattr(simulator, '_lane_change_stats', {}).get('started', 0)}",
+            f"timed_out={getattr(simulator, '_lane_change_stats', {}).get('timed_out', 0)}",
         )
         print_lane_request_counters("ONLINE EPISODE", online_lane_counters)
 
