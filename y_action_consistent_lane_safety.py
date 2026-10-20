@@ -37,7 +37,7 @@ INITIAL_REAR_TTC_WEIGHT = 1.50
 INITIAL_TTC_WEIGHT = 2.50
 INITIAL_COLLISION_PENALTY = 10.0
 INITIAL_OFFROAD_PENALTY = 5.0
-INITIAL_LANE_CHANGE_COST = 0.03
+INITIAL_LANE_CHANGE_COST = 0.01
 
 ttc_weight = INITIAL_TTC_WEIGHT
 ttc_critical_threshold = 2.0
@@ -48,14 +48,16 @@ SPEED_MATCH_TTC = 6.0
 SPEED_MATCH_GAP_TOLERANCE = 3.0  # metres; avoid needless overrides for tiny gap deviations
 # Execution-time safety shield (TTC is measured in seconds).
 SAFETY_OVERRIDE_TTC = 2.0       # Emergency braking threshold
-LANE_CHANGE_MIN_TTC = 4.0       # Reject a new lane change below this TTC
+LANE_CHANGE_MIN_TTC = 3.0       # More permissive, but still rejects short target-lane TTCs
+LANE_CHANGE_PREDICTION_HORIZON = 1.5  # Approximate lateral-transition safety horizon (seconds)
+LANE_CHANGE_TTC_MARGIN = 0.5     # Extra TTC margin for transition uncertainty
 
 SAFETY_OVERRIDE_REWARD_PENALTY = 1.0  # Applied only for emergency TTC braking, not routine speed matching
 LANE_REJECTION_REWARD_PENALTY = 0.05  # Small signal when an unsafe lane-change request is rejected
 SHIELD_ACCEL_INTERVENTION_WEIGHT = 0.15  # Modest cost for routine acceleration overrides
 
 # Reward shaping for beneficial lane changes
-LANE_CHANGE_BONUS = 0.15
+LANE_CHANGE_BONUS = 0.22
 LANE_CHANGE_REWARD_TTC = 6.0
 LANE_CHANGE_COST = 0.0
 
@@ -806,8 +808,8 @@ class HighwaySimulator:
             if values is None:
                 continue
             mask[action_id] = bool(
-                float(values.get("front_ttc", float("inf"))) > LANE_CHANGE_MIN_TTC
-                and float(values.get("rear_ttc", float("inf"))) > LANE_CHANGE_MIN_TTC
+                float(values.get("front_ttc", float("inf"))) > (LANE_CHANGE_MIN_TTC + LANE_CHANGE_TTC_MARGIN)
+                and float(values.get("rear_ttc", float("inf"))) > (LANE_CHANGE_MIN_TTC + LANE_CHANGE_TTC_MARGIN)
                 and float(values.get("front_gap", float("inf"))) >= min_gap
                 and float(values.get("rear_gap", float("inf"))) >= min_gap
             )
@@ -1366,6 +1368,50 @@ class HighwaySimulator:
                     lane_change_rejection_reasons.append("target_lane_front_gap_too_small")
                 if candidate_rear_gap < candidate_rear_gap_limit:
                     lane_change_rejection_reasons.append("target_lane_rear_gap_too_small")
+
+                # Predict whether the target-lane rear gap remains adequate during
+                # the lateral transition. Positive closing speed means the rear
+                # vehicle is gaining on ego. This is a conservative 1-D proxy;
+                # it complements, but does not replace, full trajectory prediction.
+                target_rear_speed = candidate_values.get("rear_speed", None)
+                if target_rear_speed is not None and np.isfinite(candidate_rear_gap):
+                    rear_closing_speed = max(0.0, float(target_rear_speed) - float(vehicle.speed))
+                    predicted_rear_gap = (
+                        candidate_rear_gap
+                        - rear_closing_speed * LANE_CHANGE_PREDICTION_HORIZON
+                    )
+                    predicted_rear_ttc = (
+                        candidate_rear_gap / rear_closing_speed
+                        if rear_closing_speed > 0.1 else float("inf")
+                    )
+                    print(
+                        "[LANE CHANGE TRANSITION PREDICTION]",
+                        f"source_lane={current_lane}",
+                        f"target_lane={candidate_lane}",
+                        f"target_rear_gap_now={candidate_rear_gap:.3f}",
+                        f"rear_closing_speed={rear_closing_speed:.3f}",
+                        f"horizon={LANE_CHANGE_PREDICTION_HORIZON:.2f}",
+                        f"predicted_rear_gap={predicted_rear_gap:.3f}",
+                        f"predicted_rear_ttc={predicted_rear_ttc:.3f}",
+                    )
+                    if predicted_rear_gap < candidate_rear_gap_limit:
+                        lane_change_rejection_reasons.append("target_lane_rear_gap_closes_during_maneuver")
+                    if predicted_rear_ttc <= (LANE_CHANGE_MIN_TTC + LANE_CHANGE_TTC_MARGIN):
+                        lane_change_rejection_reasons.append("target_lane_rear_ttc_unsafe_during_maneuver")
+
+                # Source-lane rear pressure is logged separately, not treated as
+                # an automatic veto. A fast-approaching source-lane vehicle can
+                # make leaving the lane desirable; target-lane/transition safety
+                # remains the deciding constraint.
+                source_rear_ttc = float(current_values.get("rear_ttc", float("inf")))
+                source_rear_pressure = source_rear_ttc <= ttc_danger_threshold
+                print(
+                    "[SOURCE LANE REAR PRESSURE]",
+                    f"source_lane={current_lane}",
+                    f"rear_ttc={source_rear_ttc:.3f}",
+                    f"rear_pressure={source_rear_pressure}",
+                    "policy=informational_not_automatic_veto",
+                )
             elif candidate_lane_available:
                 lane_change_rejection_reasons.append("target_lane_traffic_data_unavailable")
 
