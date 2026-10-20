@@ -990,7 +990,7 @@ class HighwaySimulator:
         print(
             "[EMERGENCY TTC VEHICLES]",
             f"relevant_lanes={sorted(relevant_lane_ids)}",
-            f"lane_front_ttc={{lane_id: lane_ttc_current.get(lane_id, {}).get('front_ttc', float('inf')) for lane_id in sorted(relevant_lane_ids)}}",
+            f"lane_front_ttc={ {lane_id: lane_ttc_current.get(lane_id, {}).get('front_ttc', float('inf')) for lane_id in sorted(relevant_lane_ids)} }",
             f"min_relevant_front_ttc={min_relevant_front_ttc:.3f}",
             f"threshold={SAFETY_OVERRIDE_TTC:.3f}",
             f"triggered={emergency_braking}",
@@ -1195,7 +1195,12 @@ class HighwaySimulator:
         min_normalized_accel = None
 
         if current_speed >= 0.0 and filtered_action[0] < 0.0:
-            min_normalized_accel = (-current_speed / (MAX_PHYSICAL_ACCELERATION * policy_dt))
+            # Normalized action u maps to physical acceleration a = u * 5 m/s^2.
+            # Keep predicted speed at or above 0.05 m/s over one policy interval.
+            min_normalized_accel = (
+                (0.05 - current_speed)
+                / (MAX_PHYSICAL_ACCELERATION * policy_dt)
+            )
 
             if filtered_action[0] < min_normalized_accel:
                 filtered_action[0] = float(np.clip(min_normalized_accel, -1.0, 1.0))
