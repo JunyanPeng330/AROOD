@@ -651,6 +651,8 @@ class HighwaySimulator:
         self._lane_change_started_step = None
         self._lane_maneuver_sequence = 0
         self._active_lane_maneuver_id = None
+        self._active_lane_request_trace_id = None
+        self._current_lane_request_trace_id = None
         self._lane_change_timeout_logged = False
 
         print(
@@ -1796,12 +1798,14 @@ class HighwaySimulator:
                 target_lane_id = int(self.target_lane_index[2])
                 completed_direction = "LEFT" if target_lane_id > source_lane_id else "RIGHT"
                 completed_maneuver_id = self._active_lane_maneuver_id
+                completed_request_id = self._active_lane_request_trace_id
                 source_lane_completed = source_lane_id
                 self._lane_change_active = False
                 self._lane_change_cooldown = 10
                 self._lane_change_source_index = None
                 self._lane_change_started_step = None
                 self._active_lane_maneuver_id = None
+                self._active_lane_request_trace_id = None
                 self._lane_change_timeout_logged = False
                 if getattr(self, "_lane_change_stats", None) is not None:
                     self._lane_change_stats["completed"] += 1
@@ -1809,6 +1813,7 @@ class HighwaySimulator:
                 write_diagnostic_event(
                     "lane_maneuver_terminal", self,
                     maneuver_id=completed_maneuver_id,
+                    request_id=completed_request_id,
                     outcome="COMPLETED",
                     direction=completed_direction,
                     source_lane=source_lane_completed,
@@ -1820,6 +1825,7 @@ class HighwaySimulator:
                 print(
                     "[LANE MANEUVER TERMINAL]",
                     f"maneuver_id={completed_maneuver_id}",
+                    f"request_id={completed_request_id}",
                     "outcome=COMPLETED",
                     f"direction={completed_direction}",
                     f"source_lane={source_lane_completed}",
@@ -1923,6 +1929,7 @@ class HighwaySimulator:
         self._lane_change_started_step = int(self.step_count)
         self._lane_maneuver_sequence = int(getattr(self, "_lane_maneuver_sequence", 0)) + 1
         self._active_lane_maneuver_id = self._lane_maneuver_sequence
+        self._active_lane_request_trace_id = getattr(self, "_current_lane_request_trace_id", None)
         self._lane_change_timeout_logged = False
         if getattr(self, "_lane_change_stats", None) is not None:
             self._lane_change_stats["started"] = self._lane_change_stats.get("started", 0) + 1
@@ -1931,6 +1938,7 @@ class HighwaySimulator:
         write_diagnostic_event(
             "lane_maneuver_started", self,
             maneuver_id=self._active_lane_maneuver_id,
+            request_id=getattr(self, "_current_lane_request_trace_id", None),
             direction="LEFT" if candidate_lane_id > current_lane_id else "RIGHT",
             source_lane=current_lane_id,
             target_lane=candidate_lane_id,
@@ -1939,6 +1947,7 @@ class HighwaySimulator:
         print(
             "[LANE MANEUVER STARTED]",
             f"maneuver_id={self._active_lane_maneuver_id}",
+            f"request_id={self._active_lane_request_trace_id}",
             f"direction={'LEFT' if candidate_lane_id > current_lane_id else 'RIGHT'}",
             f"source_lane={current_lane_id}",
             f"target_lane={candidate_lane_id}",
@@ -2079,9 +2088,43 @@ class HighwaySimulator:
 
         # Convert the filtered discrete intention into a persistent lane target.
         active_before_update = bool(self._lane_change_active)
+        cooldown_before_update = int(self._lane_change_cooldown)
         previous_target_lane = tuple(self.target_lane_index) if self.target_lane_index is not None else None
+        request_trace_id = safety_info.get("lane_request_trace_id")
+        self._current_lane_request_trace_id = request_trace_id
         self._update_lane_target(lane_action_id)
         active_after_update = bool(self._lane_change_active)
+        if request_trace_id is not None:
+            if safety_info.get("lane_change_blocked", False):
+                adapter_outcome = "FILTER_REJECTED"
+            elif not active_before_update and active_after_update and self._active_lane_request_trace_id == request_trace_id:
+                adapter_outcome = "MANEUVER_STARTED"
+            elif active_before_update:
+                adapter_outcome = "IGNORED_WHILE_MANEUVER_ACTIVE"
+            elif cooldown_before_update > 0:
+                adapter_outcome = "REJECTED_COOLDOWN"
+            elif previous_target_lane == tuple(self.target_lane_index):
+                adapter_outcome = "NO_TARGET_CHANGE"
+            else:
+                adapter_outcome = "TARGET_UPDATED_NOT_STARTED"
+            write_diagnostic_event(
+                "lane_request_adapter_outcome", self,
+                request_id=int(request_trace_id),
+                direction=safety_info.get("lane_request_direction"),
+                safety_decision=safety_info.get("lane_request_decision"),
+                adapter_outcome=adapter_outcome,
+                rejection_reasons=safety_info.get("lane_request_rejection_reasons", []),
+                source_lane=safety_info.get("lane_request_source_lane"),
+                requested_target_lane=safety_info.get("lane_request_target_lane"),
+                previous_target_lane=previous_target_lane,
+                current_target_lane=self.target_lane_index,
+                active_maneuver_id=self._active_lane_maneuver_id,
+                active_before=active_before_update,
+                active_after=active_after_update,
+                cooldown_before=cooldown_before_update,
+                filtered_action=action.tolist(),
+            )
+        self._current_lane_request_trace_id = None
         if safety_info.get("lane_request_trace_id") is not None:
             print(
                 "[LANE REQUEST OUTCOME]",
@@ -4492,6 +4535,11 @@ def AROOD(simulator, policy):
             mean_advantage=float(np.mean(advantage_values)) if advantage_values else 0.0,
             reward_component_sums={key: float(value) for key, value in episode_reward_component_sums.items()},
             lane_change_stats=dict(getattr(simulator, "_lane_change_stats", {})),
+            lane_request_counters={
+                direction: dict(values)
+                for direction, values in online_lane_counters.items()
+            },
+            active_maneuver_at_episode_end=bool(getattr(simulator, "_lane_change_active", False)),
         )
         adaptation_count_List.append(adaptation_count)
         risk_List.append(risk_score_count)
@@ -4505,6 +4553,24 @@ def AROOD(simulator, policy):
         mean_advantage = float(np.mean(advantage_values)) if advantage_values else 0.0
 
         sync_lane_completion_counters(online_lane_counters, simulator, online_seen_completed)
+        if bool(getattr(simulator, "_lane_change_active", False)):
+            write_diagnostic_event(
+                "lane_maneuver_episode_end_unresolved", simulator,
+                maneuver_id=getattr(simulator, "_active_lane_maneuver_id", None),
+                request_id=getattr(simulator, "_active_lane_request_trace_id", None),
+                direction=(
+                    "LEFT" if simulator._lane_change_source_index is not None
+                    and int(simulator.target_lane_index[2]) > int(simulator._lane_change_source_index[2])
+                    else "RIGHT" if simulator._lane_change_source_index is not None else "UNKNOWN"
+                ),
+                source_lane=getattr(simulator, "_lane_change_source_index", None),
+                target_lane=getattr(simulator, "target_lane_index", None),
+                elapsed_steps=(
+                    int(simulator.step_count - simulator._lane_change_started_step)
+                    if getattr(simulator, "_lane_change_started_step", None) is not None else None
+                ),
+                outcome="ACTIVE_AT_EPISODE_END",
+            )
         print(
             "[LANE CHANGE EPISODE SUMMARY]",
             f"requested={getattr(simulator, '_lane_change_stats', {}).get('requested', 0)}",
@@ -4548,6 +4614,14 @@ def AROOD(simulator, policy):
             f"adaptations={adaptation_count}"
         )
 
+    # Diagnostic plot: reward components per episode. A total-return curve alone
+    # cannot reveal whether progress, headway, TTC, or control penalties dominate.
+    component_keys = sorted({
+        key for episode_record in []
+        for key in episode_record
+    })
+    # Component sums are already written to the JSONL diagnostic log. Keep the
+    # training plot below focused on return and per-step return for comparability.
     episode_reward_List = list(range(len(reward_List)))
     fig_path = reward_path
     plt.plot(episode_reward_List, reward_List, alpha=0.35, label="raw episode return")
