@@ -3652,11 +3652,6 @@ def AROOD(simulator, policy):
         "headway_min_gap": MIN_FOLLOWING_GAP,
         "rear_ttc_weight": INITIAL_REAR_TTC_WEIGHT,
         "lane_change_cost": INITIAL_LANE_CHANGE_COST,
-        "headway_weight": INITIAL_HEADWAY_WEIGHT,
-        "headway_time_headway": DESIRED_TIME_HEADWAY,
-        "headway_min_gap": MIN_FOLLOWING_GAP,
-        "rear_ttc_weight": INITIAL_REAR_TTC_WEIGHT,
-        "lane_change_cost": INITIAL_LANE_CHANGE_COST,
         "shift_score": 0.0,
         "risk_score": 0.0,
         # Lane-keeping and road-boundary constraints
