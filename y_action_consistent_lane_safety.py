@@ -559,6 +559,27 @@ class HighwaySimulator:
 
 
 
+    def _relevant_lane_ids(self, include_active_lane_change=True):
+        """Return the single canonical lane set relevant to ego safety/reward.
+
+        Always include the physically occupied lane. While a lane change is
+        active, also include its source and target lanes. Adjacent lanes are
+        evaluated separately only when considering a candidate lane change.
+        """
+        ego = self.env.unwrapped.vehicle
+        lane_ids = {int(ego.lane_index[2])}
+        if include_active_lane_change and getattr(self, "_lane_change_active", False):
+            for lane_index in (
+                getattr(self, "_lane_change_source_index", None),
+                getattr(self, "target_lane_index", None),
+            ):
+                if lane_index is not None:
+                    try:
+                        lane_ids.add(int(lane_index[2]))
+                    except (TypeError, ValueError, IndexError):
+                        pass
+        return lane_ids
+
     def get_valid_lane_action_mask(self):
         """Mask unavailable or TTC/gap-unsafe lane changes; KEEP is always valid."""
         base_env = self.env.unwrapped
@@ -567,21 +588,22 @@ class HighwaySimulator:
         if self._lane_change_active or self._lane_change_cooldown > 0:
             return np.array([False, True, False], dtype=bool)
 
-        start_node, end_node, target_lane_id = self.target_lane_index
+        current_lane = int(vehicle.lane_index[2])
+        start_node, end_node, _ = vehicle.lane_index
         available_lanes = road.network.graph[start_node][end_node]
         valid_ids = set(range(len(available_lanes)))
         lane_ttc = self._min_ttc_by_lane()
         min_gap = max(8.0, 0.5 * max(0.0, float(vehicle.speed)))
         mask = [False, True, False]
-        current_values = lane_ttc.get(int(vehicle.lane_index[2]), {})
+        current_values = lane_ttc.get(current_lane, {})
         current_front_ttc = float(current_values.get("front_ttc", float("inf")))
         if current_front_ttc <= SAFETY_OVERRIDE_TTC:
             print("[LANE ACTION MASK]", "mask=[False, True, False]",
                   f"reason=current_lane_emergency_ttc:{current_front_ttc:.3f}")
             return np.asarray(mask, dtype=bool)
 
-        for action_id, candidate_lane in ((0, int(target_lane_id) + 1),
-                                          (2, int(target_lane_id) - 1)):
+        for action_id, candidate_lane in ((0, current_lane + 1),
+                                          (2, current_lane - 1)):
             if candidate_lane not in valid_ids:
                 continue
             values = lane_ttc.get(candidate_lane)
@@ -593,9 +615,10 @@ class HighwaySimulator:
                 and float(values.get("front_gap", float("inf"))) >= min_gap
                 and float(values.get("rear_gap", float("inf"))) >= min_gap
             )
-        print("[LANE ACTION MASK]", f"current_lane={int(vehicle.lane_index[2])}",
+        print("[LANE ACTION MASK]", f"current_lane={current_lane}",
               f"mask={mask}", f"min_ttc={LANE_CHANGE_MIN_TTC:.2f}",
-              f"min_gap={min_gap:.2f}")
+              f"min_gap={min_gap:.2f}",
+              f"candidate_lanes={{0: {current_lane + 1}, 2: {current_lane - 1}}}")
         return np.asarray(mask, dtype=bool)
 
 
@@ -641,8 +664,12 @@ class HighwaySimulator:
                 "front_gap": float("inf"),
                 "front_speed": None,
                 "nearest_front_ttc": float("inf"),
+                "front_center_gap": float("inf"),
+                "front_vehicle_id": None,
                 "rear_gap": float("inf"),
                 "rear_speed": None,
+                "rear_center_gap": float("inf"),
+                "rear_vehicle_id": None,
             }
             for lane_id in range(lanes_count)
         }
@@ -704,12 +731,15 @@ class HighwaySimulator:
                 # Preserve the minimum TTC among all front vehicles.
                 lane_ttc[other_lane]["front_ttc"] = min(lane_ttc[other_lane]["front_ttc"], ttc,)
 
-                # Separately retain the nearest front vehicle for
-                # the speed-matching controller.
-                if bumper_gap >= 0.0 and (bumper_gap < lane_ttc[other_lane]["front_gap"]):
+                # Select the nearest front vehicle by center distance, even
+                # when its bumper gap is zero/negative. Otherwise an overlapping
+                # same-lane vehicle is accidentally reported as "no front vehicle".
+                if center_gap < lane_ttc[other_lane]["front_center_gap"]:
+                    lane_ttc[other_lane]["front_center_gap"] = center_gap
                     lane_ttc[other_lane]["front_gap"] = bumper_gap
                     lane_ttc[other_lane]["front_speed"] = other_speed
                     lane_ttc[other_lane]["nearest_front_ttc"] = ttc
+                    lane_ttc[other_lane]["front_vehicle_id"] = id(other)
 
 
             elif center_gap < 0.0:
@@ -728,9 +758,11 @@ class HighwaySimulator:
                 lane_ttc[other_lane]["rear_ttc"] = min(
                     lane_ttc[other_lane]["rear_ttc"], ttc
                 )
-                if bumper_gap >= 0.0 and bumper_gap < lane_ttc[other_lane]["rear_gap"]:
+                if abs(center_gap) < lane_ttc[other_lane]["rear_center_gap"]:
+                    lane_ttc[other_lane]["rear_center_gap"] = abs(center_gap)
                     lane_ttc[other_lane]["rear_gap"] = bumper_gap
                     lane_ttc[other_lane]["rear_speed"] = other_speed
+                    lane_ttc[other_lane]["rear_vehicle_id"] = id(other)
 
             else:
                 # Same longitudinal center: direction is ambiguous, but
@@ -759,6 +791,8 @@ class HighwaySimulator:
                 f"longitudinal_overlap={longitudinal_overlap}",
                 f"closing_speed={closing_speed}",
                 f"ttc={ttc}",
+                f"selected_for_speed_match={bool(other_lane == ego_lane and vehicle_direction == 'front' and lane_ttc[other_lane].get('front_vehicle_id') == id(other))}",
+                f"selected_for_lane_safety={bool(lane_ttc[other_lane].get('front_vehicle_id') == id(other) or lane_ttc[other_lane].get('rear_vehicle_id') == id(other))}",
                 "note=longitudinal_overlap_is_not_by_itself_a_physical_collision",
             )
 
@@ -769,7 +803,20 @@ class HighwaySimulator:
         # C. Calculate the minimum of front and rear TTC per lane.
         # ---------------------------------------------------------
         for lane_id, values in lane_ttc.items():
-            values["min_ttc"] = min(values["front_ttc"], values["rear_ttc"],)
+            values["min_ttc"] = min(values["front_ttc"], values["rear_ttc"])
+            print(
+                "[LANE TTC SUMMARY]",
+                f"lane={lane_id}",
+                f"front_id={values.get('front_vehicle_id')}",
+                f"front_center_gap={values.get('front_center_gap', float('inf')):.3f}",
+                f"front_bumper_gap={values['front_gap']:.3f}",
+                f"front_ttc={values['front_ttc']:.3f}",
+                f"front_selected_ttc={values['nearest_front_ttc']:.3f}",
+                f"rear_id={values.get('rear_vehicle_id')}",
+                f"rear_center_gap={values.get('rear_center_gap', float('inf')):.3f}",
+                f"rear_bumper_gap={values['rear_gap']:.3f}",
+                f"rear_ttc={values['rear_ttc']:.3f}",
+            )
 
         return lane_ttc
 
@@ -898,7 +945,18 @@ class HighwaySimulator:
         front_speed_raw = current_values.get("front_speed", None)
         nearest_front_ttc = float(current_values.get("nearest_front_ttc", float("inf")))
 
-        front_vehicle_present = front_speed_raw is not None and np.isfinite(front_gap)
+        front_vehicle_present = front_speed_raw is not None
+        selected_front_vehicle_id = current_values.get("front_vehicle_id")
+        print(
+            "[SPEED MATCH VEHICLE SELECTED]",
+            f"current_lane={current_lane}",
+            f"vehicle_id={selected_front_vehicle_id}",
+            f"present={front_vehicle_present}",
+            f"center_gap={float(current_values.get('front_center_gap', float('inf'))):.3f}",
+            f"bumper_gap={front_gap:.3f}",
+            f"closing_speed={float(vehicle.speed) - float(front_speed_raw) if front_speed_raw is not None else float('nan'):.3f}",
+            f"ttc={nearest_front_ttc:.3f}",
+        )
 
         # Use the current lane and, during an active lane change,
         # the source and target lanes for emergency monitoring.
@@ -929,6 +987,14 @@ class HighwaySimulator:
             default=float("inf"),
         )
         emergency_braking = (min_relevant_front_ttc <= SAFETY_OVERRIDE_TTC)
+        print(
+            "[EMERGENCY TTC VEHICLES]",
+            f"relevant_lanes={sorted(relevant_lane_ids)}",
+            f"lane_front_ttc={{lane_id: lane_ttc_current.get(lane_id, {}).get('front_ttc', float('inf')) for lane_id in sorted(relevant_lane_ids)}}",
+            f"min_relevant_front_ttc={min_relevant_front_ttc:.3f}",
+            f"threshold={SAFETY_OVERRIDE_TTC:.3f}",
+            f"triggered={emergency_braking}",
+        )
 
 
         # Level 1: speed matching.
@@ -1142,6 +1208,9 @@ class HighwaySimulator:
             f"policy_dt={policy_dt:.6f}",
             f"accel_before={accel_before_speed_floor:.6f}",
             f"min_normalized_accel={min_normalized_accel}",
+            f"accel_units=normalized[-1,1]",
+            f"physical_accel_before={accel_before_speed_floor * MAX_PHYSICAL_ACCELERATION:.3f}m/s^2",
+            f"physical_accel_after={accel_after_speed_floor * MAX_PHYSICAL_ACCELERATION:.3f}m/s^2",
             f"accel_after={accel_after_speed_floor:.6f}",
             f"changed={abs(accel_after_speed_floor - accel_before_speed_floor) > 1e-6}",
         )
@@ -1588,7 +1657,8 @@ class HighwaySimulator:
         executed_action = np.asarray([acceleration, steering], dtype=np.float32)
         print(
             "[PHYSICAL ACTION]",
-            f"acceleration={acceleration:.4f}",
+            f"acceleration_normalized={acceleration:.4f}",
+            f"acceleration_physical_mps2={acceleration * max_physical_acceleration:.3f}",
             f"steering={steering:.4f}",
             f"lateral_error={lateral:.4f}",
             f"heading_error={heading_error:.4f}",
@@ -1935,21 +2005,9 @@ def calculate_min_ttc(simulator):
     env = simulator.env.unwrapped
     ego = env.vehicle
 
-    # Use the physical lane occupied by the ego vehicle.
+    # Canonical lane relevance shared with the safety filter.
     physical_lane_id = int(ego.lane_index[2])
-    relevant_lane_ids = {physical_lane_id}
-
-    # During a lane change, monitor both the source and target.
-    if getattr(simulator, "_lane_change_active", False):
-        target = getattr(simulator, "target_lane_index", None)
-        source = getattr(simulator, "_lane_change_source_index", None)
-
-        if target is not None:
-            relevant_lane_ids.add(int(target[2]))
-
-        if source is not None:
-            relevant_lane_ids.add(int(source[2]))
-
+    relevant_lane_ids = simulator._relevant_lane_ids()
     lane_ttc = simulator._min_ttc_by_lane()
 
     values = []
@@ -1963,6 +2021,26 @@ def calculate_min_ttc(simulator):
         values.append(float(lane_values["rear_ttc"]))
 
     min_ttc = min(values, default=float("inf"))
+    lane_details = {
+        lane_id: {
+            "front_vehicle_id": lane_ttc.get(lane_id, {}).get("front_vehicle_id"),
+            "front_ttc_s": lane_ttc.get(lane_id, {}).get("front_ttc", float("inf")),
+            "front_gap_m": lane_ttc.get(lane_id, {}).get("front_gap", float("inf")),
+            "rear_vehicle_id": lane_ttc.get(lane_id, {}).get("rear_vehicle_id"),
+            "rear_ttc_s": lane_ttc.get(lane_id, {}).get("rear_ttc", float("inf")),
+            "rear_gap_m": lane_ttc.get(lane_id, {}).get("rear_gap", float("inf")),
+        }
+        for lane_id in sorted(relevant_lane_ids)
+    }
+    print(
+        "[TTC REWARD INPUT]",
+        f"source=post_step",
+        f"physical_lane={physical_lane_id}",
+        f"relevant_lanes={sorted(relevant_lane_ids)}",
+        f"lane_details={lane_details}",
+        f"min_ttc_s={min_ttc:.3f}",
+        f"finite_ttc_count={sum(np.isfinite(v) for v in values)}",
+    )
 
     return min_ttc, sum(np.isfinite(v) for v in values)
 
@@ -2624,6 +2702,16 @@ def construct_reward(reward_specification, embedding_model):
                                     if sampled_for_reward.size else acceleration)
         accel_intervention_magnitude = abs(sampled_accel_for_reward - acceleration)
         intervention_penalty = SHIELD_ACCEL_INTERVENTION_WEIGHT * min(accel_intervention_magnitude, 2.0)
+        print(
+            "[REWARD ACTION UNITS]",
+            f"sampled_accel_normalized={sampled_accel_for_reward:+.4f}",
+            f"executed_accel_normalized={acceleration:+.4f}",
+            f"sampled_accel_physical_mps2={sampled_accel_for_reward * MAX_PHYSICAL_ACCELERATION:+.3f}",
+            f"executed_accel_physical_mps2={acceleration * MAX_PHYSICAL_ACCELERATION:+.3f}",
+            f"intervention_delta_normalized={accel_intervention_magnitude:.4f}",
+            f"intervention_delta_physical_mps2={accel_intervention_magnitude * MAX_PHYSICAL_ACCELERATION:.3f}",
+            "control_penalty_input_units=normalized_acceleration",
+        )
 
         # Reward a useful lane-change decision only when the
         # safety filter has approved it and the current lane has
@@ -2664,8 +2752,8 @@ def construct_reward(reward_specification, embedding_model):
 
         print(
             f"[TTC PENALTY DEBUG] "
-            f"min_ttc={min_ttc:.3f}, "
-            f"critical={critical_ttc_value:.3f}, "
+            f"min_ttc={min_ttc:.3f}s, "
+            f"critical={critical_ttc_value:.3f}s, "
             f"safe={safe_ttc_value:.3f}, "
             f"weight={ttc_weight_value:.3f}"
         )
