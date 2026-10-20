@@ -892,17 +892,23 @@ class HighwaySimulator:
                 if lane_index is not None:
                     relevant_lane_ids.add(int(lane_index[2]))
 
-        relevant_ttc_values = []
+        # Emergency braking is triggered by a closing vehicle AHEAD in a lane
+        # occupied by, or actively entering, the ego. A fast-approaching REAR
+        # vehicle is relevant to lane-change rejection, but should not by itself
+        # trigger maximum braking in the current lane.
+        relevant_front_ttc_values = []
 
         for lane_id in relevant_lane_ids:
             values = lane_ttc_current.get(lane_id)
             if values is None:
                 continue
+            relevant_front_ttc_values.append(float(values["front_ttc"]))
 
-            relevant_ttc_values.extend([float(values["front_ttc"]), float(values["rear_ttc"]),])
-
-        min_relevant_ttc = min(relevant_ttc_values, default=float("inf"),)
-        emergency_braking = (min_relevant_ttc <= SAFETY_OVERRIDE_TTC)
+        min_relevant_front_ttc = min(
+            relevant_front_ttc_values,
+            default=float("inf"),
+        )
+        emergency_braking = (min_relevant_front_ttc <= SAFETY_OVERRIDE_TTC)
 
 
         # Level 1: speed matching.
@@ -988,7 +994,12 @@ class HighwaySimulator:
         filtered_lane_action = requested_lane_action
         filtered_lane_name = requested_lane_name
 
-        lane_change_blocked = False
+        # Speed matching and emergency braking take priority over starting a
+        # fresh lane change. Rear TTC is checked separately below.
+        lane_change_blocked = bool(
+            requested_lane_action in (0, 2)
+            and (speed_match_active or emergency_braking)
+        )
 
         candidate_front_ttc = current_front_ttc
         candidate_rear_ttc = current_rear_ttc
@@ -1010,9 +1021,9 @@ class HighwaySimulator:
 
                 # Reject the lane change if a vehicle ahead or behind
                 # has a TTC below the safety threshold.
-                lane_change_blocked = (
-                        candidate_front_ttc < lane_change_threshold
-                        or candidate_rear_ttc < lane_change_threshold
+                lane_change_blocked = lane_change_blocked or (
+                    candidate_front_ttc < lane_change_threshold
+                    or candidate_rear_ttc < lane_change_threshold
                 )
 
             if lane_change_blocked:
