@@ -1667,6 +1667,44 @@ class HighwaySimulator:
 
 
 
+        # Structured request-level trace: one ID per sampled LEFT/RIGHT decision.
+        # This intentionally does not equate a request with a unique physical maneuver.
+        if requested_lane_delta != 0:
+            request_trace_id = int(getattr(self, "_lane_request_trace_sequence", 0)) + 1
+            self._lane_request_trace_sequence = request_trace_id
+            rejection_reasons = list(lane_change_rejection_reasons)
+            decision_status = "REJECTED" if lane_change_blocked else "ACCEPTED"
+            safety_info.update({
+                "lane_request_trace_id": request_trace_id,
+                "lane_request_direction": requested_lane_name,
+                "lane_request_source_lane": int(current_lane),
+                "lane_request_target_lane": int(candidate_lane),
+                "lane_request_decision": decision_status,
+                "lane_request_rejection_reasons": rejection_reasons,
+                "lane_request_candidate_front_ttc": float(candidate_front_ttc),
+                "lane_request_candidate_rear_ttc": float(candidate_rear_ttc),
+                "lane_request_candidate_front_gap": float(candidate_front_gap),
+                "lane_request_candidate_rear_gap": float(candidate_rear_gap),
+                "lane_request_candidate_front_gap_limit": float(candidate_front_gap_limit),
+                "lane_request_candidate_rear_gap_limit": float(candidate_rear_gap_limit),
+            })
+            print(
+                "[LANE REQUEST TRACE]",
+                f"id={request_trace_id}",
+                f"decision={decision_status}",
+                f"direction={requested_lane_name}",
+                f"source_lane={current_lane}",
+                f"target_lane={candidate_lane}",
+                f"reasons={rejection_reasons or ['none']}",
+                f"front_ttc={candidate_front_ttc:.3f}",
+                f"rear_ttc={candidate_rear_ttc:.3f}",
+                f"front_gap={candidate_front_gap:.3f}",
+                f"rear_gap={candidate_rear_gap:.3f}",
+                f"front_gap_limit={candidate_front_gap_limit:.3f}",
+                f"rear_gap_limit={candidate_rear_gap_limit:.3f}",
+                f"active_maneuver={bool(self._lane_change_active)}",
+                f"cooldown={int(self._lane_change_cooldown)}",
+            )
         return filtered_action, safety_info
 
 
@@ -1915,7 +1953,23 @@ class HighwaySimulator:
         )
 
         # Convert the filtered discrete intention into a persistent lane target.
+        active_before_update = bool(self._lane_change_active)
+        previous_target_lane = tuple(self.target_lane_index) if self.target_lane_index is not None else None
         self._update_lane_target(lane_action_id)
+        active_after_update = bool(self._lane_change_active)
+        if safety_info.get("lane_request_trace_id") is not None:
+            print(
+                "[LANE REQUEST OUTCOME]",
+                f"id={safety_info['lane_request_trace_id']}",
+                f"decision={safety_info.get('lane_request_decision')}",
+                f"source_lane={safety_info.get('lane_request_source_lane')}",
+                f"target_lane={safety_info.get('lane_request_target_lane')}",
+                f"active_before={active_before_update}",
+                f"active_after={active_after_update}",
+                f"previous_target={previous_target_lane}",
+                f"current_target={self.target_lane_index}",
+                f"physical_lane_after_update={int(self.env.unwrapped.vehicle.lane_index[2])}",
+            )
 
         target_lane = getattr(self, "target_lane", None)
         print(
@@ -3078,6 +3132,7 @@ def construct_reward(reward_specification, embedding_model):
         ego_speed=0.0,
         safety_info=None,
         policy_sampled_action=None,
+        reward_diagnostics=None,
     ):
         behavior_embedding = embedding_model.encode(behavior_description)
 
@@ -3296,6 +3351,23 @@ def construct_reward(reward_specification, embedding_model):
                 + lane_change_bonus
         )
 
+        if reward_diagnostics is not None:
+            reward_diagnostics.update({
+                "semantic_reward": float(semantic_reward),
+                "progress_reward": float(progress_reward),
+                "safety_penalty": float(safety_penalty),
+                "shield_penalty": float(shield_penalty),
+                "intervention_penalty": float(intervention_penalty),
+                "control_penalty": float(control_penalty),
+                "lane_penalty": float(lane_penalty),
+                "offroad_penalty": float(road_penalty),
+                "ttc_penalty": float(ttc_penalty),
+                "headway_penalty": float(headway_penalty),
+                "rear_ttc_penalty": float(rear_ttc_penalty),
+                "lane_change_bonus": float(lane_change_bonus),
+                "total_reward": float(reward),
+            })
+
         print(
             f"[REWARD DEBUG] "
             f"semantic={semantic_reward:.3f}, "
@@ -3333,6 +3405,7 @@ def compute_reward(
     ego_speed=0.0,
     safety_info=None,
     policy_sampled_action=None,
+    reward_diagnostics=None,
 ):
     return reward_function(
         behavior_description=behavior_description,
@@ -3345,6 +3418,7 @@ def compute_reward(
         ego_speed=ego_speed,
         safety_info=safety_info,
         policy_sampled_action=policy_sampled_action,
+        reward_diagnostics=reward_diagnostics,
     )
 
 
@@ -3693,6 +3767,7 @@ def construct_checkpoint_distribution( data ):
 def AROOD(simulator, policy):
 
     reward_List = []
+    reward_per_step_List = []
     adaptation_count_List = []
     time_List = []
     risk_List = []
@@ -4151,6 +4226,7 @@ def AROOD(simulator, policy):
                 f"state_speed_context={float(np.asarray(next_state)[VEHICLE_STATE_DIM]):.6f}",
             )
 
+            reward_components = {}
             reward = compute_reward(
                 reward_function=reward_function,
                 behavior_description=behavior_description,
@@ -4163,6 +4239,12 @@ def AROOD(simulator, policy):
                 ego_speed=ego_speed_for_reward,
                 safety_info=safety_info,
                 policy_sampled_action=sampled_action,
+                reward_diagnostics=reward_components,
+            )
+
+            print(
+                "[REWARD COMPONENT TRACE]",
+                " ".join(f"{key}={value:+.4f}" for key, value in reward_components.items()),
             )
 
             print(
@@ -4230,6 +4312,8 @@ def AROOD(simulator, policy):
         print('time one episode: ', time_one_episode)
         time_List.append(time_one_episode)
         reward_List.append(episode_reward)
+        reward_per_step = float(episode_reward / max(policy_step_count, 1))
+        reward_per_step_List.append(reward_per_step)
         adaptation_count_List.append(adaptation_count)
         risk_List.append(risk_score_count)
         collision_List.append(episode_collision_count)
@@ -4268,22 +4352,67 @@ def AROOD(simulator, policy):
 
 
 
+        rolling_window = min(10, len(reward_List))
+        rolling_mean_return = float(np.mean(reward_List[-rolling_window:]))
+        rolling_mean_step_reward = float(np.mean(reward_per_step_List[-rolling_window:]))
         print(
             f"Episode "
             f"{episode + 1:03d}/"
             f"{NUM_ONLINE_EPISODES} | "
-            f"reward={episode_reward:.3f} | "
+            f"return={episode_reward:.3f} | "
+            f"mean_step_reward={reward_per_step:+.4f} | "
+            f"rolling{rolling_window}_return={rolling_mean_return:.3f} | "
+            f"rolling{rolling_window}_step_reward={rolling_mean_step_reward:+.4f} | "
             f"adaptations={adaptation_count}"
         )
 
     episode_reward_List = list(range(len(reward_List)))
     fig_path = reward_path
-    plt.plot(episode_reward_List, reward_List)
+    plt.plot(episode_reward_List, reward_List, alpha=0.35, label="raw episode return")
+    if len(reward_List) >= 3:
+        window = min(10, len(reward_List))
+        smoothed_returns = np.convolve(
+            np.asarray(reward_List, dtype=np.float64),
+            np.ones(window, dtype=np.float64) / window,
+            mode="valid",
+        )
+        plt.plot(
+            np.arange(window - 1, len(reward_List)),
+            smoothed_returns,
+            linewidth=2.0,
+            label=f"{window}-episode moving average",
+        )
     plt.xlabel('episode')
-    plt.ylabel('reward')
-    plt.title('reward in episodes')
-    # plt.show()
+    plt.ylabel('total episode return')
+    plt.title('Training return (raw and smoothed)')
+    plt.legend()
+    plt.tight_layout()
     plt.savefig(fig_path)
+    plt.close()
+
+    # Also plot mean reward per environment step. This separates learning
+    # trends from variation caused by episodes ending at different lengths.
+    plt.figure()
+    plt.plot(episode_reward_List, reward_per_step_List, alpha=0.35, label="raw mean reward/step")
+    if len(reward_per_step_List) >= 3:
+        window = min(10, len(reward_per_step_List))
+        smoothed_step_rewards = np.convolve(
+            np.asarray(reward_per_step_List, dtype=np.float64),
+            np.ones(window, dtype=np.float64) / window,
+            mode="valid",
+        )
+        plt.plot(
+            np.arange(window - 1, len(reward_per_step_List)),
+            smoothed_step_rewards,
+            linewidth=2.0,
+            label=f"{window}-episode moving average",
+        )
+    plt.xlabel('episode')
+    plt.ylabel('mean reward per step')
+    plt.title('Training reward per step (raw and smoothed)')
+    plt.legend()
+    plt.tight_layout()
+    plt.savefig(reward_path.replace(".png", "_per_step.png"))
     plt.close()
 
     episode_adapt_List = list(range(len(adaptation_count_List)))
