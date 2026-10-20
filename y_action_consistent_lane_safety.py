@@ -39,6 +39,7 @@ LANE_CHANGE_MIN_TTC = 4.0       # Reject a new lane change below this TTC
 
 SAFETY_OVERRIDE_REWARD_PENALTY = 1.0  # Applied only for emergency TTC braking, not routine speed matching
 LANE_REJECTION_REWARD_PENALTY = 0.05  # Small signal when an unsafe lane-change request is rejected
+SHIELD_ACCEL_INTERVENTION_WEIGHT = 0.15  # Modest cost for routine acceleration overrides
 
 # Reward shaping for beneficial lane changes
 LANE_CHANGE_BONUS = 0.15
@@ -558,30 +559,37 @@ class HighwaySimulator:
 
 
     def get_valid_lane_action_mask(self):
-        """
-        Action IDs:
-            0 = left  -> lane index + 1
-            1 = keep  -> no lane change
-            2 = right -> lane index - 1
-        Returns a Boolean mask in action-ID order.
-        """
-        road = self.env.unwrapped.road
-
-        # During a lane change or cooldown, only "keep" is meaningful.
+        """Mask unavailable or TTC/gap-unsafe lane changes; KEEP is always valid."""
+        base_env = self.env.unwrapped
+        road = base_env.road
+        vehicle = base_env.vehicle
         if self._lane_change_active or self._lane_change_cooldown > 0:
             return np.array([False, True, False], dtype=bool)
 
         start_node, end_node, target_lane_id = self.target_lane_index
         available_lanes = road.network.graph[start_node][end_node]
         valid_ids = set(range(len(available_lanes)))
+        lane_ttc = self._min_ttc_by_lane()
+        min_gap = max(8.0, 0.5 * max(0.0, float(vehicle.speed)))
+        mask = [False, True, False]
 
-        left_lane = int(target_lane_id) + 1
-        right_lane = int(target_lane_id) - 1
-        return np.array([
-            left_lane in valid_ids,  # action 0
-            True,  # action 1
-            right_lane in valid_ids,  # action 2
-        ], dtype=bool)
+        for action_id, candidate_lane in ((0, int(target_lane_id) + 1),
+                                          (2, int(target_lane_id) - 1)):
+            if candidate_lane not in valid_ids:
+                continue
+            values = lane_ttc.get(candidate_lane)
+            if values is None:
+                continue
+            mask[action_id] = bool(
+                float(values.get("front_ttc", float("inf"))) > LANE_CHANGE_MIN_TTC
+                and float(values.get("rear_ttc", float("inf"))) > LANE_CHANGE_MIN_TTC
+                and float(values.get("front_gap", float("inf"))) >= min_gap
+                and float(values.get("rear_gap", float("inf"))) >= min_gap
+            )
+        print("[LANE ACTION MASK]", f"current_lane={int(vehicle.lane_index[2])}",
+              f"mask={mask}", f"min_ttc={LANE_CHANGE_MIN_TTC:.2f}",
+              f"min_gap={min_gap:.2f}")
+        return np.asarray(mask, dtype=bool)
 
 
 #?????????????????????????????????????????????????????????????????????????????????????????????????????
@@ -1249,6 +1257,7 @@ class HighwaySimulator:
 
         # Correlate final output with this exact filter invocation.
         safety_info["ttc_filter_call_id"] = ttc_filter_call_id
+        safety_info["safety_filter_applied"] = True
         print(
             "[FILTER EXIT]",
             f"call_id={ttc_filter_call_id}",
@@ -1442,7 +1451,7 @@ class HighwaySimulator:
 
         print(
             "[ACTION FLOW]",
-            f"policy_sampled={sampled_for_log if 'sampled_for_log' in locals() else (np.asarray(sampled_action).tolist() if sampled_action is not None else None)}",
+            f"policy_sampled={(np.asarray(sampled_action, dtype=np.float32).reshape(-1).tolist() if sampled_action is not None else None)}",
             f"step_input={incoming_action.tolist()}",
             f"simulator_action={action.tolist()}",
             f"filter_applied_in_step={safety_filter_applied}",
@@ -2552,6 +2561,7 @@ def construct_reward(reward_specification, embedding_model):
         lane_change_allowed=True,
         ego_speed=0.0,
         safety_info=None,
+        policy_sampled_action=None,
     ):
         behavior_embedding = embedding_model.encode(behavior_description)
 
@@ -2584,13 +2594,19 @@ def construct_reward(reward_specification, embedding_model):
 
         acceleration = float(np.clip(action[0], -1.0, 1.0))
         lane_action_id = int(np.clip(np.rint(action[1]), 0, 2))
-
-        # Penalize the magnitude of acceleration/braking.
-        # Penalize the magnitude of acceleration/braking.
         control_penalty = float(reward_specification.get("action_weight", 0.0)) * abs(acceleration)
-
-        # Do not impose a blanket penalty on every lane-change action.
         control_penalty += LANE_CHANGE_COST if lane_action_id != 1 else 0.0
+
+        # Explicitly expose routine shield intervention to the reward. Without
+        # this term, a raw +1.0 request filtered to -0.02 receives reward based
+        # almost entirely on -0.02, hiding the policy's repeated over-request.
+        sampled_for_reward = np.asarray(
+            action if policy_sampled_action is None else policy_sampled_action,
+            dtype=np.float32).reshape(-1)
+        sampled_accel_for_reward = (float(np.clip(sampled_for_reward[0], -1.0, 1.0))
+                                    if sampled_for_reward.size else acceleration)
+        accel_intervention_magnitude = abs(sampled_accel_for_reward - acceleration)
+        intervention_penalty = SHIELD_ACCEL_INTERVENTION_WEIGHT * min(accel_intervention_magnitude, 2.0)
 
         # Reward a useful lane-change decision only when the
         # safety filter has approved it and the current lane has
@@ -2680,6 +2696,7 @@ def construct_reward(reward_specification, embedding_model):
                 + progress_reward
                 - safety_penalty
                 - shield_penalty
+                - intervention_penalty
                 - control_penalty
                 - lane_penalty
                 - road_penalty
@@ -2719,6 +2736,7 @@ def compute_reward(
     lane_change_allowed=True,
     ego_speed=0.0,
     safety_info=None,
+    policy_sampled_action=None,
 ):
     return reward_function(
         behavior_description=behavior_description,
@@ -2730,6 +2748,7 @@ def compute_reward(
         lane_change_allowed=lane_change_allowed,
         ego_speed=ego_speed,
         safety_info=safety_info,
+        policy_sampled_action=policy_sampled_action,
     )
 
 
@@ -3319,7 +3338,6 @@ def AROOD(simulator, policy):
             reward_action = filtered_action.copy()
 
             next_state_pred = dynamics_model.predict(state, reward_action)
-            min_ttc, closing_vehicle_count = calculate_min_ttc(simulator)
 
             next_state, simulator_reward, done, step_info = simulator.step(
                 reward_action,
@@ -3343,9 +3361,14 @@ def AROOD(simulator, policy):
                 reward_action = actual_policy_action
                 next_state_pred = dynamics_model.predict(state, reward_action)
 
-            # Use the reconciled action for risk prediction and all
-            # subsequent transition/reward context calculations.
+            # Use the reconciled action for risk prediction.
             risk = risk_model.predict(state, reward_action, next_state_pred)
+
+            # Reward TTC is measured after the action has been executed, not
+            # from the stale pre-step scene.
+            min_ttc, closing_vehicle_count = calculate_min_ttc(simulator)
+            print("[POST-STEP TTC FOR REWARD]", f"min_ttc={min_ttc:.3f}",
+                  f"closing_vehicle_count={closing_vehicle_count}")
 
 
 
@@ -3527,6 +3550,7 @@ def AROOD(simulator, policy):
                 lane_change_allowed=lane_change_allowed,
                 ego_speed=ego_speed_for_reward,
                 safety_info=safety_info,
+                policy_sampled_action=sampled_action,
             )
 
             print(
