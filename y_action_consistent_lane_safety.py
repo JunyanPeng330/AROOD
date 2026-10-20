@@ -2764,9 +2764,9 @@ def AutoReward_LLM(driving_context, performance_feedback=None,):
             "offers a useful improvement. Avoid unnecessary "
             "lane changes and never sacrifice safety for speed."
         )
-        tracking_weight = 0.5
-        safety_weight = 4.0
-        action_weight = 0.10
+        tracking_weight = 0.15
+        safety_weight = 12.0
+        action_weight = 0.01
         reward_mode = "safety"
 
     elif risk >= TAU_RISK:
@@ -2774,9 +2774,9 @@ def AutoReward_LLM(driving_context, performance_feedback=None,):
             "Maintain safe following distance and smooth "
             "control while making cautious progress."
         )
-        tracking_weight = 0.8
-        safety_weight = 2.5
-        action_weight = 0.1
+        tracking_weight = 0.18
+        safety_weight = 10.0
+        action_weight = 0.01
         reward_mode = "safety"
 
     elif shift:
@@ -2786,9 +2786,9 @@ def AutoReward_LLM(driving_context, performance_feedback=None,):
             "nearby vehicles, maintain safe spacing, "
             "and make stable progress."
         )
-        tracking_weight = 1.0
-        safety_weight = 1.5
-        action_weight = 0.1
+        tracking_weight = 0.20
+        safety_weight = 8.0
+        action_weight = 0.01
         reward_mode = "shift_adaptation"
 
     else:
@@ -2796,9 +2796,9 @@ def AutoReward_LLM(driving_context, performance_feedback=None,):
             "Make steady highway progress while maintaining "
             "safe spacing and smooth control."
         )
-        tracking_weight = 1.0
-        safety_weight = 1.0
-        action_weight = 0.1
+        tracking_weight = INITIAL_TRACKING_WEIGHT
+        safety_weight = INITIAL_COLLISION_PENALTY
+        action_weight = 0.01
         reward_mode = "nominal"
 
 
@@ -2813,7 +2813,7 @@ def AutoReward_LLM(driving_context, performance_feedback=None,):
     elif ttc <= ttc_caution_threshold:
         ttc_weight = 2.0
     else:
-        ttc_weight = 1.0
+        ttc_weight = INITIAL_TTC_WEIGHT
 
 
     # Separate RL-performance feedback from shift and risk.
@@ -2841,14 +2841,19 @@ def AutoReward_LLM(driving_context, performance_feedback=None,):
         "safety_weight": safety_weight,
         "action_weight": action_weight,
         # Explicit, modest incentive for forward progress; safety penalties remain separate.
-        "progress_weight": 0.20,
+        "progress_weight": INITIAL_PROGRESS_WEIGHT,
         "target_speed": 25.0,  # m/s; tune to the scenario/speed limit
+        "headway_weight": INITIAL_HEADWAY_WEIGHT,
+        "headway_time_headway": DESIRED_TIME_HEADWAY,
+        "headway_min_gap": MIN_FOLLOWING_GAP,
+        "rear_ttc_weight": INITIAL_REAR_TTC_WEIGHT,
+        "lane_change_cost": INITIAL_LANE_CHANGE_COST,
         "shift_score": float(driving_context["shift_score"]),
         "risk_score": risk,
         # New road-keeping constraints
         "lane_keeping_weight": lane_keeping_weight,
         "max_lateral_deviation": 2.0,
-        "offroad_penalty": offroad_penalty,
+        "offroad_penalty": INITIAL_OFFROAD_PENALTY,
         "ttc_weight": ttc_weight,
         "ttc_critical_threshold": ttc_critical_threshold,
         "ttc_danger_threshold": ttc_danger_threshold,
