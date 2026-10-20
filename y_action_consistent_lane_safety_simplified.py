@@ -35,18 +35,16 @@ simulation_frequency = 15
 
 lane_keeping_weight = 0.20
 
-# Initial weights for the long-term driving objective. Numeric safety and
-# headway terms are authoritative; semantic similarity is auxiliary.
+# Stable long-term reward objectives. TTC is reserved for the independent
+# safety shield; it is not a continuous reward term.
 INITIAL_TRACKING_WEIGHT = 0.20
 INITIAL_PROGRESS_WEIGHT = 0.35
 INITIAL_HEADWAY_WEIGHT = 1.50
-INITIAL_REAR_TTC_WEIGHT = 1.50
-INITIAL_TTC_WEIGHT = 2.50
 INITIAL_COLLISION_PENALTY = 10.0
 INITIAL_OFFROAD_PENALTY = 5.0
 INITIAL_LANE_CHANGE_COST = 0.01
 
-ttc_weight = INITIAL_TTC_WEIGHT
+# TTC thresholds are used by the safety shield, not reward shaping.
 ttc_critical_threshold = 2.0
 ttc_danger_threshold = 3.0
 ttc_caution_threshold = 4.0
@@ -63,9 +61,8 @@ SAFETY_OVERRIDE_REWARD_PENALTY = 1.0  # Applied only for emergency TTC braking, 
 LANE_REJECTION_REWARD_PENALTY = 0.05  # Small signal when an unsafe lane-change request is rejected
 SHIELD_ACCEL_INTERVENTION_WEIGHT = 0.15  # Modest cost for routine acceleration overrides
 
-# Reward shaping for beneficial lane changes
-LANE_CHANGE_BONUS = 0.22
-LANE_CHANGE_REWARD_TTC = 6.0
+# Lane changes are evaluated through stable task rewards and safety filtering.
+# Do not grant an instantaneous bonus based on TTC.
 LANE_CHANGE_COST = 0.0
 
 # Diagnostic mode: a LEFT/RIGHT policy decision sets a persistent lane target;
@@ -3161,8 +3158,8 @@ def construct_environment_information(state, action, next_state_pred, shift_scor
 def AutoReward_LLM(driving_context, performance_feedback=None,):
     shift = bool(driving_context["shift_detected"])
     risk = float(driving_context["risk_score"])
-    ttc = float(driving_context["minimum_ttc_seconds"])
-
+    # TTC is intentionally not used to shape the reward. The independent
+    # safety shield uses it to filter or modify unsafe actions.
 
     # Separate reward-design decisions.
 
@@ -3217,19 +3214,6 @@ def AutoReward_LLM(driving_context, performance_feedback=None,):
 
 
 
-    if ttc <= ttc_critical_threshold:
-        target_behavior += (
-            "Prioritize reducing collision risk and increasing the following gap when TTC is low, while maintaining stable lane control."
-        )
-        ttc_weight = 5.0
-    elif ttc <= ttc_danger_threshold:
-        ttc_weight = 3.0
-    elif ttc <= ttc_caution_threshold:
-        ttc_weight = 2.0
-    else:
-        ttc_weight = INITIAL_TTC_WEIGHT
-
-
     # Separate RL-performance feedback from shift and risk.
     if performance_feedback is not None:
         collision_rate = performance_feedback.get("collision_rate", 0.0)
@@ -3260,7 +3244,6 @@ def AutoReward_LLM(driving_context, performance_feedback=None,):
         "headway_weight": INITIAL_HEADWAY_WEIGHT,
         "headway_time_headway": DESIRED_TIME_HEADWAY,
         "headway_min_gap": MIN_FOLLOWING_GAP,
-        "rear_ttc_weight": INITIAL_REAR_TTC_WEIGHT,
         "lane_change_cost": INITIAL_LANE_CHANGE_COST,
         "shift_score": float(driving_context["shift_score"]),
         "risk_score": risk,
@@ -3268,11 +3251,6 @@ def AutoReward_LLM(driving_context, performance_feedback=None,):
         "lane_keeping_weight": lane_keeping_weight,
         "max_lateral_deviation": 2.0,
         "offroad_penalty": INITIAL_OFFROAD_PENALTY,
-        "ttc_weight": ttc_weight,
-        "ttc_critical_threshold": ttc_critical_threshold,
-        "ttc_danger_threshold": ttc_danger_threshold,
-        "ttc_caution_threshold": ttc_caution_threshold,
-
     }
 
 
@@ -3289,11 +3267,11 @@ def construct_reward(reward_specification, embedding_model):
     Total reward:
         r = tracking_weight * r_semantic
             + progress_weight * clip(ego_speed / target_speed, 0, 1)
-            - safety_penalty
-            - control_penalty
-            - lane_penalty
-            - offroad_penalty
-            - ttc_penalty
+            - headway_penalty
+            - safety / intervention / control / lane / off-road penalties
+
+    TTC is excluded from reward construction and remains in the independent
+    execution-time safety shield.
     """
 
     target_text = reward_specification.get("target_behavior", reward_specification["name"],)
@@ -3377,19 +3355,10 @@ def construct_reward(reward_specification, embedding_model):
             "control_penalty_input_units=normalized_acceleration",
         )
 
-        # Reward a useful lane-change decision only when the
-        # safety filter has approved it and the current lane has
-        # a developing TTC conflict.
+        # No instantaneous TTC-triggered lane-change bonus. Lane changes
+        # are learned through stable task objectives while the independent
+        # safety shield continues to enforce TTC constraints.
         lane_change_bonus = 0.0
-
-        if (
-                lane_action_id != 1
-                and lane_change_allowed
-                and not safety_violation
-                and np.isfinite(min_ttc)
-                and 2.0 < float(min_ttc) <= LANE_CHANGE_REWARD_TTC
-        ):
-            lane_change_bonus = LANE_CHANGE_BONUS
 
 
 
@@ -3403,33 +3372,11 @@ def construct_reward(reward_specification, embedding_model):
         road_penalty = offroad_penalty_magnitude if offroad else 0.0
 
 
-        # 6. New TTC penalty: TTC is measured in seconds
+        # TTC is not converted into a reward penalty. min_ttc remains in the
+        # signature for compatibility and diagnostics; the safety shield still
+        # uses TTC independently.
         min_ttc = float(min_ttc)
-
-        # Read the actual settings selected by the reward designer.
-        ttc_weight_value = float(reward_specification.get("ttc_weight", ttc_weight))
-
-        critical_ttc_value = float(reward_specification.get("ttc_critical_threshold", ttc_critical_threshold,))
-
-        safe_ttc_value = float(reward_specification.get("ttc_safe_threshold", reward_specification.get("ttc_caution_threshold", ttc_caution_threshold,),))
-
-
-        print(
-            f"[TTC PENALTY DEBUG] "
-            f"min_ttc={min_ttc:.3f}s, "
-            f"critical={critical_ttc_value:.3f}s, "
-            f"safe={safe_ttc_value:.3f}, "
-            f"weight={ttc_weight_value:.3f}"
-        )
-
-
-        ttc_penalty_value = calculate_ttc_penalty(
-            min_ttc,
-            critical_ttc=critical_ttc_value,
-            safe_ttc=safe_ttc_value,
-        )
-
-        ttc_penalty = ttc_weight_value * ttc_penalty_value
+        ttc_penalty = 0.0
 
         # Reward progress explicitly, rather than relying on semantic text similarity.
         # Clip at target_speed so the policy is not encouraged to exceed it.
@@ -3483,16 +3430,9 @@ def construct_reward(reward_specification, embedding_model):
             if not lead_pulling_away_for_reward else 0.0
         )
 
-        # Rear TTC is a separate safety signal: a fast-approaching follower
-        # should influence safety even when front TTC is large.
+        # Rear TTC remains a safety-shield signal, not a reward penalty.
         rear_ttc_for_reward = float(safety_info.get("current_rear_ttc", float("inf")))
-        rear_ttc_weight = max(0.0, float(reward_specification.get("rear_ttc_weight", INITIAL_REAR_TTC_WEIGHT)))
-        rear_ttc_penalty_value = calculate_ttc_penalty(
-            rear_ttc_for_reward,
-            critical_ttc=max(1.0, critical_ttc_value - 0.5),
-            safe_ttc=safe_ttc_value,
-        )
-        rear_ttc_penalty = rear_ttc_weight * rear_ttc_penalty_value
+        rear_ttc_penalty = 0.0
 
         print(
             "[LONG-TERM OBJECTIVE]",
@@ -3502,8 +3442,7 @@ def construct_reward(reward_specification, embedding_model):
             f"lead_pulling_away={lead_pulling_away_for_reward}",
             f"headway_shortfall={headway_shortfall:.3f}",
             f"headway_penalty={headway_penalty:.3f}",
-            f"rear_ttc={rear_ttc_for_reward:.3f}",
-            f"rear_ttc_penalty={rear_ttc_penalty:.3f}",
+            f"rear_ttc_shield_only={rear_ttc_for_reward:.3f}",
         )
 
         print(
@@ -3513,13 +3452,7 @@ def construct_reward(reward_specification, embedding_model):
             f"weight={progress_weight:.3f}, "
             f"reward={progress_reward:.4f}"
         )
-
-        print(
-            f"[TTC PENALTY RESULT] "
-            f"raw_ttc_penalty={ttc_penalty_value:.4f}, "
-            f"weighted={ttc_penalty:.4f}"
-        )
-
+        print("[TTC REWARD] disabled; TTC is handled by the independent safety shield.")
         reward = (
                 float(reward_specification["tracking_weight"])
                 * float(semantic_reward)
@@ -3530,10 +3463,7 @@ def construct_reward(reward_specification, embedding_model):
                 - control_penalty
                 - lane_penalty
                 - road_penalty
-                - ttc_penalty
                 - headway_penalty
-                - rear_ttc_penalty
-                + lane_change_bonus
         )
 
         if reward_diagnostics is not None:
@@ -3546,10 +3476,10 @@ def construct_reward(reward_specification, embedding_model):
                 "control_penalty": float(control_penalty),
                 "lane_penalty": float(lane_penalty),
                 "offroad_penalty": float(road_penalty),
-                "ttc_penalty": float(ttc_penalty),
+                "ttc_penalty": 0.0,
                 "headway_penalty": float(headway_penalty),
-                "rear_ttc_penalty": float(rear_ttc_penalty),
-                "lane_change_bonus": float(lane_change_bonus),
+                "rear_ttc_penalty": 0.0,
+                "lane_change_bonus": 0.0,
                 "total_reward": float(reward),
             })
 
@@ -3565,10 +3495,8 @@ def construct_reward(reward_specification, embedding_model):
             f"intervention={safety_info.get('intervention_reason', 'none')}, "
             f"lane={lane_penalty:.3f}, "
             f"offroad={road_penalty:.3f}, "
-            f"ttc_penalty={ttc_penalty:.3f}, "
+            f"ttc_penalty=0.000 (shield-only), "
             f"headway_penalty={headway_penalty:.3f}, "
-            f"rear_ttc_penalty={rear_ttc_penalty:.3f}, "
-            f"lane_change_bonus={lane_change_bonus:.3f}, "
             f"total={reward:.3f}"
         )
 
