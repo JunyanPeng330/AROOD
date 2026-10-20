@@ -1326,6 +1326,8 @@ class HighwaySimulator:
                 f"target_lane={candidate_lane}",
                 f"requested={requested_lane_name}",
                 f"ego_speed_mps={ego_speed_snapshot:.3f}",
+                f"source_rear_ttc_s={current_values.get('rear_ttc', float('inf')):.3f}",
+                f"source_rear_pressure={float(current_values.get('rear_ttc', float('inf'))) <= ttc_danger_threshold}",
                 f"selected_front_id={selected_target_values.get('front_vehicle_id')}",
                 f"selected_front_gap_m={selected_target_values.get('front_gap', float('inf')):.3f}",
                 f"selected_front_ttc_s={selected_target_values.get('front_ttc', float('inf')):.3f}",
@@ -1396,13 +1398,6 @@ class HighwaySimulator:
                 # remains the deciding constraint.
                 source_rear_ttc = float(current_values.get("rear_ttc", float("inf")))
                 source_rear_pressure = source_rear_ttc <= ttc_danger_threshold
-                print(
-                    "[SOURCE LANE REAR PRESSURE]",
-                    f"source_lane={current_lane}",
-                    f"rear_ttc={source_rear_ttc:.3f}",
-                    f"rear_pressure={source_rear_pressure}",
-                    "policy=informational_not_automatic_veto",
-                )
             elif candidate_lane_available:
                 lane_change_rejection_reasons.append("target_lane_traffic_data_unavailable")
 
