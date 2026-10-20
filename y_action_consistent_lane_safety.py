@@ -122,6 +122,31 @@ torch.manual_seed(SEED)
 # 2. Utility Functions
 # ============================================================
 
+def lane_action_index_to_delta(lane_action_index):
+    """Map categorical policy index 0/1/2 to semantic relative lane delta -1/0/+1."""
+    index = int(np.clip(np.rint(float(lane_action_index)), 0, 2))
+    return index - 1
+
+
+def lane_action_delta_to_index(lane_action_delta):
+    """Map semantic relative lane delta -1/0/+1 to categorical policy index 0/1/2."""
+    delta = int(np.clip(np.rint(float(lane_action_delta)), -1, 1))
+    return delta + 1
+
+
+def relative_lane_delta_to_absolute_lane(current_lane_id, lane_action_delta):
+    """Convert LEFT/KEEP/RIGHT intent to absolute Highway lane ID.
+
+    This highway-v0 road graph numbers lanes in the opposite direction to the
+    semantic convention: absolute lane IDs increase toward the left. Therefore
+    LEFT (-1) maps to current_lane_id + 1, KEEP (0) to current_lane_id, and
+    RIGHT (+1) to current_lane_id - 1. Absolute IDs remain geometry identifiers.
+    """
+    current_lane_id = int(current_lane_id)
+    delta = int(np.clip(np.rint(float(lane_action_delta)), -1, 1))
+    return current_lane_id - delta
+
+
 def to_tensor(x):
     """Convert input to a float32 tensor on DEVICE."""
     if isinstance(x, torch.Tensor):
@@ -1014,12 +1039,17 @@ class HighwaySimulator:
     def filter_ttc_action(self, sampled_action):
         """
         Apply TTC-based emergency braking and lane-change safety checks.
-        Action representation:
+        Hybrid policy representation:
             action[0] = normalized acceleration in [-1, 1]
-            action[1] = discrete lane action:
-                        0 = LEFT
-                        1 = KEEP
-                        2 = RIGHT
+            action[1] = categorical lane-action index (0/1/2)
+
+        Semantic relative lane action:
+            index 0 -> delta -1 = LEFT
+            index 1 -> delta  0 = KEEP
+            index 2 -> delta +1 = RIGHT
+
+        Absolute Highway lane IDs remain simulator geometry IDs. Low-level
+        executed steering is computed separately by the steering controller.
         Requires _min_ttc_by_lane() to return:
             {lane_id: {
                     "front_ttc": float,
@@ -1239,17 +1269,11 @@ class HighwaySimulator:
         # Only report a deferred lane change if LEFT or RIGHT was requested.
 
 
-        if requested_lane_action == 0:
-            candidate_lane = current_lane + 1
-            requested_lane_name = "LEFT"
-
-        elif requested_lane_action == 2:
-            candidate_lane = current_lane - 1
-            requested_lane_name = "RIGHT"
-
-        else:
-            candidate_lane = current_lane
-            requested_lane_name = "KEEP"
+        requested_lane_delta = lane_action_index_to_delta(policy_requested_lane_action)
+        candidate_lane = relative_lane_delta_to_absolute_lane(
+            current_lane, requested_lane_delta
+        )
+        requested_lane_name = {-1: "LEFT", 0: "KEEP", 1: "RIGHT"}[requested_lane_delta]
 
         filtered_lane_action = requested_lane_action
         filtered_lane_name = requested_lane_name
@@ -1267,7 +1291,7 @@ class HighwaySimulator:
         candidate_rear_gap_limit = max(8.0, 0.5 * max(float(vehicle.speed), 0.0))
         candidate_lane_available = False
 
-        if requested_lane_action in (0, 2):
+        if requested_lane_delta != 0:
             # Check the actual road graph, not only a hard-coded lane count.
             try:
                 start_node, end_node, _ = vehicle.lane_index
@@ -1400,11 +1424,15 @@ class HighwaySimulator:
             "current_lane": current_lane,
             "candidate_lane": candidate_lane,
 
-            "requested_lane_action": requested_lane_action,
+            "requested_lane_action": requested_lane_action,  # categorical index
             "requested_lane_name": requested_lane_name,
-
-            "filtered_lane_action": filtered_lane_action,
+            "requested_lane_action_index": policy_requested_lane_action,
+            "requested_lane_delta": requested_lane_delta,
+            "filtered_lane_action": filtered_lane_action,  # categorical index
             "filtered_lane_name": filtered_lane_name,
+            "filtered_lane_delta": lane_action_index_to_delta(filtered_lane_action),
+            "current_lane_id": current_lane,
+            "requested_target_lane_id": candidate_lane,
 
             "current_front_ttc": current_front_ttc,
             "current_rear_ttc": current_rear_ttc,
@@ -1517,19 +1545,19 @@ class HighwaySimulator:
 #???????????????????????????????????????????????????????????????????????????????????????????????????????????
     def _update_lane_target(self, lane_action_id):
         """
-        Convert a discrete lane intention into a persistent target lane.
-        IDs:
-          0 = left
-          1 = keep lane
-          2 = right
-        A new lane change is not started while another is in progress.
+        Convert a categorical policy index into a persistent absolute lane target.
+
+        Policy index 0/1/2 maps to semantic relative delta -1/0/+1
+        (LEFT/KEEP/RIGHT). Absolute Highway lane IDs are retained for geometry;
+        in this road graph, absolute IDs increase toward the left.
         """
 
         base_env = self.env.unwrapped
         ego = base_env.vehicle
         road = base_env.road
 
-        lane_action_id = int(lane_action_id)
+        lane_action_id = int(np.clip(lane_action_id, 0, 2))
+        lane_action_delta = lane_action_index_to_delta(lane_action_id)
 
         # Check whether the vehicle has reached its target lane.
         target_lane = road.network.get_lane(self.target_lane_index)
@@ -1547,12 +1575,12 @@ class HighwaySimulator:
                 self._lane_change_active = False
                 self._lane_change_cooldown = 10
                 self._lane_change_source_index = None
-            elif lane_action_id != 1:
+            elif lane_action_delta != 0:
                 print("[LANE TARGET REJECTED] reason=lane_change_already_in_progress")
             return
 
         if self._lane_change_cooldown > 0:
-            if lane_action_id != 1:
+            if lane_action_delta != 0:
                 print(
                     "[LANE TARGET REJECTED]",
                     "reason=lane_change_cooldown",
@@ -1562,7 +1590,7 @@ class HighwaySimulator:
             return
 
         # Keep-lane action does not change the target lane.
-        if lane_action_id == 1:
+        if lane_action_delta == 0:
             return
 
         # In this Highway configuration, lane IDs increase in the
@@ -1581,10 +1609,8 @@ class HighwaySimulator:
         valid_lane_ids = set(range(len(available_lanes)))
 
         # In this configuration, lane IDs should be 0, 1, and 2.
-        candidate_lane_id = (
-            current_lane_id + 1
-            if lane_action_id == 0
-            else current_lane_id - 1
+        candidate_lane_id = relative_lane_delta_to_absolute_lane(
+            current_lane_id, lane_action_delta
         )
 
         if candidate_lane_id not in valid_lane_ids:
@@ -1606,7 +1632,10 @@ class HighwaySimulator:
 
         print(
             "[LANE CHANGE REQUEST] "
-            f"action={lane_action_id}, "
+            f"policy_lane_action_index={lane_action_id}, "
+            f"relative_lane_delta={lane_action_delta:+d}, "
+            f"current_absolute_lane_id={current_lane_id}, "
+            f"target_absolute_lane_id={candidate_lane_id}, "
             f"target_lane={self.target_lane_index}"
         )
 
@@ -1617,7 +1646,10 @@ class HighwaySimulator:
         """
         Input:
             action[0] = continuous normalized acceleration
-            action[1] = discrete lane ID: 0=left, 1=keep, 2=right
+            action[1] = categorical lane-action index:
+                        0 -> delta -1 (LEFT), 1 -> delta 0 (KEEP),
+                        2 -> delta +1 (RIGHT)
+        The lane decision is distinct from low-level steering.
         Highway receives:
             [continuous acceleration, continuous normalized steering]
         """
@@ -1710,11 +1742,12 @@ class HighwaySimulator:
         lane_action_id = int(np.clip(np.rint(action[1]), 0, 2))
         current_lane_before = int(self.env.unwrapped.vehicle.lane_index[2])
 
-        lane_action_names = {
-            0: "LEFT",
-            1: "KEEP",
-            2: "RIGHT",
-        }
+        lane_action_delta = lane_action_index_to_delta(lane_action_id)
+        lane_action_names = {-1: "LEFT", 0: "KEEP", 1: "RIGHT"}
+        lane_action_name = lane_action_names[lane_action_delta]
+        requested_target_lane_id = relative_lane_delta_to_absolute_lane(
+            current_lane_before, lane_action_delta
+        )
 
         sampled_for_log = (
             np.asarray(sampled_action, dtype=np.float32).reshape(-1).tolist()
@@ -1726,8 +1759,11 @@ class HighwaySimulator:
             f"incoming_action={incoming_action.tolist()}",
             f"filtered_action={action.tolist()}",
             f"current_lane={current_lane_before}",
-            f"lane_action_id={lane_action_id}",
-            f"lane_action={lane_action_names[lane_action_id]}",
+            f"lane_action_index={lane_action_id}",
+            f"lane_action_delta={lane_action_delta:+d}",
+            f"lane_action={lane_action_name}",
+            f"current_absolute_lane_id={current_lane_before}",
+            f"requested_target_lane_id={requested_target_lane_id}",
         )
 
         # Convert the filtered discrete intention into a persistent lane target.
@@ -1737,8 +1773,10 @@ class HighwaySimulator:
         print(
             "[LANE TARGET]",
             f"current_lane={current_lane_before}",
-            f"lane_action={lane_action_names[lane_action_id]}",
+            f"lane_action_delta={lane_action_delta:+d}",
+            f"lane_action={lane_action_name}",
             f"target_lane_index={self.target_lane_index}",
+            f"target_absolute_lane_id={int(self.target_lane_index[2])}",
             f"lane_change_active={self._lane_change_active}",
             f"source_lane_index={self._lane_change_source_index}",
             f"cooldown={self._lane_change_cooldown}",
@@ -1895,11 +1933,18 @@ class HighwaySimulator:
         info["env_reward"] = float(env_reward)
 
         # Keep both representations distinct.
-        info["lane_action_id"] = lane_action_id
+        info["lane_action_id"] = lane_action_id  # categorical index for policy compatibility
+        info["lane_action_index"] = lane_action_id
+        info["lane_action_delta"] = lane_action_delta
+        info["lane_action_name"] = lane_action_name
+        info["current_lane_id"] = current_lane_before
+        info["requested_target_lane_id"] = requested_target_lane_id
+        info["accepted_target_lane_id"] = int(self.target_lane_index[2])
         info["sampled_policy_action"] = sampled_action.copy()
         info["policy_action"] = np.asarray([acceleration, lane_action_id], dtype=np.float32,)
         info["filtered_policy_action"] = np.asarray([acceleration, lane_action_id], dtype=np.float32)
-        info["executed_action"] = executed_action.copy()
+        info["executed_action"] = executed_action.copy()  # [normalized acceleration, normalized steering]
+        info["executed_acceleration"] = float(acceleration)
         info["executed_steering"] = float(steering)
         info["ttc_safety_filter"] = safety_info
 
@@ -3218,13 +3263,14 @@ def describe_current_behavior(state, action, next_state, risk_score):
         if action.size > 1
         else 1
     )
+    lane_action_delta = lane_action_index_to_delta(lane_action_id)
     lane_action_names = {
-        0: "request a left lane change",
-        1: "keep the current lane",
-        2: "request a right lane change",
+        -1: "request a left lane change (relative delta -1)",
+         0: "keep the current lane (relative delta 0)",
+         1: "request a right lane change (relative delta +1)",
     }
 
-    lane_intention = lane_action_names[lane_action_id]
+    lane_intention = lane_action_names[lane_action_delta]
 
     transition_change = float(np.linalg.norm(next_state[:VEHICLE_STATE_DIM] - state[:VEHICLE_STATE_DIM]))
     smoothness = "noticeable state change" if transition_change > 0.7 else "relatively small state change"
