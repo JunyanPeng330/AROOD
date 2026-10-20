@@ -14,6 +14,7 @@ import json
 
 import gymnasium as gym
 import highway_env
+from highway_env.vehicle.kinematics import Vehicle
 
 # ============================================================
 # 1. Configuration
@@ -59,7 +60,13 @@ MAX_PHYSICAL_ACCELERATION = 5.0  # m/s^2
 
 
 
-STATE_DIM = 32
+NUM_LANES = 3
+NUM_SURROUNDING_VEHICLES = 6
+VEHICLE_FEATURES = 7
+NUM_VEHICLE_ROWS = NUM_SURROUNDING_VEHICLES + 1
+VEHICLE_STATE_DIM = NUM_VEHICLE_ROWS * VEHICLE_FEATURES
+CONTEXT_DIM = 4
+STATE_DIM = VEHICLE_STATE_DIM + CONTEXT_DIM  # 53
 ACTION_DIM = 2
 
 HIDDEN_DIM = 128
@@ -414,38 +421,35 @@ class ActorCriticPolicy(nn.Module):
 # ============================================================
 
 class HighwaySimulator:
-    """Highway-env wrapper with the legacy four-value step API.
+    """Highway-env wrapper with six managed traffic vehicles.
 
-    State is a fixed 32-D vector: four 7-feature vehicle rows plus
-    four context values.
-    Policy action is [normalized acceleration, discrete lane ID]:
-    0=left, 1=keep, 2=right.
-
-    Highway receives [physical acceleration, normalized steering].
+    State is 53-D: seven 7-feature vehicle rows (ego + six traffic vehicles)
+    and four context values.
     """
 
-    def __init__(self, state_dim=STATE_DIM, action_dim=ACTION_DIM,
-                 max_steps=MAX_STEPS, render_mode=None, vehicles_count=4):
+    def __init__(self, state_dim=STATE_DIM, action_dim=ACTION_DIM,\n                 max_steps=MAX_STEPS, render_mode=None, vehicles_count=NUM_SURROUNDING_VEHICLES):
         if gym is None or highway_env is None:
             raise ImportError(
                 "Highway-env dependencies are missing. Install with: "
                 "pip install highway-env gymnasium sentence-transformers"
             )
-        if state_dim != 32 or action_dim != 2:
-            raise ValueError("HighwaySimulator expects STATE_DIM=32 and ACTION_DIM=2")
+        if state_dim != STATE_DIM or action_dim != ACTION_DIM:
+            raise ValueError(f"HighwaySimulator expects STATE_DIM={STATE_DIM} and ACTION_DIM={ACTION_DIM}")
         self.state_dim = state_dim
         self.action_dim = action_dim
         self.max_steps = max_steps
         self.step_count = 0
         self.render_mode = render_mode
-        self.vehicles_count = vehicles_count
+        self.vehicles_count = NUM_SURROUNDING_VEHICLES
+        self.traffic_front_gap = 30.0
+        self.traffic_rear_gap = 30.0
         self.env = gym.make(
             "highway-v0",
             render_mode=render_mode,
             config={
                 "observation": {
                     "type": "Kinematics",
-                    "vehicles_count": 4,
+                    "vehicles_count": NUM_VEHICLE_ROWS,
                     "features": ["presence", "x", "y", "vx", "vy", "cos_h", "sin_h"],
                     "absolute": False,
                     "normalize": True,
@@ -457,7 +461,7 @@ class HighwaySimulator:
                 },
 
                 "lanes_count": 3,
-                "vehicles_count": vehicles_count,
+                "vehicles_count": NUM_SURROUNDING_VEHICLES,
                 "duration": max_steps,
                 "offroad_terminal": False,
 
@@ -477,11 +481,13 @@ class HighwaySimulator:
         obs = np.asarray(obs, dtype=np.float32)
 
 
-        rows = np.zeros((4, 7), dtype=np.float32)
-        if obs.ndim != 2 or obs.shape[1] < 7:
+        rows = np.zeros((NUM_VEHICLE_ROWS, VEHICLE_FEATURES), dtype=np.float32)
+        if obs.ndim != 2 or obs.shape[1] < VEHICLE_FEATURES:
             raise ValueError(f"Unexpected Highway observation shape: {obs.shape}")
-        n = min(4, obs.shape[0])
-        rows[:n] = obs[:n, :7]
+        n = min(NUM_VEHICLE_ROWS, obs.shape[0])
+        rows[:n] = obs[:n, :VEHICLE_FEATURES]
+        if n < NUM_VEHICLE_ROWS:
+            print("[OBSERVATION WARNING]", f"expected {NUM_VEHICLE_ROWS} rows, got {n}")
 
         #print("copy the raw_obs to rows:", rows)
 
@@ -506,14 +512,13 @@ class HighwaySimulator:
 
 
     def set_distribution_shift(self, level):
-        """Change traffic density between episodes for controlled OOD tests.
-
-        level=0 uses the reference density; level=1 increases the vehicle
-        count. The new setting takes effect on the next reset.
-        """
+        """Keep six vehicles fixed while varying front/rear gaps for stress tests."""
         level = float(np.clip(level, 0.0, 1.0))
-        target_count = int(round(15 + 10 * level))
-        self.env.unwrapped.config["vehicles_count"] = target_count
+        self.traffic_front_gap = 30.0 - 10.0 * level
+        self.traffic_rear_gap = 30.0 - 10.0 * level
+        print("[TRAFFIC SETTING]", f"vehicles={NUM_SURROUNDING_VEHICLES}",
+              f"front_gap={self.traffic_front_gap:.1f}m",
+              f"rear_gap={self.traffic_rear_gap:.1f}m")
 
 
 
@@ -535,6 +540,9 @@ class HighwaySimulator:
 
 
         self.step_count = 0
+        base_env = self.env.unwrapped
+        self._initialize_six_vehicle_traffic()
+        obs = base_env.observation_type.observe()
 
         # Store the target lane once at the beginning of this episode.
         # Do NOT recalculate it at every time step.
@@ -554,10 +562,111 @@ class HighwaySimulator:
         )
 
         self.state = self._encode_state(obs)
+        self._assert_traffic_invariant("reset")
         return self.state.copy()
 
 
 
+
+    def _lane_longitudinal_position(self, vehicle, lane_index):
+        lane = self.env.unwrapped.road.network.get_lane(lane_index)
+        longitudinal, _ = lane.local_coordinates(np.asarray(vehicle.position, dtype=float))
+        return float(longitudinal)
+
+    def _lane_index_for_id(self, lane_id):
+        ego_lane_index = self.env.unwrapped.vehicle.lane_index
+        return (ego_lane_index[0], ego_lane_index[1], int(lane_id))
+
+    def _spawn_slot_vehicle(self, lane_id, side, ego_s):
+        """Spawn a real Highway vehicle into a missing lane/front-or-rear slot."""
+        base_env = self.env.unwrapped
+        ego = base_env.vehicle
+        lane_index = self._lane_index_for_id(lane_id)
+        gap = self.traffic_front_gap if side == "front" else self.traffic_rear_gap
+        longitudinal = ego_s + gap if side == "front" else ego_s - gap
+        speed = float(np.clip(ego.speed + random.uniform(-1.5, 1.5), 8.0, 30.0))
+        traffic_vehicle = Vehicle.make_on_lane(base_env.road, lane_index,
+                                                longitudinal=longitudinal, speed=speed)
+        base_env.road.vehicles.append(traffic_vehicle)
+        print("[TRAFFIC SPAWN]", f"lane={lane_id}", f"side={side}",
+              f"gap={gap:.1f}m", f"speed={speed:.2f}m/s", f"id={id(traffic_vehicle)}")
+        return traffic_vehicle
+
+    def _initialize_six_vehicle_traffic(self):
+        """Replace randomly generated traffic with two vehicles per lane."""
+        base_env = self.env.unwrapped
+        ego = base_env.vehicle
+        base_env.road.vehicles = [vehicle for vehicle in base_env.road.vehicles if vehicle is ego]
+        ego_s = self._lane_longitudinal_position(ego, ego.lane_index)
+        for lane_id in range(NUM_LANES):
+            self._spawn_slot_vehicle(lane_id, "front", ego_s)
+            self._spawn_slot_vehicle(lane_id, "rear", ego_s)
+        self._assert_traffic_invariant("initialized")
+
+    def _maintain_six_vehicle_traffic(self):
+        """Keep one front and one rear vehicle per lane, replacing duplicate slots."""
+        road = self.env.unwrapped.road
+        ego = self.env.unwrapped.vehicle
+        ego_s = self._lane_longitudinal_position(ego, ego.lane_index)
+        slots = {(lane, side): [] for lane in range(NUM_LANES) for side in ("front", "rear")}
+        for vehicle in list(road.vehicles):
+            if vehicle is ego:
+                continue
+            try:
+                lane_id = int(vehicle.lane_index[2])
+                if lane_id not in range(NUM_LANES):
+                    continue
+                longitudinal = self._lane_longitudinal_position(vehicle, self._lane_index_for_id(lane_id))
+            except (AttributeError, TypeError, ValueError, IndexError):
+                continue
+            side = "front" if longitudinal >= ego_s else "rear"
+            slots[(lane_id, side)].append((abs(longitudinal - ego_s), vehicle))
+
+        keep_ids = set()
+        for candidates in slots.values():
+            candidates.sort(key=lambda item: item[0])
+            if candidates:
+                keep_ids.add(id(candidates[0][1]))
+                for _, duplicate in candidates[1:]:
+                    if duplicate in road.vehicles:
+                        road.vehicles.remove(duplicate)
+        road.vehicles = [vehicle for vehicle in road.vehicles
+                         if vehicle is ego or id(vehicle) in keep_ids]
+
+        slots_present = set()
+        for vehicle in road.vehicles:
+            if vehicle is ego:
+                continue
+            try:
+                lane_id = int(vehicle.lane_index[2])
+                longitudinal = self._lane_longitudinal_position(vehicle, self._lane_index_for_id(lane_id))
+            except (AttributeError, TypeError, ValueError, IndexError):
+                continue
+            if lane_id in range(NUM_LANES):
+                slots_present.add((lane_id, "front" if longitudinal >= ego_s else "rear"))
+        for lane_id in range(NUM_LANES):
+            for side in ("front", "rear"):
+                if (lane_id, side) not in slots_present:
+                    self._spawn_slot_vehicle(lane_id, side, ego_s)
+
+    def _assert_traffic_invariant(self, where):
+        ego = self.env.unwrapped.vehicle
+        ego_s = self._lane_longitudinal_position(ego, ego.lane_index)
+        counts = {(lane, side): 0 for lane in range(NUM_LANES) for side in ("front", "rear")}
+        traffic_count = 0
+        for vehicle in list(self.env.unwrapped.road.vehicles):
+            if vehicle is ego:
+                continue
+            traffic_count += 1
+            try:
+                lane_id = int(vehicle.lane_index[2])
+                longitudinal = self._lane_longitudinal_position(vehicle, self._lane_index_for_id(lane_id))
+            except (AttributeError, TypeError, ValueError, IndexError):
+                continue
+            if lane_id in range(NUM_LANES):
+                counts[(lane_id, "front" if longitudinal >= ego_s else "rear")] += 1
+        print("[TRAFFIC INVARIANT]", f"where={where}", f"traffic_count={traffic_count}",
+              f"slot_counts={counts}")
 
     def _relevant_lane_ids(self, include_active_lane_change=True):
         """Return the single canonical lane set relevant to ego safety/reward.
@@ -1723,7 +1832,10 @@ class HighwaySimulator:
         #??????????????????????????????????????????????????????????????????????????????????????
 
         self.step_count += 1
+        self._maintain_six_vehicle_traffic()
+        obs = self.env.unwrapped.observation_type.observe()
         next_state = self._encode_state(obs)
+        self._assert_traffic_invariant("step")
 
         ego = self.env.unwrapped.vehicle
         collision = bool(getattr(ego, "crashed", False))
@@ -2060,12 +2172,10 @@ def calculate_ttc_penalty(
 def calculate_ttc_risk_indicator(state, debug=False):
     state = np.asarray(state, dtype=np.float32).reshape(-1)
 
-    if state.size < 28:
-        raise ValueError(
-            f"Expected at least 28 vehicle features, got {state.size}"
-        )
+    if state.size < VEHICLE_STATE_DIM:
+        raise ValueError(f"Expected at least {VEHICLE_STATE_DIM} vehicle features, got {state.size}")
 
-    vehicle_rows = state[:28].reshape(4, 7)
+    vehicle_rows = state[:VEHICLE_STATE_DIM].reshape(NUM_VEHICLE_ROWS, VEHICLE_FEATURES)
     #print("Vehicle rows : ")
     #print(np.asarray(vehicle_rows))
     ttc_proxies = []
@@ -2416,7 +2526,7 @@ def construct_environment_information(state, action, next_state_pred, shift_scor
     action = np.asarray(action, dtype=np.float32).reshape(-1)
     next_state_pred = np.asarray(next_state_pred, dtype=np.float32).reshape(-1)
 
-    vehicle_rows = state[:28].reshape(4, 7)
+    vehicle_rows = state[:VEHICLE_STATE_DIM].reshape(NUM_VEHICLE_ROWS, VEHICLE_FEATURES)
 
     ego = vehicle_rows[0]
     neighbors = []
@@ -2480,9 +2590,9 @@ def construct_environment_information(state, action, next_state_pred, shift_scor
     return {
         "environment": "highway-env",
         "ego_features": ego.tolist(),
-        "speed_feature_normalized": float(state[28]),
-        "lane_feature_normalized": float(state[29]),
-        "collision_indicator": float(state[30]),
+        "speed_feature_normalized": float(state[VEHICLE_STATE_DIM]),
+        "lane_feature_normalized": float(state[VEHICLE_STATE_DIM + 1]),
+        "collision_indicator": float(state[VEHICLE_STATE_DIM + 2]),
         "nearby_vehicles": neighbors,
         "action": action.tolist(),
         "predicted_next_state": next_state_pred.tolist(),
@@ -3041,7 +3151,7 @@ def describe_current_behavior(state, action, next_state, risk_score):
     next_state = np.asarray(next_state, dtype=np.float32).reshape(-1)
     action = np.asarray(action, dtype=np.float32).reshape(-1)
     risk = float(np.clip(risk_score, 0.0, 1.0))
-    vehicle_rows = state[:28].reshape(4, 7)
+    vehicle_rows = state[:VEHICLE_STATE_DIM].reshape(NUM_VEHICLE_ROWS, VEHICLE_FEATURES)
     neighbors = [row for row in vehicle_rows[1:] if row[0] > 0.5]
     forward = [row for row in neighbors if row[1] > 0]
     if forward:
@@ -3069,7 +3179,7 @@ def describe_current_behavior(state, action, next_state, risk_score):
 
     lane_intention = lane_action_names[lane_action_id]
 
-    transition_change = float(np.linalg.norm(next_state[:28] - state[:28]))
+    transition_change = float(np.linalg.norm(next_state[:VEHICLE_STATE_DIM] - state[:VEHICLE_STATE_DIM]))
     smoothness = "noticeable state change" if transition_change > 0.7 else "relatively small state change"
 
     return (
@@ -3634,14 +3744,14 @@ def AROOD(simulator, policy):
             # a stale/wrong speed source or argument-plumbing bug.
             ego_vehicle_for_reward = simulator.env.unwrapped.vehicle
             ego_speed_for_reward = float(ego_vehicle_for_reward.speed)
-            encoded_speed = float(np.asarray(next_state, dtype=np.float32)[28]) * 40.0
+            encoded_speed = float(np.asarray(next_state, dtype=np.float32)[VEHICLE_STATE_DIM]) * 40.0
 
             print(
                 "[REWARD SPEED SOURCE]",
                 f"vehicle_speed={ego_speed_for_reward:.6f}",
                 f"next_state_context_speed={encoded_speed:.6f}",
                 f"vehicle_id={id(ego_vehicle_for_reward)}",
-                f"state_speed_context={float(np.asarray(next_state)[28]):.6f}",
+                f"state_speed_context={float(np.asarray(next_state)[VEHICLE_STATE_DIM]):.6f}",
             )
 
             reward = compute_reward(
