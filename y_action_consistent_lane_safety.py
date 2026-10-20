@@ -2930,8 +2930,11 @@ def construct_reward(reward_specification, embedding_model):
 
         acceleration = float(np.clip(action[0], -1.0, 1.0))
         lane_action_id = int(np.clip(np.rint(action[1]), 0, 2))
-        control_penalty = float(reward_specification.get("action_weight", 0.0)) * abs(acceleration)
-        control_penalty += LANE_CHANGE_COST if lane_action_id != 1 else 0.0
+        # Keep acceleration regularization very small: a large action penalty
+        # would teach the policy to coast rather than make safe forward progress.
+        control_penalty = float(reward_specification.get("action_weight", 0.01)) * abs(acceleration)
+        lane_change_cost = max(0.0, float(reward_specification.get("lane_change_cost", INITIAL_LANE_CHANGE_COST)))
+        control_penalty += lane_change_cost if lane_action_id != 1 else 0.0
 
         # Explicitly expose routine shield intervention to the reward. Without
         # this term, a raw +1.0 request filtered to -0.02 receives reward based
@@ -3022,6 +3025,62 @@ def construct_reward(reward_specification, embedding_model):
         progress_ratio = float(np.clip(ego_speed / target_speed, 0.0, 1.0))
         progress_reward = progress_weight * progress_ratio
 
+        # Headway shaping: penalize a short gap only while the ego is closing
+        # on the lead vehicle (or the gap is approximately stable). If the lead
+        # vehicle is pulling away, do not punish the ego merely for a currently
+        # short gap: the gap is already recovering naturally.
+        front_gap_for_reward = float(safety_info.get("front_gap", float("inf")))
+        front_speed_for_reward = safety_info.get("front_speed", None)
+        headway_time_headway = max(
+            0.1, float(reward_specification.get("headway_time_headway", DESIRED_TIME_HEADWAY))
+        )
+        headway_min_gap = max(
+            0.0, float(reward_specification.get("headway_min_gap", MIN_FOLLOWING_GAP))
+        )
+        desired_headway_gap = headway_min_gap + headway_time_headway * ego_speed
+        front_closing_speed_for_reward = (
+            ego_speed - float(front_speed_for_reward)
+            if front_speed_for_reward is not None else 0.0
+        )
+        headway_weight = max(0.0, float(reward_specification.get("headway_weight", INITIAL_HEADWAY_WEIGHT)))
+        headway_shortfall = (
+            float(np.clip(
+                (desired_headway_gap - max(0.0, front_gap_for_reward))
+                / max(desired_headway_gap, 1e-6),
+                0.0, 1.0
+            ))
+            if front_speed_for_reward is not None and np.isfinite(front_gap_for_reward)
+            else 0.0
+        )
+        lead_pulling_away_for_reward = front_speed_for_reward is not None and front_closing_speed_for_reward < -0.1
+        headway_penalty = (
+            headway_weight * headway_shortfall
+            if not lead_pulling_away_for_reward else 0.0
+        )
+
+        # Rear TTC is a separate safety signal: a fast-approaching follower
+        # should influence safety even when front TTC is large.
+        rear_ttc_for_reward = float(safety_info.get("current_rear_ttc", float("inf")))
+        rear_ttc_weight = max(0.0, float(reward_specification.get("rear_ttc_weight", INITIAL_REAR_TTC_WEIGHT)))
+        rear_ttc_penalty_value = calculate_ttc_penalty(
+            rear_ttc_for_reward,
+            critical_ttc=max(1.0, critical_ttc_value - 0.5),
+            safe_ttc=safe_ttc_value,
+        )
+        rear_ttc_penalty = rear_ttc_weight * rear_ttc_penalty_value
+
+        print(
+            "[LONG-TERM OBJECTIVE]",
+            f"desired_gap={desired_headway_gap:.3f}",
+            f"front_gap={front_gap_for_reward:.3f}",
+            f"front_closing_speed={front_closing_speed_for_reward:.3f}",
+            f"lead_pulling_away={lead_pulling_away_for_reward}",
+            f"headway_shortfall={headway_shortfall:.3f}",
+            f"headway_penalty={headway_penalty:.3f}",
+            f"rear_ttc={rear_ttc_for_reward:.3f}",
+            f"rear_ttc_penalty={rear_ttc_penalty:.3f}",
+        )
+
         print(
             f"[PROGRESS REWARD] speed={ego_speed:.3f} m/s, "
             f"target={target_speed:.3f} m/s, "
@@ -3047,6 +3106,8 @@ def construct_reward(reward_specification, embedding_model):
                 - lane_penalty
                 - road_penalty
                 - ttc_penalty
+                - headway_penalty
+                - rear_ttc_penalty
                 + lane_change_bonus
         )
 
@@ -3063,6 +3124,8 @@ def construct_reward(reward_specification, embedding_model):
             f"lane={lane_penalty:.3f}, "
             f"offroad={road_penalty:.3f}, "
             f"ttc_penalty={ttc_penalty:.3f}, "
+            f"headway_penalty={headway_penalty:.3f}, "
+            f"rear_ttc_penalty={rear_ttc_penalty:.3f}, "
             f"lane_change_bonus={lane_change_bonus:.3f}, "
             f"total={reward:.3f}"
         )
