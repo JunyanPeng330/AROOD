@@ -783,8 +783,12 @@ class HighwaySimulator:
                   f"reason=current_lane_emergency_ttc:{current_front_ttc:.3f}")
             return np.asarray(mask, dtype=bool)
 
-        for action_id, candidate_lane in ((0, current_lane + 1),
-                                          (2, current_lane - 1)):
+        # Policy index 0 means relative LEFT (-1); index 2 means
+        # relative RIGHT (+1). Convert each semantic delta to a geometry ID.
+        for action_id, lane_delta in ((0, -1), (2, +1)):
+            candidate_lane = relative_lane_delta_to_absolute_lane(
+                current_lane, lane_delta
+            )
             if candidate_lane not in valid_ids:
                 continue
             values = lane_ttc.get(candidate_lane)
@@ -799,7 +803,7 @@ class HighwaySimulator:
         print("[LANE ACTION MASK]", f"current_lane={current_lane}",
               f"mask={mask}", f"min_ttc={LANE_CHANGE_MIN_TTC:.2f}",
               f"min_gap={min_gap:.2f}",
-              f"candidate_lanes={{0: {current_lane + 1}, 2: {current_lane - 1}}}")
+              f"candidate_absolute_lane_ids={{0: {relative_lane_delta_to_absolute_lane(current_lane, -1)}, 2: {relative_lane_delta_to_absolute_lane(current_lane, +1)}}}")
         return np.asarray(mask, dtype=bool)
 
 
