@@ -572,6 +572,12 @@ class HighwaySimulator:
         lane_ttc = self._min_ttc_by_lane()
         min_gap = max(8.0, 0.5 * max(0.0, float(vehicle.speed)))
         mask = [False, True, False]
+        current_values = lane_ttc.get(int(vehicle.lane_index[2]), {})
+        current_front_ttc = float(current_values.get("front_ttc", float("inf")))
+        if current_front_ttc <= SAFETY_OVERRIDE_TTC:
+            print("[LANE ACTION MASK]", "mask=[False, True, False]",
+                  f"reason=current_lane_emergency_ttc:{current_front_ttc:.3f}")
+            return np.asarray(mask, dtype=bool)
 
         for action_id, candidate_lane in ((0, int(target_lane_id) + 1),
                                           (2, int(target_lane_id) - 1)):
@@ -2711,6 +2717,8 @@ def construct_reward(reward_specification, embedding_model):
             f"speed={ego_speed:.2f}m/s, "
             f"safety={safety_penalty:.3f}, "
             f"shield={shield_penalty:.3f}, "
+            f"action_intervention_penalty={intervention_penalty:.3f}, "
+            f"accel_intervention={accel_intervention_magnitude:.3f}, "
             f"intervention={safety_info.get('intervention_reason', 'none')}, "
             f"lane={lane_penalty:.3f}, "
             f"offroad={road_penalty:.3f}, "
