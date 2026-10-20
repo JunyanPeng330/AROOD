@@ -1136,6 +1136,13 @@ class HighwaySimulator:
         nearest_front_ttc = float(current_values.get("nearest_front_ttc", float("inf")))
 
         front_vehicle_present = front_speed_raw is not None
+        front_closing_speed = (
+            float(vehicle.speed) - float(front_speed_raw)
+            if front_speed_raw is not None else 0.0
+        )
+        # Positive means the ego is closing on the lead vehicle; negative means
+        # the lead vehicle is pulling away and the gap is naturally increasing.
+        rear_pressure = current_rear_ttc <= ttc_danger_threshold
         selected_front_vehicle_id = current_values.get("front_vehicle_id")
         print(
             "[SPEED MATCH VEHICLE SELECTED]",
@@ -1144,7 +1151,9 @@ class HighwaySimulator:
             f"present={front_vehicle_present}",
             f"center_gap={float(current_values.get('front_center_gap', float('inf'))):.3f}",
             f"bumper_gap={front_gap:.3f}",
-            f"closing_speed={float(vehicle.speed) - float(front_speed_raw) if front_speed_raw is not None else float('nan'):.3f}",
+            f"closing_speed={front_closing_speed:.3f}",
+            f"rear_ttc={current_rear_ttc:.3f}",
+            f"rear_pressure={rear_pressure}",
             f"ttc={nearest_front_ttc:.3f}",
         )
 
@@ -1180,21 +1189,32 @@ class HighwaySimulator:
         )
 
 
-        # Level 1: speed matching.
+        # Level 1: adaptive car-following / speed matching.
         desired_gap = MIN_FOLLOWING_GAP + DESIRED_TIME_HEADWAY * max(0.0, float(vehicle.speed))
         gap_trigger_threshold = desired_gap - SPEED_MATCH_GAP_TOLERANCE
 
-        # TTC remains the time-critical trigger. Gap-only regulation uses a
-        # small deadband so a ~1-3 m shortfall with no closing threat does not
-        # repeatedly override the policy's acceleration.
-        speed_match_active = (
-            front_vehicle_present
-            and (
-                nearest_front_ttc <= SPEED_MATCH_TTC
-                or front_gap < gap_trigger_threshold
-            )
+        # TTC is the urgent closing-risk signal. A short gap alone should not
+        # force a speed-matching override when the lead vehicle is pulling away:
+        # in that case the gap is already increasing, so let the policy continue.
+        # If the gap is short and the ego is not closing, regulate headway.
+        front_ttc_trigger = nearest_front_ttc <= SPEED_MATCH_TTC
+        gap_and_closing_trigger = (
+            front_gap < gap_trigger_threshold
+            and front_closing_speed >= -0.1
         )
 
+        # If a vehicle is rapidly approaching from behind, avoid routine
+        # speed-matching overrides when the front TTC is not time-critical.
+        # This preserves the policy's opportunity to maintain speed or accelerate;
+        # it does NOT override emergency braking for a dangerous lead vehicle.
+        rear_pressure_suppresses_routine_matching = (
+            rear_pressure and nearest_front_ttc > SPEED_MATCH_TTC
+        )
+        speed_match_active = (
+            front_vehicle_present
+            and (front_ttc_trigger or gap_and_closing_trigger)
+            and not rear_pressure_suppresses_routine_matching
+        )
 
 
         controller_accel = None
@@ -1208,9 +1228,15 @@ class HighwaySimulator:
             f"desired_gap={desired_gap:.6f}",
             f"gap_tolerance={SPEED_MATCH_GAP_TOLERANCE:.3f}",
             f"gap_trigger_threshold={gap_trigger_threshold:.6f}",
-            f"ttc_condition={nearest_front_ttc <= SPEED_MATCH_TTC}",
+            f"closing_speed={front_closing_speed:.3f}",
+            f"ttc_condition={front_ttc_trigger}",
             f"gap_condition={front_gap < gap_trigger_threshold}",
-            f"expected_speed_match={front_vehicle_present and (nearest_front_ttc <= SPEED_MATCH_TTC or front_gap < gap_trigger_threshold)}",
+            f"gap_and_closing_condition={gap_and_closing_trigger}",
+            f"lead_pulling_away={front_closing_speed < -0.1}",
+            f"rear_ttc={current_rear_ttc:.3f}",
+            f"rear_pressure={rear_pressure}",
+            f"rear_pressure_suppresses_matching={rear_pressure_suppresses_routine_matching}",
+            f"expected_speed_match={front_vehicle_present and (front_ttc_trigger or gap_and_closing_trigger) and not rear_pressure_suppresses_routine_matching}",
             f"actual_speed_match={speed_match_active}",
         )
 
