@@ -57,6 +57,17 @@ LANE_CHANGE_MIN_TTC = 3.0       # More permissive, but still rejects short targe
 LANE_CHANGE_PREDICTION_HORIZON = 1.5  # Approximate lateral-transition safety horizon (seconds)
 LANE_CHANGE_TTC_MARGIN = 0.5     # Extra TTC margin for transition uncertainty
 
+# Maneuver completion uses geometric alignment over consecutive policy decisions.
+LANE_CHANGE_COMPLETE_LATERAL_TOL = 0.45   # metres from target-lane centre
+LANE_CHANGE_COMPLETE_HEADING_TOL = 0.12   # radians, wrapped heading error
+LANE_CHANGE_COMPLETE_STABLE_STEPS = 2     # consecutive checks before completion
+# Relaxed fallback is used only after a long maneuver timeout.
+LANE_CHANGE_TIMEOUT_LATERAL_TOL = 0.90
+LANE_CHANGE_TIMEOUT_HEADING_TOL = 0.20
+LANE_CHANGE_RECOVERY_COOLDOWN_STEPS = 2
+LANE_CHANGE_ACTIVE_ABORT_TTC = 2.0
+LANE_CHANGE_ACTIVE_ABORT_GAP = 6.0
+
 SAFETY_OVERRIDE_REWARD_PENALTY = 1.0  # Applied only for emergency TTC braking, not routine speed matching
 LANE_REJECTION_REWARD_PENALTY = 0.05  # Small signal when an unsafe lane-change request is rejected
 SHIELD_ACCEL_INTERVENTION_WEIGHT = 0.15  # Modest cost for routine acceleration overrides
@@ -664,6 +675,8 @@ class HighwaySimulator:
         self._active_lane_request_trace_id = None
         self._current_lane_request_trace_id = None
         self._lane_change_timeout_logged = False
+        self._lane_change_stable_steps = 0
+        self._lane_change_stats["aborted"] = 0
 
         print(
             "[TARGET LANE]",
@@ -1186,6 +1199,95 @@ class HighwaySimulator:
         }
 
         current_values = lane_ttc_current.get(current_lane, default_ttc)
+
+        # Re-check the target lane on every policy decision while a maneuver is
+        # active. If the target-lane rear gap becomes critical before ego has
+        # crossed the lane midpoint, return to the source lane only when that
+        # source lane is currently safe. Once ego is nearer the target lane,
+        # avoid abrupt target switching and finish the maneuver instead.
+        active_lane_safety_event = None
+        if self._lane_change_active and self._lane_change_source_index is not None:
+            try:
+                source_lane_id_active = int(self._lane_change_source_index[2])
+                target_lane_id_active = int(self.target_lane_index[2])
+                source_values_active = lane_ttc_current.get(source_lane_id_active, default_ttc)
+                target_values_active = lane_ttc_current.get(target_lane_id_active, default_ttc)
+                target_rear_ttc_active = float(target_values_active.get("rear_ttc", float("inf")))
+                target_rear_gap_active = float(target_values_active.get("rear_gap", float("inf")))
+                target_front_ttc_active = float(target_values_active.get("front_ttc", float("inf")))
+                source_front_ttc_active = float(source_values_active.get("front_ttc", float("inf")))
+                source_rear_ttc_active = float(source_values_active.get("rear_ttc", float("inf")))
+                source_front_gap_active = float(source_values_active.get("front_gap", float("inf")))
+                source_rear_gap_active = float(source_values_active.get("rear_gap", float("inf")))
+
+                target_lane_active_geometry = base_env.road.network.get_lane(self.target_lane_index)
+                target_s_active, target_lateral_active = target_lane_active_geometry.local_coordinates(vehicle.position)
+                source_lane_active_geometry = base_env.road.network.get_lane(self._lane_change_source_index)
+                source_s_active, source_lateral_active = source_lane_active_geometry.local_coordinates(vehicle.position)
+                source_is_nearer_active = abs(float(source_lateral_active)) < abs(float(target_lateral_active))
+
+                target_rear_critical = (
+                    target_rear_ttc_active <= LANE_CHANGE_ACTIVE_ABORT_TTC
+                    or (
+                        target_rear_gap_active <= LANE_CHANGE_ACTIVE_ABORT_GAP
+                        and target_values_active.get("rear_speed") is not None
+                        and float(target_values_active["rear_speed"]) > float(vehicle.speed) + 0.1
+                    )
+                )
+                source_lane_safe_for_abort = (
+                    source_front_ttc_active > SAFETY_OVERRIDE_TTC
+                    and source_rear_ttc_active > SAFETY_OVERRIDE_TTC
+                    and source_front_gap_active >= LANE_CHANGE_ACTIVE_ABORT_GAP
+                    and source_rear_gap_active >= LANE_CHANGE_ACTIVE_ABORT_GAP
+                )
+
+                if target_rear_critical and source_is_nearer_active and source_lane_safe_for_abort:
+                    aborted_target = tuple(self.target_lane_index)
+                    source_target = tuple(self._lane_change_source_index)
+                    aborted_maneuver_id = self._active_lane_maneuver_id
+                    aborted_request_id = self._active_lane_request_trace_id
+                    self.target_lane_index = source_target
+                    self._lane_change_active = False
+                    self._lane_change_cooldown = int(max(
+                        LANE_CHANGE_COOLDOWN_STEPS,
+                        LANE_CHANGE_RECOVERY_COOLDOWN_STEPS,
+                    ))
+                    self._lane_change_source_index = None
+                    self._lane_change_started_step = None
+                    self._active_lane_maneuver_id = None
+                    self._active_lane_request_trace_id = None
+                    self._lane_change_stable_steps = 0
+                    self._lane_change_timeout_logged = False
+                    if getattr(self, "_lane_change_stats", None) is not None:
+                        self._lane_change_stats["aborted"] = self._lane_change_stats.get("aborted", 0) + 1
+                    active_lane_safety_event = "ABORT_TO_SOURCE_TARGET_REAR_CRITICAL"
+                    write_diagnostic_event(
+                        "lane_maneuver_terminal", self,
+                        maneuver_id=aborted_maneuver_id,
+                        request_id=aborted_request_id,
+                        outcome="ABORTED_TO_SOURCE",
+                        reason=active_lane_safety_event,
+                        source_lane=source_lane_id_active,
+                        old_target_lane=aborted_target,
+                        new_target_lane=source_target,
+                        target_rear_ttc=target_rear_ttc_active,
+                        target_rear_gap=target_rear_gap_active,
+                    )
+                    print(
+                        "[ACTIVE LANE CHANGE ABORTED]",
+                        f"maneuver_id={aborted_maneuver_id}",
+                        f"reason={active_lane_safety_event}",
+                        f"source_lane={source_lane_id_active}",
+                        f"old_target_lane={aborted_target}",
+                        f"target_rear_ttc={target_rear_ttc_active:.3f}",
+                        f"target_rear_gap={target_rear_gap_active:.3f}",
+                        f"source_lane_safe=True",
+                    )
+                elif target_front_ttc_active <= SAFETY_OVERRIDE_TTC:
+                    active_lane_safety_event = "TARGET_FRONT_TTC_CRITICAL_CONTINUE_TARGET_AND_BRAKE"
+
+            except (AttributeError, KeyError, TypeError, ValueError, IndexError) as exc:
+                print("[ACTIVE LANE SAFETY CHECK WARNING]", f"error={exc}")
 
         current_front_ttc = float(current_values["front_ttc"])
         current_rear_ttc = float(current_values["rear_ttc"])
@@ -1787,19 +1889,52 @@ class HighwaySimulator:
         lane_action_id = int(np.clip(lane_action_id, 0, 2))
         lane_action_delta = lane_action_index_to_delta(lane_action_id)
 
-        # Check whether the vehicle has reached its target lane.
+        # Evaluate geometric completion in the target lane's own coordinates.
         target_lane = road.network.get_lane(self.target_lane_index)
-
-
         longitudinal, lateral = target_lane.local_coordinates(ego.position)
+        target_heading = float(target_lane.heading_at(longitudinal))
+        heading_error = (float(ego.heading) - target_heading + np.pi) % (2.0 * np.pi) - np.pi
+
+        target_lane_id = int(self.target_lane_index[2])
+        physical_lane_id = int(ego.lane_index[2])
+        source_lane_id_for_check = (
+            int(self._lane_change_source_index[2])
+            if self._lane_change_source_index is not None else physical_lane_id
+        )
+        target_is_nearest = True
+        if self._lane_change_source_index is not None:
+            source_lane_geometry = road.network.get_lane(self._lane_change_source_index)
+            source_s, source_lateral = source_lane_geometry.local_coordinates(ego.position)
+            target_is_nearest = abs(float(lateral)) <= abs(float(source_lateral))
 
         target_reached = (
-                abs(float(lateral)) < 0.25
-                and abs(float(ego.heading - target_lane.heading_at(longitudinal))) < 0.05
+            abs(float(lateral)) <= LANE_CHANGE_COMPLETE_LATERAL_TOL
+            and abs(float(heading_error)) <= LANE_CHANGE_COMPLETE_HEADING_TOL
+            and (physical_lane_id == target_lane_id or target_is_nearest)
         )
 
         if self._lane_change_active:
-            if target_reached:
+            elapsed_before_completion = (
+                int(self.step_count - self._lane_change_started_step)
+                if self._lane_change_started_step is not None else 0
+            )
+            # If the strict centre-alignment test has not completed a long
+            # maneuver, accept a modest residual offset only when the target
+            # lane is clearly the nearer lane and heading is already aligned.
+            timeout_reached = (
+                elapsed_before_completion >= 25
+                and abs(float(lateral)) <= LANE_CHANGE_TIMEOUT_LATERAL_TOL
+                and abs(float(heading_error)) <= LANE_CHANGE_TIMEOUT_HEADING_TOL
+                and target_is_nearest
+            )
+            if target_reached or timeout_reached:
+                self._lane_change_stable_steps = (
+                    int(getattr(self, "_lane_change_stable_steps", 0)) + 1
+                )
+            else:
+                self._lane_change_stable_steps = 0
+
+            if self._lane_change_stable_steps >= LANE_CHANGE_COMPLETE_STABLE_STEPS:
                 completed_steps = (
                     int(self.step_count - self._lane_change_started_step)
                     if self._lane_change_started_step is not None else None
@@ -1810,8 +1945,13 @@ class HighwaySimulator:
                 completed_maneuver_id = self._active_lane_maneuver_id
                 completed_request_id = self._active_lane_request_trace_id
                 source_lane_completed = source_lane_id
+                completion_mode = "GEOMETRIC" if target_reached else "TIMEOUT_TOLERANCE"
                 self._lane_change_active = False
-                self._lane_change_cooldown = int(LANE_CHANGE_COOLDOWN_STEPS)
+                self._lane_change_cooldown = int(max(
+                    LANE_CHANGE_COOLDOWN_STEPS,
+                    LANE_CHANGE_RECOVERY_COOLDOWN_STEPS if timeout_reached else 0,
+                ))
+                self._lane_change_stable_steps = 0
                 self._lane_change_source_index = None
                 self._lane_change_started_step = None
                 self._active_lane_maneuver_id = None
@@ -1825,6 +1965,10 @@ class HighwaySimulator:
                     maneuver_id=completed_maneuver_id,
                     request_id=completed_request_id,
                     outcome="COMPLETED",
+                    completion_mode=completion_mode,
+                    lateral_error=float(lateral),
+                    heading_error=float(heading_error),
+                    stable_steps=LANE_CHANGE_COMPLETE_STABLE_STEPS,
                     direction=completed_direction,
                     source_lane=source_lane_completed,
                     target_lane=target_lane_id,
@@ -1837,6 +1981,10 @@ class HighwaySimulator:
                     f"maneuver_id={completed_maneuver_id}",
                     f"request_id={completed_request_id}",
                     "outcome=COMPLETED",
+                    f"completion_mode={completion_mode}",
+                    f"lateral_error={float(lateral):+.3f}",
+                    f"heading_error={float(heading_error):+.3f}",
+                    f"stable_steps={LANE_CHANGE_COMPLETE_STABLE_STEPS}",
                     f"direction={completed_direction}",
                     f"source_lane={source_lane_completed}",
                     f"target_lane={target_lane_id}",
@@ -1941,6 +2089,7 @@ class HighwaySimulator:
         self._active_lane_maneuver_id = self._lane_maneuver_sequence
         self._active_lane_request_trace_id = getattr(self, "_current_lane_request_trace_id", None)
         self._lane_change_timeout_logged = False
+        self._lane_change_stable_steps = 0
         if getattr(self, "_lane_change_stats", None) is not None:
             self._lane_change_stats["started"] = self._lane_change_stats.get("started", 0) + 1
 
