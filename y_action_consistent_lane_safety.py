@@ -454,6 +454,45 @@ class ActorCriticPolicy(nn.Module):
 
 
 
+
+def lane_policy_diagnostic(policy, state, valid_action_mask, sampled_action, phase, episode, step):
+    """Compactly report raw/masked lane logits, probabilities, and sampled intent."""
+    with torch.no_grad():
+        state_tensor = to_tensor(state)
+        if state_tensor.ndim == 1:
+            state_tensor = state_tensor.unsqueeze(0)
+        features = policy.shared(state_tensor)
+        raw_logits = policy.lane_logits(features)
+        raw_probs = torch.softmax(raw_logits, dim=-1)
+
+        mask = torch.as_tensor(valid_action_mask, dtype=torch.bool, device=raw_logits.device)
+        if mask.ndim == 1:
+            mask = mask.unsqueeze(0)
+        masked_logits = raw_logits.masked_fill(~mask, -1e9)
+        masked_probs = torch.softmax(masked_logits, dim=-1)
+
+        raw_logits_np = raw_logits.squeeze(0).cpu().numpy()
+        raw_probs_np = raw_probs.squeeze(0).cpu().numpy()
+        masked_logits_np = masked_logits.squeeze(0).cpu().numpy()
+        masked_probs_np = masked_probs.squeeze(0).cpu().numpy()
+
+    lane_index = int(np.clip(np.rint(float(sampled_action[1])), 0, 2))
+    lane_name = ("LEFT", "KEEP", "RIGHT")[lane_index]
+    print(
+        "[LANE POLICY DISTRIBUTION]",
+        f"phase={phase}",
+        f"episode={episode}",
+        f"step={step}",
+        f"valid_action_mask={np.asarray(valid_action_mask, dtype=bool).tolist()}",
+        f"raw_lane_logits={np.round(raw_logits_np, 4).tolist()}",
+        f"raw_lane_probs={np.round(raw_probs_np, 4).tolist()}",
+        f"masked_lane_logits={np.round(masked_logits_np, 4).tolist()}",
+        f"masked_lane_probs={np.round(masked_probs_np, 4).tolist()}",
+        f"sampled_lane_action_index={lane_index}",
+        f"sampled_lane_action_name={lane_name}",
+    )
+
+
 # ============================================================
 # 6. Highway-env Simulator Adapter
 # ============================================================
@@ -2167,18 +2206,35 @@ def collect_rollouts(
     max_steps
 ):
     rollouts = []
-
+    reference_total_left = 0
+    reference_total_right = 0
 
     for episode in range(num_episodes):
         state = simulator.reset()
         rollout = []
+        reference_episode_left = 0
+        reference_episode_right = 0
 
         for t in range(max_steps):    #10
 
             # Policy chooses acceleration and a discrete lane intention.
             valid_mask = simulator.get_valid_lane_action_mask()
+            sampled_action = np.asarray(
+                policy(state, valid_action_mask=valid_mask),
+                dtype=np.float32,
+            ).reshape(-1)
+            lane_policy_diagnostic(
+                policy, state, valid_mask, sampled_action,
+                phase="reference", episode=episode + 1, step=t + 1,
+            )
+            sampled_lane_index = int(np.clip(np.rint(float(sampled_action[1])), 0, 2))
+            if sampled_lane_index == 0:
+                reference_episode_left += 1
+                reference_total_left += 1
+            elif sampled_lane_index == 2:
+                reference_episode_right += 1
+                reference_total_right += 1
 
-            sampled_action = np.asarray(policy(state, valid_action_mask=valid_mask), dtype=np.float32).reshape(-1)
             action, safety_info = simulator.filter_ttc_action(sampled_action)
             action = np.asarray(action, dtype=np.float32).reshape(-1).copy()
             safety_info["policy_sampled_action"] = np.asarray(sampled_action, dtype=np.float32).copy()
@@ -2234,11 +2290,25 @@ def collect_rollouts(
         rollouts.append(rollout)
 
         print(
+            "[REFERENCE LANE-REQUEST COUNTER]",
+            f"episode={episode + 1}/{num_episodes}",
+            f"requested_LEFT={reference_episode_left}",
+            f"requested_RIGHT={reference_episode_right}",
+            f"requested_lane_changes={reference_episode_left + reference_episode_right}",
+        )
+        print(
             f"Reference episode "
             f"{episode + 1}/"
             f"{num_episodes}"
         )
 
+    print(
+        "[REFERENCE LANE-REQUEST TOTALS]",
+        f"episodes={num_episodes}",
+        f"requested_LEFT={reference_total_left}",
+        f"requested_RIGHT={reference_total_right}",
+        f"requested_lane_changes={reference_total_left + reference_total_right}",
+    )
     return rollouts
 
 
@@ -3783,20 +3853,6 @@ def AROOD(simulator, policy):
             # =================================================
 
             valid_mask = simulator.get_valid_lane_action_mask()
-            with torch.no_grad():
-                _, lane_distribution_for_log = policy.action_distributions(
-                    state, valid_action_mask=valid_mask
-                )
-                lane_probabilities = lane_distribution_for_log.probs.squeeze(0).detach().cpu().numpy()
-            print(
-                "[LANE POLICY DIAGNOSTIC]",
-                f"mask={np.asarray(valid_mask, dtype=bool).tolist()}",
-                f"probabilities_LEFT_KEEP_RIGHT={np.round(lane_probabilities, 4).tolist()}",
-                f"lane_change_active={getattr(simulator, '_lane_change_active', False)}",
-                f"target_lane={getattr(simulator, 'target_lane_index', None)}",
-                f"cooldown={getattr(simulator, '_lane_change_cooldown', 0)}",
-            )
-
             sampled_action, pre_tanh_accel = policy.act(
                 state,
                 deterministic=False,
@@ -3804,6 +3860,10 @@ def AROOD(simulator, policy):
                 return_aux=True,
             )
             sampled_action = np.asarray(sampled_action, dtype=np.float32,).reshape(-1)
+            lane_policy_diagnostic(
+                policy, state, valid_mask, sampled_action,
+                phase="online", episode=episode + 1, step=t + 1,
+            )
 
 
             filtered_action, safety_info = simulator.filter_ttc_action(sampled_action)
