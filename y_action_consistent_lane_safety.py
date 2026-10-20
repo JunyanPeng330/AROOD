@@ -33,6 +33,7 @@ ttc_danger_threshold = 3.0
 ttc_caution_threshold = 4.0
 
 SPEED_MATCH_TTC = 6.0
+SPEED_MATCH_GAP_TOLERANCE = 3.0  # metres; avoid needless overrides for tiny gap deviations
 # Execution-time safety shield (TTC is measured in seconds).
 SAFETY_OVERRIDE_TTC = 2.0       # Emergency braking threshold
 LANE_CHANGE_MIN_TTC = 4.0       # Reject a new lane change below this TTC
@@ -932,10 +933,18 @@ class HighwaySimulator:
 
         # Level 1: speed matching.
         desired_gap = MIN_FOLLOWING_GAP + DESIRED_TIME_HEADWAY * max(0.0, float(vehicle.speed))
+        gap_trigger_threshold = desired_gap - SPEED_MATCH_GAP_TOLERANCE
 
-        speed_match_active = (front_vehicle_present
-                            and (nearest_front_ttc <= SPEED_MATCH_TTC
-                             or front_gap < desired_gap))
+        # TTC remains the time-critical trigger. Gap-only regulation uses a
+        # small deadband so a ~1-3 m shortfall with no closing threat does not
+        # repeatedly override the policy's acceleration.
+        speed_match_active = (
+            front_vehicle_present
+            and (
+                nearest_front_ttc <= SPEED_MATCH_TTC
+                or front_gap < gap_trigger_threshold
+            )
+        )
 
 
 
@@ -948,9 +957,11 @@ class HighwaySimulator:
             f"SPEED_MATCH_TTC={SPEED_MATCH_TTC}",
             f"front_gap={front_gap:.6f}",
             f"desired_gap={desired_gap:.6f}",
+            f"gap_tolerance={SPEED_MATCH_GAP_TOLERANCE:.3f}",
+            f"gap_trigger_threshold={gap_trigger_threshold:.6f}",
             f"ttc_condition={nearest_front_ttc <= SPEED_MATCH_TTC}",
-            f"gap_condition={front_gap < desired_gap}",
-            f"expected_speed_match={front_vehicle_present and (nearest_front_ttc <= SPEED_MATCH_TTC or front_gap < desired_gap)}",
+            f"gap_condition={front_gap < gap_trigger_threshold}",
+            f"expected_speed_match={front_vehicle_present and (nearest_front_ttc <= SPEED_MATCH_TTC or front_gap < gap_trigger_threshold)}",
             f"actual_speed_match={speed_match_active}",
         )
 
