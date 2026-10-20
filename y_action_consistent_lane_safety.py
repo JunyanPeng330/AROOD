@@ -592,6 +592,8 @@ class HighwaySimulator:
         self._lane_change_source_index = None
         self._lane_change_active = False
         self._lane_change_cooldown = 0
+        self._lane_change_stats = {"requested": 0, "accepted": 0, "rejected": 0, "completed": 0}
+        self._lane_change_started_step = None
 
         print(
             "[TARGET LANE]",
@@ -780,7 +782,17 @@ class HighwaySimulator:
         road = base_env.road
         vehicle = base_env.vehicle
         if self._lane_change_active or self._lane_change_cooldown > 0:
-            return np.array([False, True, False], dtype=bool)
+            mask = np.array([False, True, False], dtype=bool)
+            print(
+                "[LANE POLICY MASK STATE]",
+                f"mask={mask.tolist()}",
+                f"current_lane={int(vehicle.lane_index[2])}",
+                f"target_lane={getattr(self, 'target_lane_index', None)}",
+                f"lane_change_active={self._lane_change_active}",
+                f"cooldown={self._lane_change_cooldown}",
+                "reason=active_maneuver_or_cooldown",
+            )
+            return mask
 
         current_lane = int(vehicle.lane_index[2])
         start_node, end_node, _ = vehicle.lane_index
@@ -813,10 +825,18 @@ class HighwaySimulator:
                 and float(values.get("front_gap", float("inf"))) >= min_gap
                 and float(values.get("rear_gap", float("inf"))) >= min_gap
             )
-        print("[LANE ACTION MASK]", f"current_lane={current_lane}",
-              f"mask={mask}", f"min_ttc={LANE_CHANGE_MIN_TTC:.2f}",
-              f"min_gap={min_gap:.2f}",
-              f"candidate_absolute_lane_ids={{0: {relative_lane_delta_to_absolute_lane(current_lane, -1)}, 2: {relative_lane_delta_to_absolute_lane(current_lane, +1)}}}")
+        print(
+            "[LANE ACTION MASK]",
+            f"current_lane={current_lane}",
+            f"target_lane={getattr(self, 'target_lane_index', None)}",
+            f"mask={mask}",
+            f"lane_change_active={self._lane_change_active}",
+            f"cooldown={self._lane_change_cooldown}",
+            f"min_ttc={LANE_CHANGE_MIN_TTC:.2f}",
+            f"required_ttc={LANE_CHANGE_MIN_TTC + LANE_CHANGE_TTC_MARGIN:.2f}",
+            f"min_gap={min_gap:.2f}",
+            f"candidate_absolute_lane_ids={{0: {relative_lane_delta_to_absolute_lane(current_lane, -1)}, 2: {relative_lane_delta_to_absolute_lane(current_lane, +1)}}}",
+        )
         return np.asarray(mask, dtype=bool)
 
 
@@ -1320,6 +1340,8 @@ class HighwaySimulator:
 
         filtered_lane_action = requested_lane_action
         filtered_lane_name = requested_lane_name
+        if requested_lane_delta != 0 and getattr(self, "_lane_change_stats", None) is not None:
+            self._lane_change_stats["requested"] += 1
 
         # Each rejection must have an explicit cause. Routine speed matching
         # is deliberately NOT a lane-change veto; only target-lane safety,
@@ -1431,6 +1453,11 @@ class HighwaySimulator:
             ",".join(lane_change_rejection_reasons)
             if lane_change_rejection_reasons else "none"
         )
+        if requested_lane_delta != 0 and getattr(self, "_lane_change_stats", None) is not None:
+            if lane_change_blocked:
+                self._lane_change_stats["rejected"] += 1
+            else:
+                self._lane_change_stats["accepted"] += 1
 
         # ---------------------------------------------------------
         # 3B. Apply the speed limit to the filtered action.
@@ -1584,22 +1611,44 @@ class HighwaySimulator:
             f"emergency={emergency_braking}",
         )
 
-        print(
-            "[LANE SAFETY]",
-            f"requested={requested_lane_name}",
-            f"candidate_lane={candidate_lane}",
-            f"front_ttc={candidate_front_ttc:.3f}",
-            f"rear_ttc={candidate_rear_ttc:.3f}",
-            f"front_gap={candidate_front_gap:.3f}",
-            f"rear_gap={candidate_rear_gap:.3f}",
-            f"front_gap_limit={candidate_front_gap_limit:.3f}",
-            f"rear_gap_limit={candidate_rear_gap_limit:.3f}",
-            f"lane_available={candidate_lane_available}",
-            f"speed_match_active_but_not_a_veto={speed_match_active}",
-            f"blocked={lane_change_blocked}",
-            f"reason={lane_change_rejection_reason}",
-            f"filtered={filtered_lane_name}",
-        )
+        if requested_lane_delta == 0:
+            # KEEP does not evaluate a candidate lane; report measured current
+            # lane values instead of misleading default inf candidate values.
+            current_lane_values = lane_ttc_current.get(current_lane, {})
+            print(
+                "[LANE SAFETY]",
+                "requested=KEEP",
+                f"current_lane={current_lane}",
+                f"current_front_ttc={float(current_lane_values.get('front_ttc', float('inf'))):.3f}",
+                f"current_rear_ttc={float(current_lane_values.get('rear_ttc', float('inf'))):.3f}",
+                f"current_front_gap={float(current_lane_values.get('front_gap', float('inf'))):.3f}",
+                f"current_rear_gap={float(current_lane_values.get('rear_gap', float('inf'))):.3f}",
+                "lane_change_evaluation=not_applicable",
+                f"lane_change_active={self._lane_change_active}",
+                f"cooldown={self._lane_change_cooldown}",
+                "blocked=False",
+                "reason=none",
+                "filtered=KEEP",
+            )
+        else:
+            print(
+                "[LANE SAFETY]",
+                f"requested={requested_lane_name}",
+                f"candidate_lane={candidate_lane}",
+                f"front_ttc={candidate_front_ttc:.3f}",
+                f"rear_ttc={candidate_rear_ttc:.3f}",
+                f"front_gap={candidate_front_gap:.3f}",
+                f"rear_gap={candidate_rear_gap:.3f}",
+                f"front_gap_limit={candidate_front_gap_limit:.3f}",
+                f"rear_gap_limit={candidate_rear_gap_limit:.3f}",
+                f"lane_available={candidate_lane_available}",
+                f"speed_match_active_but_not_a_veto={speed_match_active}",
+                f"lane_change_active={self._lane_change_active}",
+                f"cooldown={self._lane_change_cooldown}",
+                f"blocked={lane_change_blocked}",
+                f"reason={lane_change_rejection_reason}",
+                f"filtered={filtered_lane_name}",
+            )
 
         print(
             "[FILTER FINAL CHECK]",
@@ -1660,9 +1709,24 @@ class HighwaySimulator:
 
         if self._lane_change_active:
             if target_reached:
+                completed_steps = (
+                    int(self.step_count - self._lane_change_started_step)
+                    if self._lane_change_started_step is not None else None
+                )
                 self._lane_change_active = False
                 self._lane_change_cooldown = 10
                 self._lane_change_source_index = None
+                self._lane_change_started_step = None
+                if getattr(self, "_lane_change_stats", None) is not None:
+                    self._lane_change_stats["completed"] += 1
+                print(
+                    "[LANE CHANGE COMPLETED]",
+                    f"physical_lane={getattr(ego, 'lane_index', None)}",
+                    f"target_lane={self.target_lane_index}",
+                    f"steps_since_start={completed_steps}",
+                    f"cooldown_started={self._lane_change_cooldown}",
+                    f"stats={getattr(self, '_lane_change_stats', {})}",
+                )
             elif lane_action_delta != 0:
                 print("[LANE TARGET REJECTED] reason=lane_change_already_in_progress")
             return
@@ -1717,14 +1781,17 @@ class HighwaySimulator:
 
         self.target_lane_index = candidate_lane_index
         self._lane_change_active = True
+        self._lane_change_started_step = int(self.step_count)
 
         print(
-            "[LANE CHANGE REQUEST] "
+            "[LANE CHANGE REQUEST] 
             f"policy_lane_action_index={lane_action_id}, "
             f"relative_lane_delta={lane_action_delta:+d}, "
             f"current_absolute_lane_id={current_lane_id}, "
             f"target_absolute_lane_id={candidate_lane_id}, "
-            f"target_lane={self.target_lane_index}"
+            f"target_lane={self.target_lane_index}",
+            f"started_step={self._lane_change_started_step}",
+            f"stats={getattr(self, '_lane_change_stats', {})}",
         )
 
 
@@ -1957,6 +2024,33 @@ class HighwaySimulator:
         ego_after = self.env.unwrapped.vehicle
         speed_after = float(ego_after.speed)
         crashed_after = bool(getattr(ego_after, "crashed", False))
+
+        # Trace the target geometry on every physical step. Completion is
+        # finalized at the next high-level decision in _update_lane_target().
+        try:
+            target_lane_geometry = self.env.unwrapped.road.network.get_lane(self.target_lane_index)
+            target_s, target_lateral = target_lane_geometry.local_coordinates(ego_after.position)
+            target_heading = target_lane_geometry.heading_at(target_s)
+            target_heading_error = (float(ego_after.heading) - float(target_heading) + np.pi) % (2.0 * np.pi) - np.pi
+        except (AttributeError, KeyError, TypeError, ValueError):
+            target_lateral = float("nan")
+            target_heading_error = float("nan")
+        print(
+            "[LANE CHANGE PROGRESS]",
+            f"step={self.step_count + 1}",
+            f"physical_lane={getattr(ego_after, 'lane_index', None)}",
+            f"source_lane={self._lane_change_source_index}",
+            f"target_lane={self.target_lane_index}",
+            f"active={self._lane_change_active}",
+            f"cooldown={self._lane_change_cooldown}",
+            f"target_lateral_error={float(target_lateral):+.3f}",
+            f"target_heading_error={float(target_heading_error):+.3f}",
+            f"speed={float(ego_after.speed):.3f}",
+            f"acceleration_norm={acceleration:+.3f}",
+            f"acceleration_mps2={acceleration * MAX_PHYSICAL_ACCELERATION:+.3f}",
+            f"steering={steering:+.3f}",
+            f"stats={getattr(self, '_lane_change_stats', {})}",
+        )
 
         if crashed_after:
             ego_pos = np.asarray(ego_after.position, dtype=float)
@@ -3764,6 +3858,19 @@ def AROOD(simulator, policy):
             # =================================================
 
             valid_mask = simulator.get_valid_lane_action_mask()
+            with torch.no_grad():
+                _, lane_distribution_for_log = policy.action_distributions(
+                    state, valid_action_mask=valid_mask
+                )
+                lane_probabilities = lane_distribution_for_log.probs.squeeze(0).detach().cpu().numpy()
+            print(
+                "[LANE POLICY DIAGNOSTIC]",
+                f"mask={np.asarray(valid_mask, dtype=bool).tolist()}",
+                f"probabilities_LEFT_KEEP_RIGHT={np.round(lane_probabilities, 4).tolist()}",
+                f"lane_change_active={getattr(simulator, '_lane_change_active', False)}",
+                f"target_lane={getattr(simulator, 'target_lane_index', None)}",
+                f"cooldown={getattr(simulator, '_lane_change_cooldown', 0)}",
+            )
 
             sampled_action, pre_tanh_accel = policy.act(
                 state,
@@ -4102,6 +4209,16 @@ def AROOD(simulator, policy):
         shield_intervention_rate = shield_intervention_count / max(policy_step_count, 1)
         mean_actor_loss = float(np.mean(actor_loss_values)) if actor_loss_values else 0.0
         mean_advantage = float(np.mean(advantage_values)) if advantage_values else 0.0
+
+        print(
+            "[LANE CHANGE EPISODE SUMMARY]",
+            f"requested={getattr(simulator, '_lane_change_stats', {}).get('requested', 0)}",
+            f"accepted={getattr(simulator, '_lane_change_stats', {}).get('accepted', 0)}",
+            f"rejected={getattr(simulator, '_lane_change_stats', {}).get('rejected', 0)}",
+            f"completed={getattr(simulator, '_lane_change_stats', {}).get('completed', 0)}",
+            f"active_at_episode_end={getattr(simulator, '_lane_change_active', False)}",
+            f"target_lane_at_episode_end={getattr(simulator, 'target_lane_index', None)}",
+        )
 
         print(
             "[EPISODE POLICY DIAGNOSTICS]",
