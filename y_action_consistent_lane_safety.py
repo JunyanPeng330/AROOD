@@ -947,11 +947,26 @@ class HighwaySimulator:
             speed_match_active = False
 
         elif speed_match_active:
-            # Developing conflict: regulate speed before changing lanes.
+            # Speed matching may cap positive acceleration, but it must never
+            # cancel a stronger braking request sampled by the RL policy.
+            # This preserves the policy's negative acceleration while still
+            # preventing unnecessary acceleration toward a close lead vehicle.
             controller_accel = self._speed_matching_acceleration(
                 front_speed=float(front_speed_raw),
-                front_gap=front_gap,)
-            filtered_action[0] = controller_accel
+                front_gap=front_gap,
+            )
+            policy_accel_before_speed_match = float(filtered_action[0])
+            filtered_action[0] = min(
+                policy_accel_before_speed_match,
+                float(controller_accel),
+            )
+            print(
+                "[SPEED MATCH ARBITRATION]",
+                f"policy_accel={policy_accel_before_speed_match:+.6f}",
+                f"controller_accel={float(controller_accel):+.6f}",
+                f"executed_accel={float(filtered_action[0]):+.6f}",
+                f"policy_braking_preserved={policy_accel_before_speed_match < 0.0 and filtered_action[0] == policy_accel_before_speed_match}",
+            )
 
 
 
