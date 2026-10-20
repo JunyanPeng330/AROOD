@@ -114,12 +114,12 @@ EMBEDDING_DIM = 384
 DEVICE = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
 
-reward_path = 'figures/' + 'Re_10' + '.png'
-adaptation_path = 'figures/' + 'Ad_10' + '.png'
-plot_path = 'figures/' + 'plot_10' + '.txt'
-MODEL_PATH = 'policy/' + 'adaptive_policy_highway_10.pt'
+reward_path = 'figures/' + 'Re__1' + '.png'
+adaptation_path = 'figures/' + 'Ad__1' + '.png'
+plot_path = 'figures/' + 'plot__1' + '.txt'
+MODEL_PATH = 'policy/' + 'adaptive_policy_highway__1.pt'
 # reference model without Shift Detection
-checkpoint_path = 'checkpoint/' + 'reference_checkpoint_highway_10.pt'
+checkpoint_path = 'checkpoint/' + 'reference_checkpoint_highway__1.pt'
 
 
 # ============================================================
