@@ -62,6 +62,13 @@ LANE_CHANGE_BONUS = 0.22
 LANE_CHANGE_REWARD_TTC = 6.0
 LANE_CHANGE_COST = 0.0
 
+# Diagnostic mode: a LEFT/RIGHT policy decision sets a persistent lane target;
+# the steering controller continues tracking it over subsequent physics steps.
+# Disable the post-completion cooldown so the next policy decision is available
+# as soon as the previous maneuver physically finishes. This does NOT teleport
+# the vehicle or make lane changes instantaneous.
+LANE_CHANGE_COOLDOWN_STEPS = 0
+
 
 # Speed-matching controller
 DESIRED_TIME_HEADWAY = 1.2   # seconds
@@ -1801,7 +1808,7 @@ class HighwaySimulator:
                 completed_request_id = self._active_lane_request_trace_id
                 source_lane_completed = source_lane_id
                 self._lane_change_active = False
-                self._lane_change_cooldown = 10
+                self._lane_change_cooldown = int(LANE_CHANGE_COOLDOWN_STEPS)
                 self._lane_change_source_index = None
                 self._lane_change_started_step = None
                 self._active_lane_maneuver_id = None
@@ -1933,7 +1940,6 @@ class HighwaySimulator:
         self._lane_change_timeout_logged = False
         if getattr(self, "_lane_change_stats", None) is not None:
             self._lane_change_stats["started"] = self._lane_change_stats.get("started", 0) + 1
-            self._lane_change_stats["accepted"] = self._lane_change_stats.get("accepted", 0) + 1
 
         write_diagnostic_event(
             "lane_maneuver_started", self,
@@ -2086,7 +2092,9 @@ class HighwaySimulator:
             f"requested_target_lane_id={requested_target_lane_id}",
         )
 
-        # Convert the filtered discrete intention into a persistent lane target.
+        # One high-level LEFT/RIGHT decision sets a persistent target lane.
+        # The low-level steering controller keeps tracking that target across
+        # subsequent simulator steps; the policy does not need to repeat LEFT/RIGHT.
         active_before_update = bool(self._lane_change_active)
         cooldown_before_update = int(self._lane_change_cooldown)
         previous_target_lane = tuple(self.target_lane_index) if self.target_lane_index is not None else None
