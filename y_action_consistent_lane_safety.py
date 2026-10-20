@@ -961,14 +961,7 @@ class HighwaySimulator:
         # Use the current lane and, during an active lane change,
         # the source and target lanes for emergency monitoring.
         # Monitor all lanes relevant to the ego's current trajectory.
-        relevant_lane_ids = {current_lane}
-
-        if self._lane_change_active:
-            for lane_index in (
-                    self._lane_change_source_index,
-                    self.target_lane_index,):
-                if lane_index is not None:
-                    relevant_lane_ids.add(int(lane_index[2]))
+        relevant_lane_ids = self._relevant_lane_ids()
 
         # Emergency braking is triggered by a closing vehicle AHEAD in a lane
         # occupied by, or actively entering, the ego. A fast-approaching REAR
