@@ -151,7 +151,7 @@ def write_diagnostic_event(event, simulator=None, **fields):
     record.update(fields)
     try:
         with open(DIAGNOSTIC_LOG_PATH, "a", encoding="utf-8") as log_file:
-            log_file.write(json.dumps(record, ensure_ascii=False, default=str, allow_nan=True) + "\\n")
+            log_file.write(json.dumps(record, ensure_ascii=False, default=str, allow_nan=True) + "\n")
     except (OSError, TypeError, ValueError) as exc:
         print("[DIAGNOSTIC LOG WARNING]", f"event={event}", f"error={exc}")
 
@@ -1731,6 +1731,7 @@ class HighwaySimulator:
                 candidate_front_gap_limit=float(candidate_front_gap_limit),
                 candidate_rear_gap_limit=float(candidate_rear_gap_limit),
                 filter_call_id=ttc_filter_call_id,
+                valid_action_mask=getattr(self, "_trace_valid_action_mask", None),
                 sampled_action=np.asarray(sampled_action).tolist(),
                 filtered_action=np.asarray(filtered_action).tolist(),
             )
@@ -2450,6 +2451,7 @@ def collect_rollouts(
 
             # Policy chooses acceleration and a discrete lane intention.
             valid_mask = simulator.get_valid_lane_action_mask()
+            simulator._trace_valid_action_mask = np.asarray(valid_mask, dtype=bool).tolist()
             sampled_action = np.asarray(
                 policy(state, valid_action_mask=valid_mask),
                 dtype=np.float32,
@@ -4108,6 +4110,7 @@ def AROOD(simulator, policy):
             # =================================================
 
             valid_mask = simulator.get_valid_lane_action_mask()
+            simulator._trace_valid_action_mask = np.asarray(valid_mask, dtype=bool).tolist()
             sampled_action, pre_tanh_accel = policy.act(
                 state,
                 deterministic=False,
@@ -4483,10 +4486,10 @@ def AROOD(simulator, policy):
             mean_reward_per_step=float(reward_per_step),
             steps=int(policy_step_count),
             collisions=int(episode_collision_count),
-            collision_rate=float(episode_collision_rate),
+            collision_rate=float(episode_collision_count / max(t + 1, 1)),
             adaptations=int(adaptation_count),
-            mean_actor_loss=float(mean_actor_loss) if "mean_actor_loss" in locals() else None,
-            mean_advantage=float(mean_advantage) if "mean_advantage" in locals() else None,
+            mean_actor_loss=float(np.mean(actor_loss_values)) if actor_loss_values else 0.0,
+            mean_advantage=float(np.mean(advantage_values)) if advantage_values else 0.0,
             reward_component_sums={key: float(value) for key, value in episode_reward_component_sums.items()},
             lane_change_stats=dict(getattr(simulator, "_lane_change_stats", {})),
         )
