@@ -427,7 +427,8 @@ class HighwaySimulator:
     and four context values.
     """
 
-    def __init__(self, state_dim=STATE_DIM, action_dim=ACTION_DIM,\n                 max_steps=MAX_STEPS, render_mode=None, vehicles_count=NUM_SURROUNDING_VEHICLES):
+    def __init__(self, state_dim=STATE_DIM, action_dim=ACTION_DIM,
+                 max_steps=MAX_STEPS, render_mode=None, vehicles_count=NUM_SURROUNDING_VEHICLES):
         if gym is None or highway_env is None:
             raise ImportError(
                 "Highway-env dependencies are missing. Install with: "
