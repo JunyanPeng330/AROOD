@@ -622,7 +622,7 @@ class HighwaySimulator:
         self._lane_change_source_index = None
         self._lane_change_active = False
         self._lane_change_cooldown = 0
-        self._lane_change_stats = {"requested": 0, "accepted": 0, "rejected": 0, "completed": 0}
+        self._lane_change_stats = {"requested": 0, "accepted": 0, "rejected": 0, "completed": 0, "completed_LEFT": 0, "completed_RIGHT": 0}
         self._lane_change_started_step = None
 
         print(
@@ -1707,12 +1707,16 @@ class HighwaySimulator:
                     int(self.step_count - self._lane_change_started_step)
                     if self._lane_change_started_step is not None else None
                 )
+                source_lane_id = int(self._lane_change_source_index[2]) if self._lane_change_source_index is not None else int(ego.lane_index[2])
+                target_lane_id = int(self.target_lane_index[2])
+                completed_direction = "LEFT" if target_lane_id > source_lane_id else "RIGHT"
                 self._lane_change_active = False
                 self._lane_change_cooldown = 10
                 self._lane_change_source_index = None
                 self._lane_change_started_step = None
                 if getattr(self, "_lane_change_stats", None) is not None:
                     self._lane_change_stats["completed"] += 1
+                    self._lane_change_stats[f"completed_{completed_direction}"] += 1
                 print(
                     "[LANE CHANGE COMPLETED]",
                     f"physical_lane={getattr(ego, 'lane_index', None)}",
@@ -2199,6 +2203,50 @@ def create_initial_policy(
 # 9. Collect Reference Rollouts
 # ============================================================
 
+def make_lane_request_counters():
+    """Counters for each lane-change direction at distinct decision stages."""
+    return {
+        direction: {"requested": 0, "mask_allowed": 0, "safety_accepted": 0, "completed": 0}
+        for direction in ("LEFT", "RIGHT")
+    }
+
+
+def record_lane_request_decision(counters, sampled_action, valid_action_mask, safety_info):
+    """Count request, mask permission, and safety-filter acceptance for one step."""
+    lane_index = int(np.clip(np.rint(float(sampled_action[1])), 0, 2))
+    if lane_index == 1:
+        return
+    direction = "LEFT" if lane_index == 0 else "RIGHT"
+    counters[direction]["requested"] += 1
+    mask = np.asarray(valid_action_mask, dtype=bool).reshape(-1)
+    if lane_index < len(mask) and bool(mask[lane_index]):
+        counters[direction]["mask_allowed"] += 1
+    if not bool(safety_info.get("lane_change_blocked", False)):
+        counters[direction]["safety_accepted"] += 1
+
+
+def sync_lane_completion_counters(counters, simulator, seen_completed):
+    """Record newly completed lane changes, attributed by their actual direction."""
+    stats = getattr(simulator, "_lane_change_stats", {})
+    for direction in ("LEFT", "RIGHT"):
+        current = int(stats.get(f"completed_{direction}", 0))
+        delta = max(0, current - seen_completed.get(direction, 0))
+        counters[direction]["completed"] += delta
+        seen_completed[direction] = current
+
+
+def print_lane_request_counters(tag, counters):
+    for direction in ("LEFT", "RIGHT"):
+        values = counters[direction]
+        print(
+            f"[{tag} {direction} COUNTERS]",
+            f"requested={values['requested']}",
+            f"mask_allowed={values['mask_allowed']}",
+            f"safety_accepted={values['safety_accepted']}",
+            f"completed={values['completed']}",
+        )
+
+
 def collect_rollouts(
     simulator,
     policy,
@@ -2206,14 +2254,17 @@ def collect_rollouts(
     max_steps
 ):
     rollouts = []
-    reference_total_left = 0
-    reference_total_right = 0
+    reference_counters = make_lane_request_counters()
+    reference_seen_completed = {"LEFT": 0, "RIGHT": 0}
 
     for episode in range(num_episodes):
         state = simulator.reset()
         rollout = []
-        reference_episode_left = 0
-        reference_episode_right = 0
+        episode_counters = make_lane_request_counters()
+        episode_seen_completed = {
+            "LEFT": int(getattr(simulator, "_lane_change_stats", {}).get("completed_LEFT", 0)),
+            "RIGHT": int(getattr(simulator, "_lane_change_stats", {}).get("completed_RIGHT", 0)),
+        }
 
         for t in range(max_steps):    #10
 
@@ -2227,15 +2278,9 @@ def collect_rollouts(
                 policy, state, valid_mask, sampled_action,
                 phase="reference", episode=episode + 1, step=t + 1,
             )
-            sampled_lane_index = int(np.clip(np.rint(float(sampled_action[1])), 0, 2))
-            if sampled_lane_index == 0:
-                reference_episode_left += 1
-                reference_total_left += 1
-            elif sampled_lane_index == 2:
-                reference_episode_right += 1
-                reference_total_right += 1
-
             action, safety_info = simulator.filter_ttc_action(sampled_action)
+            record_lane_request_decision(episode_counters, sampled_action, valid_mask, safety_info)
+            record_lane_request_decision(reference_counters, sampled_action, valid_mask, safety_info)
             action = np.asarray(action, dtype=np.float32).reshape(-1).copy()
             safety_info["policy_sampled_action"] = np.asarray(sampled_action, dtype=np.float32).copy()
             safety_info["filter_output_action"] = action.copy()
@@ -2251,6 +2296,8 @@ def collect_rollouts(
 
             # Predict/learn from the filtered high-level action that will be executed.
             next_state, reward, done, info = simulator.step(action, apply_safety_filter=False, sampled_action=sampled_action, safety_info=safety_info,)
+            sync_lane_completion_counters(episode_counters, simulator, episode_seen_completed)
+            sync_lane_completion_counters(reference_counters, simulator, reference_seen_completed)
 
             # Store the high-level action selected by the policy.
             transition = {
@@ -2287,28 +2334,20 @@ def collect_rollouts(
                 '''
                 break
 
+        sync_lane_completion_counters(episode_counters, simulator, episode_seen_completed)
+        sync_lane_completion_counters(reference_counters, simulator, reference_seen_completed)
         rollouts.append(rollout)
 
-        print(
-            "[REFERENCE LANE-REQUEST COUNTER]",
-            f"episode={episode + 1}/{num_episodes}",
-            f"requested_LEFT={reference_episode_left}",
-            f"requested_RIGHT={reference_episode_right}",
-            f"requested_lane_changes={reference_episode_left + reference_episode_right}",
-        )
+        print(f"[REFERENCE LANE-REQUEST COUNTER] episode={episode + 1}/{num_episodes}")
+        print_lane_request_counters("REFERENCE EPISODE", episode_counters)
         print(
             f"Reference episode "
             f"{episode + 1}/"
             f"{num_episodes}"
         )
 
-    print(
-        "[REFERENCE LANE-REQUEST TOTALS]",
-        f"episodes={num_episodes}",
-        f"requested_LEFT={reference_total_left}",
-        f"requested_RIGHT={reference_total_right}",
-        f"requested_lane_changes={reference_total_left + reference_total_right}",
-    )
+    print(f"[REFERENCE LANE-REQUEST TOTALS] episodes={num_episodes}")
+    print_lane_request_counters("REFERENCE TOTAL", reference_counters)
     return rollouts
 
 
@@ -3841,6 +3880,11 @@ def AROOD(simulator, policy):
         shield_intervention_count = 0
         strong_braking_request_count = 0
         sampled_accel_sum = 0.0
+        online_lane_counters = make_lane_request_counters()
+        online_seen_completed = {
+            "LEFT": int(getattr(simulator, "_lane_change_stats", {}).get("completed_LEFT", 0)),
+            "RIGHT": int(getattr(simulator, "_lane_change_stats", {}).get("completed_RIGHT", 0)),
+        }
         actor_loss_values = []
         advantage_values = []
 
@@ -3867,6 +3911,7 @@ def AROOD(simulator, policy):
 
 
             filtered_action, safety_info = simulator.filter_ttc_action(sampled_action)
+            record_lane_request_decision(online_lane_counters, sampled_action, valid_mask, safety_info)
 
             sampled_accel = float(sampled_action[0])
             policy_step_count += 1
@@ -3911,6 +3956,7 @@ def AROOD(simulator, policy):
                 sampled_action=sampled_action,
                 safety_info=safety_info,
             )
+            sync_lane_completion_counters(online_lane_counters, simulator, online_seen_completed)
 
             # Reconcile the requested high-level action with the action
             # actually accepted by the simulator adapter.
@@ -4195,6 +4241,7 @@ def AROOD(simulator, policy):
         mean_actor_loss = float(np.mean(actor_loss_values)) if actor_loss_values else 0.0
         mean_advantage = float(np.mean(advantage_values)) if advantage_values else 0.0
 
+        sync_lane_completion_counters(online_lane_counters, simulator, online_seen_completed)
         print(
             "[LANE CHANGE EPISODE SUMMARY]",
             f"requested={getattr(simulator, '_lane_change_stats', {}).get('requested', 0)}",
@@ -4204,6 +4251,7 @@ def AROOD(simulator, policy):
             f"active_at_episode_end={getattr(simulator, '_lane_change_active', False)}",
             f"target_lane_at_episode_end={getattr(simulator, 'target_lane_index', None)}",
         )
+        print_lane_request_counters("ONLINE EPISODE", online_lane_counters)
 
         print(
             "[EPISODE POLICY DIAGNOSTICS]",
