@@ -11,6 +11,7 @@ from collections import deque, Counter
 import numpy as np
 import torch
 import json
+import os
 
 import gymnasium as gym
 import highway_env
@@ -113,6 +114,10 @@ MMD_SIGMA = 1.0
 EMBEDDING_DIM = 384
 DEVICE = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
+# Structured diagnostics: one JSON object per line. These logs are designed to
+# separate policy requests, shield decisions, physical maneuvers, and reward trends.
+DIAGNOSTIC_LOG_PATH = "training_diagnostics.jsonl"
+
 
 reward_path = 'figures/' + 'Re__1' + '.png'
 adaptation_path = 'figures/' + 'Ad__1' + '.png'
@@ -134,6 +139,22 @@ torch.manual_seed(SEED)
 # ============================================================
 # 2. Utility Functions
 # ============================================================
+
+def write_diagnostic_event(event, simulator=None, **fields):
+    """Append one structured diagnostic event; logging failures must not stop RL."""
+    record = {
+        "event": str(event),
+        "phase": getattr(simulator, "_trace_phase", None) if simulator is not None else None,
+        "episode": getattr(simulator, "_trace_episode", None) if simulator is not None else None,
+        "simulator_step": getattr(simulator, "step_count", None) if simulator is not None else None,
+    }
+    record.update(fields)
+    try:
+        with open(DIAGNOSTIC_LOG_PATH, "a", encoding="utf-8") as log_file:
+            log_file.write(json.dumps(record, ensure_ascii=False, default=str, allow_nan=True) + "\\n")
+    except (OSError, TypeError, ValueError) as exc:
+        print("[DIAGNOSTIC LOG WARNING]", f"event={event}", f"error={exc}")
+
 
 def lane_action_index_to_delta(lane_action_index):
     """Map categorical policy index 0/1/2 to semantic relative lane delta -1/0/+1."""
@@ -1695,6 +1716,24 @@ class HighwaySimulator:
                 "lane_request_candidate_front_gap_limit": float(candidate_front_gap_limit),
                 "lane_request_candidate_rear_gap_limit": float(candidate_rear_gap_limit),
             })
+            write_diagnostic_event(
+                "lane_request_decision", self,
+                request_id=request_trace_id,
+                direction=requested_lane_name,
+                decision=decision_status,
+                rejection_reasons=rejection_reasons,
+                source_lane=int(current_lane),
+                target_lane=int(candidate_lane),
+                candidate_front_ttc=float(candidate_front_ttc),
+                candidate_rear_ttc=float(candidate_rear_ttc),
+                candidate_front_gap=float(candidate_front_gap),
+                candidate_rear_gap=float(candidate_rear_gap),
+                candidate_front_gap_limit=float(candidate_front_gap_limit),
+                candidate_rear_gap_limit=float(candidate_rear_gap_limit),
+                filter_call_id=ttc_filter_call_id,
+                sampled_action=np.asarray(sampled_action).tolist(),
+                filtered_action=np.asarray(filtered_action).tolist(),
+            )
             print(
                 "[LANE REQUEST TRACE]",
                 f"id={request_trace_id}",
@@ -1766,6 +1805,17 @@ class HighwaySimulator:
                 if getattr(self, "_lane_change_stats", None) is not None:
                     self._lane_change_stats["completed"] += 1
                     self._lane_change_stats[f"completed_{completed_direction}"] += 1
+                write_diagnostic_event(
+                    "lane_maneuver_terminal", self,
+                    maneuver_id=completed_maneuver_id,
+                    outcome="COMPLETED",
+                    direction=completed_direction,
+                    source_lane=source_lane_completed,
+                    target_lane=target_lane_id,
+                    physical_lane=getattr(ego, "lane_index", None),
+                    steps_since_start=completed_steps,
+                    cooldown_started=self._lane_change_cooldown,
+                )
                 print(
                     "[LANE MANEUVER TERMINAL]",
                     f"maneuver_id={completed_maneuver_id}",
@@ -1793,6 +1843,20 @@ class HighwaySimulator:
                 self._lane_change_timeout_logged = True
                 if getattr(self, "_lane_change_stats", None) is not None:
                     self._lane_change_stats["timed_out"] += 1
+                write_diagnostic_event(
+                    "lane_maneuver_timeout_warning", self,
+                    maneuver_id=self._active_lane_maneuver_id,
+                    direction=(
+                        "LEFT" if self._lane_change_source_index is not None
+                        and int(self.target_lane_index[2]) > int(self._lane_change_source_index[2])
+                        else "RIGHT" if self._lane_change_source_index is not None else "UNKNOWN"
+                    ),
+                    source_lane=self._lane_change_source_index,
+                    target_lane=self.target_lane_index,
+                    elapsed_steps=elapsed_steps,
+                    lateral_error=float(lateral),
+                    outcome="STILL_ACTIVE_NOT_COMPLETED",
+                )
                 print(
                     "[LANE MANEUVER TIMEOUT WARNING]",
                     f"maneuver_id={self._active_lane_maneuver_id}",
@@ -1863,6 +1927,14 @@ class HighwaySimulator:
             self._lane_change_stats["started"] = self._lane_change_stats.get("started", 0) + 1
             self._lane_change_stats["accepted"] = self._lane_change_stats.get("accepted", 0) + 1
 
+        write_diagnostic_event(
+            "lane_maneuver_started", self,
+            maneuver_id=self._active_lane_maneuver_id,
+            direction="LEFT" if candidate_lane_id > current_lane_id else "RIGHT",
+            source_lane=current_lane_id,
+            target_lane=candidate_lane_id,
+            start_step=self._lane_change_started_step,
+        )
         print(
             "[LANE MANEUVER STARTED]",
             f"maneuver_id={self._active_lane_maneuver_id}",
@@ -2364,6 +2436,8 @@ def collect_rollouts(
     reference_seen_completed = {"LEFT": 0, "RIGHT": 0}
 
     for episode in range(num_episodes):
+        simulator._trace_phase = "reference"
+        simulator._trace_episode = episode + 1
         state = simulator.reset()
         rollout = []
         episode_counters = make_lane_request_counters()
@@ -3818,6 +3892,12 @@ def construct_checkpoint_distribution( data ):
 
 def AROOD(simulator, policy):
 
+    try:
+        with open(DIAGNOSTIC_LOG_PATH, "w", encoding="utf-8") as log_file:
+            log_file.write("")
+    except OSError as exc:
+        print("[DIAGNOSTIC LOG WARNING]", f"cannot initialize {DIAGNOSTIC_LOG_PATH}: {exc}")
+
     reward_List = []
     reward_per_step_List = []
     adaptation_count_List = []
@@ -3897,6 +3977,7 @@ def AROOD(simulator, policy):
     reference_distribution = construct_reference_distribution(rollouts)
 
     print("Reference samples:", len(reference_distribution))
+    print("[DIAGNOSTIC OUTPUT]", os.path.abspath(DIAGNOSTIC_LOG_PATH))
 
     current_buffer = deque(maxlen=DISTRIBUTION_WINDOW)
 
@@ -3970,6 +4051,8 @@ def AROOD(simulator, policy):
 
 
     for episode in range(NUM_ONLINE_EPISODES):
+        simulator._trace_phase = "online"
+        simulator._trace_episode = episode + 1
         print("----------------------------------------------------&&&&&&&&&&&&&&&&&&&&&&&& epi ",episode)
         start = time.time()
         episode_collision_count = 0
@@ -3999,6 +4082,7 @@ def AROOD(simulator, policy):
         state = simulator.reset()
 
         episode_reward = 0.0
+        episode_reward_component_sums = Counter()
         adaptation_count = 0
         risk_score_count = 0
 
@@ -4294,6 +4378,33 @@ def AROOD(simulator, policy):
                 reward_diagnostics=reward_components,
             )
 
+            for component_name, component_value in reward_components.items():
+                try:
+                    episode_reward_component_sums[component_name] += float(component_value)
+                except (TypeError, ValueError):
+                    pass
+
+            write_diagnostic_event(
+                "training_step_reward", simulator,
+                reward=float(reward),
+                reward_components={key: float(value) for key, value in reward_components.items()
+                                  if isinstance(value, (int, float, np.integer, np.floating))},
+                speed_mps=float(ego_speed_for_reward),
+                min_ttc=float(min_ttc),
+                lane_deviation=float(lane_deviation),
+                offroad=bool(offroad),
+                safety_violation=bool(safety_violation),
+                risk_score=float(risk_score),
+                shift_score=float(shift_score),
+                revision_reasons=list(revision_reasons),
+                adaptation_trigger=bool(adaptation_trigger),
+                reward_specification_name=str(reward_specification.get("name", "unknown")),
+                sampled_action=np.asarray(sampled_action).tolist(),
+                executed_action=np.asarray(reward_action).tolist(),
+                safety_intervention_reason=str(safety_info.get("intervention_reason", "none")),
+                lane_change_request_id=safety_info.get("lane_request_trace_id"),
+                active_maneuver_id=getattr(simulator, "_active_lane_maneuver_id", None),
+            )
             print(
                 "[REWARD COMPONENT TRACE]",
                 " ".join(f"{key}={value:+.4f}" for key, value in reward_components.items()),
@@ -4366,6 +4477,19 @@ def AROOD(simulator, policy):
         reward_List.append(episode_reward)
         reward_per_step = float(episode_reward / max(policy_step_count, 1))
         reward_per_step_List.append(reward_per_step)
+        write_diagnostic_event(
+            "episode_summary", simulator,
+            episode_return=float(episode_reward),
+            mean_reward_per_step=float(reward_per_step),
+            steps=int(policy_step_count),
+            collisions=int(episode_collision_count),
+            collision_rate=float(episode_collision_rate),
+            adaptations=int(adaptation_count),
+            mean_actor_loss=float(mean_actor_loss) if "mean_actor_loss" in locals() else None,
+            mean_advantage=float(mean_advantage) if "mean_advantage" in locals() else None,
+            reward_component_sums={key: float(value) for key, value in episode_reward_component_sums.items()},
+            lane_change_stats=dict(getattr(simulator, "_lane_change_stats", {})),
+        )
         adaptation_count_List.append(adaptation_count)
         risk_List.append(risk_score_count)
         collision_List.append(episode_collision_count)
