@@ -4614,14 +4614,8 @@ def AROOD(simulator, policy):
             f"adaptations={adaptation_count}"
         )
 
-    # Diagnostic plot: reward components per episode. A total-return curve alone
-    # cannot reveal whether progress, headway, TTC, or control penalties dominate.
-    component_keys = sorted({
-        key for episode_record in []
-        for key in episode_record
-    })
-    # Component sums are already written to the JSONL diagnostic log. Keep the
-    # training plot below focused on return and per-step return for comparability.
+    # Reward-component sums, actor/critic losses, and lane-maneuver outcomes
+    # are recorded in DIAGNOSTIC_LOG_PATH for post-run convergence analysis.
     episode_reward_List = list(range(len(reward_List)))
     fig_path = reward_path
     plt.plot(episode_reward_List, reward_List, alpha=0.35, label="raw episode return")
