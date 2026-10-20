@@ -1463,6 +1463,7 @@ class HighwaySimulator:
         # ---------------------------------------------------------
         safety_info = {
             "current_lane": current_lane,
+            "current_speed": float(vehicle.speed),
             "candidate_lane": candidate_lane,
 
             "requested_lane_action": requested_lane_action,  # categorical index
@@ -3042,9 +3043,14 @@ def construct_reward(reward_specification, embedding_model):
         headway_min_gap = max(
             0.0, float(reward_specification.get("headway_min_gap", MIN_FOLLOWING_GAP))
         )
-        desired_headway_gap = headway_min_gap + headway_time_headway * ego_speed
+        # The TTC filter snapshot is pre-action, so use its matching ego
+        # speed for gap/closing calculations. Progress still uses post-step speed.
+        ego_speed_for_headway = max(
+            0.0, float(safety_info.get("current_speed", ego_speed))
+        )
+        desired_headway_gap = headway_min_gap + headway_time_headway * ego_speed_for_headway
         front_closing_speed_for_reward = (
-            ego_speed - float(front_speed_for_reward)
+            ego_speed_for_headway - float(front_speed_for_reward)
             if front_speed_for_reward is not None else 0.0
         )
         headway_weight = max(0.0, float(reward_specification.get("headway_weight", INITIAL_HEADWAY_WEIGHT)))
