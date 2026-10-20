@@ -3658,7 +3658,7 @@ def AROOD(simulator, policy):
         "lane_keeping_weight": lane_keeping_weight,
         "max_lateral_deviation": 2.0,
         "offroad_penalty": INITIAL_OFFROAD_PENALTY,
-        "ttc_weight": 2.0,
+        "ttc_weight": INITIAL_TTC_WEIGHT,
         "ttc_critical_threshold": ttc_critical_threshold,
         "ttc_safe_threshold": ttc_caution_threshold,
     }
