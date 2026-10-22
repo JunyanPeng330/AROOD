@@ -132,7 +132,7 @@ MMD_SIGMA = 1.0
 
 # Overtaking motivation: only consider a pass when the current-lane leader
 # is within this center-to-center distance and is not >=20% faster than ego.
-OVERTAKE_FRONT_DISTANCE_MAX = 200.0  # metres
+OVERTAKE_FRONT_DISTANCE_MAX = 30.0  # metres; center-to-center distance
 OVERTAKE_FRONT_SPEED_RATIO = 1.20    # no pass if leader speed >= 1.2 * ego speed
 
 # Reference-collection scenario diversity.
@@ -884,7 +884,7 @@ class HighwaySimulator:
         """Return whether passing is worthwhile, independent of target-lane safety.
 
         A pass is motivated only when a current-lane front vehicle exists,
-        its center distance is <= 200 m, and its speed is less than 120% of
+        its center distance is <= 30 m, and its speed is less than 120% of
         ego speed. This is motivation only: target-lane safety is checked
         separately by the TTC/gap shield.
         """
@@ -990,7 +990,12 @@ class HighwaySimulator:
             f"distance_limit_m={OVERTAKE_FRONT_DISTANCE_MAX:.1f}",
             f"front_speed_ratio_limit={OVERTAKE_FRONT_SPEED_RATIO:.2f}",
         )
-        if current_front_ttc <= SAFETY_OVERRIDE_TTC or not should_overtake:
+        # A critical TTC on the current lane is a longitudinal warning, not
+        # an unconditional lateral-action veto. If passing is motivated, still
+        # evaluate adjacent lanes; only a target lane that passes the safety
+        # checks below may be selected. The execution shield retains emergency
+        # braking while the lateral maneuver is considered.
+        if not should_overtake:
             return np.asarray(mask, dtype=bool)
 
         # Policy index 0 means relative LEFT (-1); index 2 means
@@ -1525,10 +1530,39 @@ class HighwaySimulator:
         rear_pressure_suppresses_routine_matching = (
             rear_pressure and nearest_front_ttc > SPEED_MATCH_TTC
         )
+        # If the sampled policy action requests a lane change into a lane
+        # that passes the same target-lane checks used by the execution shield,
+        # do not let routine headway regulation cancel the overtaking acceleration.
+        # This exception never disables critical-TTC emergency braking below.
+        requested_lane_value = int(np.clip(np.rint(float(sampled_action[1])), 0, 2))
+        requested_lane_delta_for_speed_match = {0: -1, 1: 0, 2: 1}[requested_lane_value]
+        safe_overtake_request = False
+        if requested_lane_delta_for_speed_match != 0 and not self._lane_change_active:
+            current_lane_for_speed_match = int(vehicle.lane_index[2])
+            target_lane_for_speed_match = relative_lane_delta_to_absolute_lane(
+                current_lane_for_speed_match, requested_lane_delta_for_speed_match
+            )
+            should_overtake_for_speed_match, _ = self._overtaking_motivation(
+                self._min_ttc_by_lane().get(current_lane_for_speed_match, {})
+            )
+            candidate_values_for_speed_match = self._min_ttc_by_lane().get(
+                target_lane_for_speed_match
+            )
+            safe_overtake_request = (
+                should_overtake_for_speed_match
+                and candidate_values_for_speed_match is not None
+                and not self._lane_change_safety_reasons(
+                    candidate_values_for_speed_match,
+                    float(vehicle.speed),
+                    min_gap=LANE_CHANGE_MIN_GAP,
+                )
+            )
+
         speed_match_active = (
             front_vehicle_present
             and (front_ttc_trigger or gap_and_closing_trigger)
             and not rear_pressure_suppresses_routine_matching
+            and not safe_overtake_request
         )
 
 
@@ -1796,11 +1830,10 @@ class HighwaySimulator:
             elif candidate_lane_available:
                 lane_change_rejection_reasons.append("target_lane_traffic_data_unavailable")
 
-            # Emergency braking blocks a new lateral manoeuvre while the
-            # ego vehicle is in a critical front-collision state. Speed
-            # matching by itself never appears in this rejection list.
-            if emergency_braking:
-                lane_change_rejection_reasons.append("emergency_braking_active")
+            # Emergency braking is a longitudinal override, not an automatic
+            # lane-change veto. Target-lane and maneuver safety checks above
+            # still reject unsafe lateral moves. This allows an escape lane to
+            # be selected while braking for a critical current-lane leader.
 
             lane_change_blocked = bool(lane_change_rejection_reasons)
             if lane_change_blocked:
