@@ -1021,73 +1021,6 @@ class HighwaySimulator:
         )
         return np.asarray(mask, dtype=bool)
 
-    def get_valid_lane_action_mask(self):
-        """Mask lane changes unless overtaking is motivated and the target is safe."""
-        base_env = self.env.unwrapped
-        road = base_env.road
-        vehicle = base_env.vehicle
-        if self._lane_change_active or self._lane_change_cooldown > 0:
-            mask = np.array([False, True, False], dtype=bool)
-            return mask
-
-        current_lane = int(vehicle.lane_index[2])
-        start_node, end_node, _ = vehicle.lane_index
-        available_lanes = road.network.graph[start_node][end_node]
-        valid_ids = set(range(len(available_lanes)))
-        lane_ttc = self._min_ttc_by_lane()
-        min_gap = LANE_CHANGE_MIN_GAP
-        mask = [False, True, False]
-        current_values = lane_ttc.get(current_lane, {})
-        current_front_ttc = float(current_values.get("front_ttc", float("inf")))
-        should_overtake, overtaking_info = self._overtaking_motivation(current_values)
-        print(
-            "[OVERTAKING MOTIVATION]",
-            f"should_overtake={should_overtake}",
-            f"reason={overtaking_info['reason']}",
-            f"front_distance_m={overtaking_info['front_distance_m']:.3f}",
-            f"front_speed_mps={overtaking_info['front_speed_mps']}",
-            f"ego_speed_mps={overtaking_info['ego_speed_mps']:.3f}",
-            f"distance_limit_m={OVERTAKE_FRONT_DISTANCE_MAX:.1f}",
-            f"front_speed_ratio_limit={OVERTAKE_FRONT_SPEED_RATIO:.2f}",
-        )
-        # A critical TTC on the current lane is a longitudinal warning, not
-        # an unconditional lateral-action veto. If passing is motivated, still
-        # evaluate adjacent lanes; only a target lane that passes the safety
-        # checks below may be selected. The execution shield retains emergency
-        # braking while the lateral maneuver is considered.
-        if not should_overtake:
-            return np.asarray(mask, dtype=bool)
-
-        # Policy index 0 means relative LEFT (-1); index 2 means
-        # relative RIGHT (+1). Convert each semantic delta to a geometry ID.
-        for action_id, lane_delta in ((0, -1), (2, +1)):
-            candidate_lane = relative_lane_delta_to_absolute_lane(
-                current_lane, lane_delta
-            )
-            if candidate_lane not in valid_ids:
-                continue
-            values = lane_ttc.get(candidate_lane)
-            if values is None:
-                continue
-            mask[action_id] = not self._lane_change_safety_reasons(
-                values, float(vehicle.speed), min_gap=min_gap
-            )
-        print(
-            "[LANE ACTION MASK]",
-            f"current_lane={current_lane}",
-            f"target_lane={getattr(self, 'target_lane_index', None)}",
-            f"mask={mask}",
-            f"lane_change_active={self._lane_change_active}",
-            f"cooldown={self._lane_change_cooldown}",
-            f"min_ttc={LANE_CHANGE_MIN_TTC:.2f}",
-            f"required_ttc={LANE_CHANGE_MIN_TTC + LANE_CHANGE_TTC_MARGIN:.2f}",
-            f"min_gap={min_gap:.2f}",
-            f"candidate_absolute_lane_ids={{0: {relative_lane_delta_to_absolute_lane(current_lane, -1)}, 2: {relative_lane_delta_to_absolute_lane(current_lane, +1)}}}",
-        )
-        return np.asarray(mask, dtype=bool)
-
-
-#?????????????????????????????????????????????????????????????????????????????????????????????????????
     def _min_ttc_by_lane(self):
         """
         Calculate minimum front TTC and rear TTC for every lane.
@@ -1833,11 +1766,8 @@ class HighwaySimulator:
                 f"target_lane_vehicles={target_lane_vehicles}",
             )
 
-        overtaking_motivated, overtaking_info = self._overtaking_motivation(current_values)
-        if requested_lane_delta != 0 and not overtaking_motivated:
-            lane_change_rejection_reasons.append(
-                "overtaking_not_motivated:" + str(overtaking_info["reason"])
-            )
+        # The former distance/speed-ratio overtaking gate is removed.
+        # Lane-change eligibility is governed solely by the four principles below.
 
         if requested_lane_delta != 0:
             # Check the actual road graph, not only a hard-coded lane count.
