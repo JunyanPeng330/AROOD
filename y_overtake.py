@@ -1538,7 +1538,7 @@ class HighwaySimulator:
                 current_lane_for_speed_match, requested_lane_delta_for_speed_match
             )
             lane_snapshot_for_speed_match = self._min_ttc_by_lane()
-            safe_overtake_request = (
+            safe_lane_change_request = (
                 target_lane_for_speed_match in lane_snapshot_for_speed_match
                 and not self._lane_change_principle_reasons(
                     target_lane_for_speed_match,
@@ -1552,7 +1552,7 @@ class HighwaySimulator:
             front_vehicle_present
             and (front_ttc_trigger or gap_and_closing_trigger)
             and not rear_pressure_suppresses_routine_matching
-            and not safe_overtake_request
+            and not safe_lane_change_request
         )
 
 
