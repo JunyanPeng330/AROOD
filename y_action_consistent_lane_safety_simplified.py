@@ -53,9 +53,10 @@ SPEED_MATCH_TTC = 6.0
 SPEED_MATCH_GAP_TOLERANCE = 3.0  # metres; avoid needless overrides for tiny gap deviations
 # Execution-time safety shield (TTC is measured in seconds).
 SAFETY_OVERRIDE_TTC = 2.0       # Emergency braking threshold
-LANE_CHANGE_MIN_TTC = 3.0       # More permissive, but still rejects short target-lane TTCs
+LANE_CHANGE_MIN_TTC = 3.0       # Minimum current front TTC for entering a target lane
 LANE_CHANGE_PREDICTION_HORIZON = 1.5  # Approximate lateral-transition safety horizon (seconds)
-LANE_CHANGE_TTC_MARGIN = 0.5     # Extra TTC margin for transition uncertainty
+LANE_CHANGE_TTC_MARGIN = 0.5     # Extra rear-TTC margin during the transition
+LANE_CHANGE_MIN_GAP = 8.0        # Shared static/predicted bumper-gap requirement (metres)
 
 # Maneuver completion uses geometric alignment over consecutive policy decisions.
 LANE_CHANGE_COMPLETE_LATERAL_TOL = 0.45   # metres from target-lane centre
@@ -922,6 +923,44 @@ class HighwaySimulator:
             "ego_speed_mps": ego_speed,
         }
 
+    def _lane_change_safety_reasons(self, values, ego_speed, min_gap=LANE_CHANGE_MIN_GAP):
+        """Return the canonical target-lane safety rejection reasons.
+
+        The same checks are used by the policy action mask and execution shield,
+        preventing the mask from using stricter/different thresholds than the shield.
+        Front safety uses current TTC + bumper gap. Rear safety uses bumper gap
+        and a short-horizon prediction; a separate static rear-TTC check would
+        duplicate the predictive rear-TTC check.
+        """
+        reasons = []
+        front_ttc = float(values.get("front_ttc", float("inf")))
+        front_gap = float(values.get("front_gap", float("inf")))
+        rear_gap = float(values.get("rear_gap", float("inf")))
+        rear_speed = values.get("rear_speed", None)
+        ego_speed = max(0.0, float(ego_speed))
+
+        if front_ttc <= LANE_CHANGE_MIN_TTC:
+            reasons.append("target_lane_front_ttc_below_threshold")
+        if front_gap < min_gap:
+            reasons.append("target_lane_front_gap_too_small")
+        if rear_gap < min_gap:
+            reasons.append("target_lane_rear_gap_too_small")
+
+        if rear_speed is not None and np.isfinite(rear_gap):
+            rear_closing_speed = max(0.0, float(rear_speed) - ego_speed)
+            predicted_rear_gap = (
+                rear_gap - rear_closing_speed * LANE_CHANGE_PREDICTION_HORIZON
+            )
+            predicted_rear_ttc = (
+                rear_gap / rear_closing_speed
+                if rear_closing_speed > 0.1 else float("inf")
+            )
+            if predicted_rear_gap < min_gap:
+                reasons.append("target_lane_rear_gap_closes_during_maneuver")
+            if predicted_rear_ttc <= (LANE_CHANGE_MIN_TTC + LANE_CHANGE_TTC_MARGIN):
+                reasons.append("target_lane_rear_ttc_unsafe_during_maneuver")
+        return reasons
+
     def get_valid_lane_action_mask(self):
         """Mask lane changes unless overtaking is motivated and the target is safe."""
         base_env = self.env.unwrapped
@@ -936,7 +975,7 @@ class HighwaySimulator:
         available_lanes = road.network.graph[start_node][end_node]
         valid_ids = set(range(len(available_lanes)))
         lane_ttc = self._min_ttc_by_lane()
-        min_gap = max(8.0, 0.5 * max(0.0, float(vehicle.speed)))
+        min_gap = LANE_CHANGE_MIN_GAP
         mask = [False, True, False]
         current_values = lane_ttc.get(current_lane, {})
         current_front_ttc = float(current_values.get("front_ttc", float("inf")))
@@ -965,11 +1004,8 @@ class HighwaySimulator:
             values = lane_ttc.get(candidate_lane)
             if values is None:
                 continue
-            mask[action_id] = bool(
-                float(values.get("front_ttc", float("inf"))) > (LANE_CHANGE_MIN_TTC + LANE_CHANGE_TTC_MARGIN)
-                and float(values.get("rear_ttc", float("inf"))) > (LANE_CHANGE_MIN_TTC + LANE_CHANGE_TTC_MARGIN)
-                and float(values.get("front_gap", float("inf"))) >= min_gap
-                and float(values.get("rear_gap", float("inf"))) >= min_gap
+            mask[action_id] = not self._lane_change_safety_reasons(
+                values, float(vehicle.speed), min_gap=min_gap
             )
         print(
             "[LANE ACTION MASK]",
@@ -1624,8 +1660,8 @@ class HighwaySimulator:
         candidate_rear_ttc = float("inf")
         candidate_front_gap = float("inf")
         candidate_rear_gap = float("inf")
-        candidate_front_gap_limit = max(8.0, 0.5 * max(float(vehicle.speed), 0.0))
-        candidate_rear_gap_limit = max(8.0, 0.5 * max(float(vehicle.speed), 0.0))
+        candidate_front_gap_limit = LANE_CHANGE_MIN_GAP
+        candidate_rear_gap_limit = LANE_CHANGE_MIN_GAP
         candidate_lane_available = False
 
         # One authoritative pre-decision snapshot. The selected neighbor IDs/gaps
@@ -1740,34 +1776,16 @@ class HighwaySimulator:
                 candidate_front_gap = float(candidate_values.get("front_gap", float("inf")))
                 candidate_rear_gap = float(candidate_values.get("rear_gap", float("inf")))
 
-                if candidate_front_ttc <= lane_change_threshold:
-                    lane_change_rejection_reasons.append("target_lane_front_ttc_below_threshold")
-                if candidate_rear_ttc <= lane_change_threshold:
-                    lane_change_rejection_reasons.append("target_lane_rear_ttc_below_threshold")
-                if candidate_front_gap < candidate_front_gap_limit:
-                    lane_change_rejection_reasons.append("target_lane_front_gap_too_small")
-                if candidate_rear_gap < candidate_rear_gap_limit:
-                    lane_change_rejection_reasons.append("target_lane_rear_gap_too_small")
-
-                # Predict whether the target-lane rear gap remains adequate during
-                # the lateral transition. Positive closing speed means the rear
-                # vehicle is gaining on ego. This is a conservative 1-D proxy;
-                # it complements, but does not replace, full trajectory prediction.
-                target_rear_speed = candidate_values.get("rear_speed", None)
-                if target_rear_speed is not None and np.isfinite(candidate_rear_gap):
-                    rear_closing_speed = max(0.0, float(target_rear_speed) - float(vehicle.speed))
-                    predicted_rear_gap = (
-                        candidate_rear_gap
-                        - rear_closing_speed * LANE_CHANGE_PREDICTION_HORIZON
+                # Use the same canonical target-lane rule as the policy mask.
+                # This avoids duplicate static rear-TTC checks that overlap with
+                # the rear-TTC prediction over the lane-transition horizon.
+                lane_change_rejection_reasons.extend(
+                    self._lane_change_safety_reasons(
+                        candidate_values,
+                        float(vehicle.speed),
+                        min_gap=LANE_CHANGE_MIN_GAP,
                     )
-                    predicted_rear_ttc = (
-                        candidate_rear_gap / rear_closing_speed
-                        if rear_closing_speed > 0.1 else float("inf")
-                    )
-                    if predicted_rear_gap < candidate_rear_gap_limit:
-                        lane_change_rejection_reasons.append("target_lane_rear_gap_closes_during_maneuver")
-                    if predicted_rear_ttc <= (LANE_CHANGE_MIN_TTC + LANE_CHANGE_TTC_MARGIN):
-                        lane_change_rejection_reasons.append("target_lane_rear_ttc_unsafe_during_maneuver")
+                )
 
                 # Source-lane rear pressure is logged separately, not treated as
                 # an automatic veto. A fast-approaching source-lane vehicle can
