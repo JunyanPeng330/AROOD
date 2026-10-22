@@ -1200,48 +1200,76 @@ class HighwaySimulator:
 
         current_values = lane_ttc_current.get(current_lane, default_ttc)
 
-        # Re-check the target lane on every policy decision while a maneuver is
-        # active. If the target-lane rear gap becomes critical before ego has
-        # crossed the lane midpoint, return to the source lane only when that
-        # source lane is currently safe. Once ego is nearer the target lane,
-        # avoid abrupt target switching and finish the maneuver instead.
+        # Maneuver-aware safety: assess both lanes on every policy decision.
+        # A lane change is a commitment over several steps, not a fresh one-step
+        # decision. Do not abort into a source lane whose rear gap is collapsing.
         active_lane_safety_event = None
+        active_maneuver_progress = None
+        active_source_rear_critical = False
+        active_target_rear_critical = False
+        active_target_front_critical = False
         if self._lane_change_active and self._lane_change_source_index is not None:
             try:
                 source_lane_id_active = int(self._lane_change_source_index[2])
                 target_lane_id_active = int(self.target_lane_index[2])
                 source_values_active = lane_ttc_current.get(source_lane_id_active, default_ttc)
                 target_values_active = lane_ttc_current.get(target_lane_id_active, default_ttc)
-                target_rear_ttc_active = float(target_values_active.get("rear_ttc", float("inf")))
-                target_rear_gap_active = float(target_values_active.get("rear_gap", float("inf")))
-                target_front_ttc_active = float(target_values_active.get("front_ttc", float("inf")))
+
                 source_front_ttc_active = float(source_values_active.get("front_ttc", float("inf")))
                 source_rear_ttc_active = float(source_values_active.get("rear_ttc", float("inf")))
+                target_front_ttc_active = float(target_values_active.get("front_ttc", float("inf")))
+                target_rear_ttc_active = float(target_values_active.get("rear_ttc", float("inf")))
                 source_front_gap_active = float(source_values_active.get("front_gap", float("inf")))
                 source_rear_gap_active = float(source_values_active.get("rear_gap", float("inf")))
+                target_front_gap_active = float(target_values_active.get("front_gap", float("inf")))
+                target_rear_gap_active = float(target_values_active.get("rear_gap", float("inf")))
+                ego_speed_active = float(vehicle.speed)
 
                 target_lane_active_geometry = base_env.road.network.get_lane(self.target_lane_index)
-                target_s_active, target_lateral_active = target_lane_active_geometry.local_coordinates(vehicle.position)
+                _, target_lateral_active = target_lane_active_geometry.local_coordinates(vehicle.position)
                 source_lane_active_geometry = base_env.road.network.get_lane(self._lane_change_source_index)
-                source_s_active, source_lateral_active = source_lane_active_geometry.local_coordinates(vehicle.position)
+                _, source_lateral_active = source_lane_active_geometry.local_coordinates(vehicle.position)
                 source_is_nearer_active = abs(float(source_lateral_active)) < abs(float(target_lateral_active))
+                active_maneuver_progress = "SOURCE_SIDE" if source_is_nearer_active else "TARGET_SIDE"
 
-                target_rear_critical = (
-                    target_rear_ttc_active <= LANE_CHANGE_ACTIVE_ABORT_TTC
-                    or (
-                        target_rear_gap_active <= LANE_CHANGE_ACTIVE_ABORT_GAP
-                        and target_values_active.get("rear_speed") is not None
-                        and float(target_values_active["rear_speed"]) > float(vehicle.speed) + 0.1
-                    )
+                active_source_rear_critical = (
+                    source_rear_ttc_active <= LANE_CHANGE_ACTIVE_ABORT_TTC
+                    or source_rear_gap_active <= LANE_CHANGE_ACTIVE_ABORT_GAP
                 )
+                active_target_rear_critical = (
+                    target_rear_ttc_active <= LANE_CHANGE_ACTIVE_ABORT_TTC
+                    or target_rear_gap_active <= LANE_CHANGE_ACTIVE_ABORT_GAP
+                )
+                active_target_front_critical = target_front_ttc_active <= SAFETY_OVERRIDE_TTC
+
                 source_lane_safe_for_abort = (
                     source_front_ttc_active > SAFETY_OVERRIDE_TTC
-                    and source_rear_ttc_active > SAFETY_OVERRIDE_TTC
+                    and source_rear_ttc_active > LANE_CHANGE_ACTIVE_ABORT_TTC
                     and source_front_gap_active >= LANE_CHANGE_ACTIVE_ABORT_GAP
                     and source_rear_gap_active >= LANE_CHANGE_ACTIVE_ABORT_GAP
                 )
+                target_lane_safe_to_complete = (
+                    target_front_ttc_active > SAFETY_OVERRIDE_TTC
+                    and target_front_gap_active >= 0.0
+                    and not (
+                        target_rear_ttc_active <= 0.5
+                        or target_rear_gap_active <= 0.0
+                    )
+                )
 
-                if target_rear_critical and source_is_nearer_active and source_lane_safe_for_abort:
+                # Recovery rule:
+                # 1) If the target lane becomes dangerous while ego is still
+                #    nearer the source, return only if the source is safe.
+                # 2) If source rear pressure makes returning unsafe, do NOT
+                #    switch target back to the source lane. If the target is
+                #    viable, keep tracking it; if both lanes are dangerous,
+                #    retain the target trajectory and use longitudinal control.
+                should_recover_to_source = (
+                    active_target_rear_critical
+                    and source_is_nearer_active
+                    and source_lane_safe_for_abort
+                )
+                if should_recover_to_source:
                     aborted_target = tuple(self.target_lane_index)
                     source_target = tuple(self._lane_change_source_index)
                     aborted_maneuver_id = self._active_lane_maneuver_id
@@ -1260,31 +1288,63 @@ class HighwaySimulator:
                     self._lane_change_timeout_logged = False
                     if getattr(self, "_lane_change_stats", None) is not None:
                         self._lane_change_stats["aborted"] = self._lane_change_stats.get("aborted", 0) + 1
-                    active_lane_safety_event = "ABORT_TO_SOURCE_TARGET_REAR_CRITICAL"
+                    active_lane_safety_event = "RECOVER_TO_SOURCE_TARGET_REAR_CRITICAL_SOURCE_SAFE"
                     write_diagnostic_event(
-                        "lane_maneuver_terminal", self,
+                        "lane_maneuver_safety_decision", self,
                         maneuver_id=aborted_maneuver_id,
                         request_id=aborted_request_id,
-                        outcome="ABORTED_TO_SOURCE",
+                        decision="RECOVER_TO_SOURCE",
                         reason=active_lane_safety_event,
+                        progress=active_maneuver_progress,
                         source_lane=source_lane_id_active,
-                        old_target_lane=aborted_target,
-                        new_target_lane=source_target,
+                        target_lane=target_lane_id_active,
+                        source_rear_ttc=source_rear_ttc_active,
+                        source_rear_gap=source_rear_gap_active,
                         target_rear_ttc=target_rear_ttc_active,
                         target_rear_gap=target_rear_gap_active,
                     )
-                    print(
-                        "[ACTIVE LANE CHANGE ABORTED]",
-                        f"maneuver_id={aborted_maneuver_id}",
-                        f"reason={active_lane_safety_event}",
-                        f"source_lane={source_lane_id_active}",
-                        f"old_target_lane={aborted_target}",
-                        f"target_rear_ttc={target_rear_ttc_active:.3f}",
-                        f"target_rear_gap={target_rear_gap_active:.3f}",
-                        f"source_lane_safe=True",
+                elif active_target_rear_critical and not source_lane_safe_for_abort:
+                    active_lane_safety_event = (
+                        "CONTINUE_TARGET_SOURCE_UNSAFE"
+                        if target_lane_safe_to_complete
+                        else "KEEP_TARGET_TRAJECTORY_BOTH_LANES_RISKY"
                     )
-                elif target_front_ttc_active <= SAFETY_OVERRIDE_TTC:
-                    active_lane_safety_event = "TARGET_FRONT_TTC_CRITICAL_CONTINUE_TARGET_AND_BRAKE"
+                    write_diagnostic_event(
+                        "lane_maneuver_safety_decision", self,
+                        maneuver_id=getattr(self, "_active_lane_maneuver_id", None),
+                        request_id=getattr(self, "_active_lane_request_trace_id", None),
+                        decision="CONTINUE_TARGET",
+                        reason=active_lane_safety_event,
+                        progress=active_maneuver_progress,
+                        source_lane=source_lane_id_active,
+                        target_lane=target_lane_id_active,
+                        source_front_ttc=source_front_ttc_active,
+                        source_rear_ttc=source_rear_ttc_active,
+                        source_rear_gap=source_rear_gap_active,
+                        target_front_ttc=target_front_ttc_active,
+                        target_rear_ttc=target_rear_ttc_active,
+                        target_rear_gap=target_rear_gap_active,
+                    )
+                elif active_target_front_critical:
+                    # A target-front hazard is not solved by blindly switching
+                    # lanes. Keep the target plan stable and request braking
+                    # through the normal front-TTC emergency controller below.
+                    active_lane_safety_event = "TARGET_FRONT_CRITICAL_CONTINUE_TARGET_AND_BRAKE"
+
+                print(
+                    "[MANEUVER-AWARE SAFETY]",
+                    f"maneuver_id={getattr(self, '_active_lane_maneuver_id', None)}",
+                    f"progress={active_maneuver_progress}",
+                    f"source_lane={source_lane_id_active}",
+                    f"target_lane={target_lane_id_active}",
+                    f"source_front_ttc={source_front_ttc_active:.3f}",
+                    f"source_rear_ttc={source_rear_ttc_active:.3f}",
+                    f"source_rear_gap={source_rear_gap_active:.3f}",
+                    f"target_front_ttc={target_front_ttc_active:.3f}",
+                    f"target_rear_ttc={target_rear_ttc_active:.3f}",
+                    f"target_rear_gap={target_rear_gap_active:.3f}",
+                    f"event={active_lane_safety_event}",
+                )
 
             except (AttributeError, KeyError, TypeError, ValueError, IndexError) as exc:
                 print("[ACTIVE LANE SAFETY CHECK WARNING]", f"error={exc}")
@@ -1368,6 +1428,49 @@ class HighwaySimulator:
             # Critical TTC: request maximum braking.
             filtered_action[0] = -1.0
             speed_match_active = False
+
+        elif (
+            current_rear_ttc <= ttc_danger_threshold
+            and current_values.get("rear_speed") is not None
+            and float(current_values["rear_speed"]) > float(vehicle.speed) + 0.1
+            and (
+                not self._lane_change_active
+                or active_source_rear_critical
+                or active_lane_safety_event is not None
+            )
+        ):
+            # Rear-threat response: do not merely suppress speed matching.
+            # When a fast rear vehicle is closing, modestly accelerate to reduce
+            # relative closing speed, unless a critical front TTC already requires
+            # braking. The ordinary speed-limit stage still bounds this command.
+            rear_ttc_now = float(current_rear_ttc)
+            rear_escape_accel = 0.25 if rear_ttc_now > 1.5 else 0.45
+            policy_accel_before_rear_response = float(filtered_action[0])
+            filtered_action[0] = max(policy_accel_before_rear_response, rear_escape_accel)
+            speed_match_active = False
+            print(
+                "[REAR-THREAT RESPONSE]",
+                f"rear_ttc={rear_ttc_now:.3f}",
+                f"rear_gap={float(current_values.get('rear_gap', float('inf'))):.3f}",
+                f"rear_speed={float(current_values['rear_speed']):.3f}",
+                f"ego_speed={float(vehicle.speed):.3f}",
+                f"policy_accel={policy_accel_before_rear_response:+.3f}",
+                f"escape_accel={rear_escape_accel:+.3f}",
+                f"executed_accel={float(filtered_action[0]):+.3f}",
+                f"active_maneuver={bool(self._lane_change_active)}",
+                f"active_event={active_lane_safety_event}",
+            )
+            write_diagnostic_event(
+                "rear_threat_response", self,
+                rear_ttc=rear_ttc_now,
+                rear_gap=float(current_values.get("rear_gap", float("inf"))),
+                rear_speed=float(current_values["rear_speed"]),
+                ego_speed=float(vehicle.speed),
+                policy_accel=policy_accel_before_rear_response,
+                executed_accel=float(filtered_action[0]),
+                active_maneuver=bool(self._lane_change_active),
+                active_event=active_lane_safety_event,
+            )
 
         elif speed_match_active:
             # Speed matching may cap positive acceleration, but it must never
@@ -1710,6 +1813,18 @@ class HighwaySimulator:
 
             "emergency_braking": bool(emergency_braking),
             "lane_change_blocked": bool(lane_change_blocked),
+            "active_lane_safety_event": active_lane_safety_event,
+            "active_maneuver_progress": active_maneuver_progress,
+            "active_source_rear_critical": bool(active_source_rear_critical),
+            "active_target_rear_critical": bool(active_target_rear_critical),
+            "active_target_front_critical": bool(active_target_front_critical),
+            "rear_threat_response": bool(
+                current_rear_ttc <= ttc_danger_threshold
+                and current_values.get("rear_speed") is not None
+                and float(current_values["rear_speed"]) > float(vehicle.speed) + 0.1
+                and not emergency_braking
+                and float(filtered_action[0]) >= 0.25
+            ),
 
             "emergency_threshold": emergency_threshold,
             "lane_change_threshold": lane_change_threshold,
