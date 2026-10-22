@@ -1424,6 +1424,8 @@ class HighwaySimulator:
 
 
 
+        rear_threat_response_active = False
+
         if emergency_braking:
             # Critical TTC: request maximum braking.
             filtered_action[0] = -1.0
@@ -1448,6 +1450,7 @@ class HighwaySimulator:
             policy_accel_before_rear_response = float(filtered_action[0])
             filtered_action[0] = max(policy_accel_before_rear_response, rear_escape_accel)
             speed_match_active = False
+            rear_threat_response_active = True
             print(
                 "[REAR-THREAT RESPONSE]",
                 f"rear_ttc={rear_ttc_now:.3f}",
@@ -1818,13 +1821,7 @@ class HighwaySimulator:
             "active_source_rear_critical": bool(active_source_rear_critical),
             "active_target_rear_critical": bool(active_target_rear_critical),
             "active_target_front_critical": bool(active_target_front_critical),
-            "rear_threat_response": bool(
-                current_rear_ttc <= ttc_danger_threshold
-                and current_values.get("rear_speed") is not None
-                and float(current_values["rear_speed"]) > float(vehicle.speed) + 0.1
-                and not emergency_braking
-                and float(filtered_action[0]) >= 0.25
-            ),
+            "rear_threat_response": bool(rear_threat_response_active),
 
             "emergency_threshold": emergency_threshold,
             "lane_change_threshold": lane_change_threshold,
