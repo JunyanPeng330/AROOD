@@ -1435,6 +1435,14 @@ class HighwaySimulator:
             current_rear_ttc <= ttc_danger_threshold
             and current_values.get("rear_speed") is not None
             and float(current_values["rear_speed"]) > float(vehicle.speed) + 0.1
+            # Do not accelerate away from a rear threat into a close lead vehicle.
+            and (
+                not front_vehicle_present
+                or (
+                    nearest_front_ttc > SPEED_MATCH_TTC
+                    and front_gap >= gap_trigger_threshold
+                )
+            )
             and (
                 not self._lane_change_active
                 or active_source_rear_critical
