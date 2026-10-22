@@ -136,8 +136,14 @@ OVERTAKE_FRONT_DISTANCE_MAX = 30.0  # metres; center-to-center distance
 OVERTAKE_FRONT_SPEED_RATIO = 1.20    # no pass if leader speed >= 1.2 * ego speed
 
 # Reference-collection scenario diversity.
+# Keep the existing distribution-shift baseline range separate from the
+# wider per-vehicle ranges used to create varied overtaking situations.
 REFERENCE_GAP_MIN = 35.0
 REFERENCE_GAP_MAX = 60.0
+RANDOMIZED_FRONT_GAP_MIN = 20.0
+RANDOMIZED_FRONT_GAP_MAX = 70.0
+RANDOMIZED_REAR_GAP_MIN = 20.0
+RANDOMIZED_REAR_GAP_MAX = 65.0
 TRAFFIC_SPEED_VARIATION = 8.0
 
 
@@ -572,6 +578,7 @@ class HighwaySimulator:
         self.vehicles_count = NUM_SURROUNDING_VEHICLES
         self.traffic_front_gap = 45.0
         self.traffic_rear_gap = 45.0
+        self.randomize_traffic_gaps = False
         self.traffic_speed_variation = TRAFFIC_SPEED_VARIATION
         self.env = gym.make(
             "highway-v0",
@@ -661,16 +668,21 @@ class HighwaySimulator:
         else:
             obs, info = self.env.reset(seed=seed)
 
-        # Randomize gaps only when requested by reference collection. This keeps
-        # explicitly configured online/OOD gap settings from being overwritten.
-        if randomize_traffic_gaps:
-            self.traffic_front_gap = random.uniform(REFERENCE_GAP_MIN, REFERENCE_GAP_MAX)
-            self.traffic_rear_gap = random.uniform(REFERENCE_GAP_MIN, REFERENCE_GAP_MAX)
+        # In randomized reference scenarios, each lane/side slot samples its
+        # own gap during spawning (and when that slot is replenished). Keep the
+        # configured distribution-shift gaps untouched when randomization is off.
+        self.randomize_traffic_gaps = bool(randomize_traffic_gaps)
+        if self.randomize_traffic_gaps:
+            self.traffic_front_gap = random.uniform(
+                RANDOMIZED_FRONT_GAP_MIN, RANDOMIZED_FRONT_GAP_MAX)
+            self.traffic_rear_gap = random.uniform(
+                RANDOMIZED_REAR_GAP_MIN, RANDOMIZED_REAR_GAP_MAX)
         print("[TRAFFIC SCENARIO]",
-              f"front_gap={self.traffic_front_gap:.1f}m",
-              f"rear_gap={self.traffic_rear_gap:.1f}m",
+              f"front_gap_range={RANDOMIZED_FRONT_GAP_MIN:.1f}-{RANDOMIZED_FRONT_GAP_MAX:.1f}m",
+              f"rear_gap_range={RANDOMIZED_REAR_GAP_MIN:.1f}-{RANDOMIZED_REAR_GAP_MAX:.1f}m",
+              f"gap_sampling={'independent_per_lane_and_side' if self.randomize_traffic_gaps else 'configured_shift_setting'}",
               f"speed_variation=±{self.traffic_speed_variation:.1f}m/s",
-              f"randomized={randomize_traffic_gaps}")
+              f"randomized={self.randomize_traffic_gaps}")
 
         self.step_count = 0
         base_env = self.env.unwrapped
@@ -744,7 +756,18 @@ class HighwaySimulator:
         # Compute s in the target lane's own parameterization for placement;
         # classification and distance comparisons use the shared road frame.
         ego_s_target_lane = self._lane_longitudinal_position(ego, lane_index)
-        gap = self.traffic_front_gap if side == "front" else self.traffic_rear_gap
+        # Randomized reference traffic gets a distinct independently sampled
+        # gap for every lane/side pair. The same rule is used for replacements,
+        # so traffic remains varied as vehicles pass or leave the relevant range.
+        if self.randomize_traffic_gaps:
+            if side == "front":
+                gap = random.uniform(
+                    RANDOMIZED_FRONT_GAP_MIN, RANDOMIZED_FRONT_GAP_MAX)
+            else:
+                gap = random.uniform(
+                    RANDOMIZED_REAR_GAP_MIN, RANDOMIZED_REAR_GAP_MAX)
+        else:
+            gap = self.traffic_front_gap if side == "front" else self.traffic_rear_gap
         longitudinal = ego_s_target_lane + gap if side == "front" else ego_s_target_lane - gap
         speed_offset = random.uniform(-self.traffic_speed_variation, self.traffic_speed_variation)
         speed = float(np.clip(ego.speed + speed_offset, 8.0, 30.0))
