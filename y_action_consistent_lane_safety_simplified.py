@@ -109,7 +109,7 @@ HIDDEN_DIM = 128
 NUM_REFERENCE_EPISODES = 40
 NUM_ONLINE_EPISODES = 100
 
-MAX_STEPS = 100
+MAX_STEPS = 150
 
 RISK_HORIZON = 5
 
@@ -129,7 +129,10 @@ RISK_EPOCHS = 20
 
 MMD_SIGMA = 1.0
 
-
+# Reference-collection scenario diversity.
+REFERENCE_GAP_MIN = 35.0
+REFERENCE_GAP_MAX = 60.0
+TRAFFIC_SPEED_VARIATION = 8.0
 
 
 EMBEDDING_DIM = 384
@@ -561,8 +564,9 @@ class HighwaySimulator:
         self.step_count = 0
         self.render_mode = render_mode
         self.vehicles_count = NUM_SURROUNDING_VEHICLES
-        self.traffic_front_gap = 30.0
-        self.traffic_rear_gap = 30.0
+        self.traffic_front_gap = 45.0
+        self.traffic_rear_gap = 45.0
+        self.traffic_speed_variation = TRAFFIC_SPEED_VARIATION
         self.env = gym.make(
             "highway-v0",
             render_mode=render_mode,
@@ -632,23 +636,35 @@ class HighwaySimulator:
 
 
     def set_distribution_shift(self, level):
-        """Keep six vehicles fixed while varying front/rear gaps for stress tests."""
+        """Vary traffic gaps within the configured [35, 60] m range."""
         level = float(np.clip(level, 0.0, 1.0))
-        self.traffic_front_gap = 30.0 - 10.0 * level
-        self.traffic_rear_gap = 30.0 - 10.0 * level
+        gap = REFERENCE_GAP_MAX - (REFERENCE_GAP_MAX - REFERENCE_GAP_MIN) * level
+        self.traffic_front_gap = float(np.clip(gap, REFERENCE_GAP_MIN, REFERENCE_GAP_MAX))
+        self.traffic_rear_gap = float(np.clip(gap, REFERENCE_GAP_MIN, REFERENCE_GAP_MAX))
         print("[TRAFFIC SETTING]", f"vehicles={NUM_SURROUNDING_VEHICLES}",
               f"front_gap={self.traffic_front_gap:.1f}m",
-              f"rear_gap={self.traffic_rear_gap:.1f}m")
+              f"rear_gap={self.traffic_rear_gap:.1f}m",
+              f"speed_variation=±{self.traffic_speed_variation:.1f}m/s")
 
 
 
-    def reset(self, seed=None):
+    def reset(self, seed=None, randomize_traffic_gaps=False):
 
         if seed is None:
             obs, info = self.env.reset()
         else:
             obs, info = self.env.reset(seed=seed)
 
+        # Randomize gaps only when requested by reference collection. This keeps
+        # explicitly configured online/OOD gap settings from being overwritten.
+        if randomize_traffic_gaps:
+            self.traffic_front_gap = random.uniform(REFERENCE_GAP_MIN, REFERENCE_GAP_MAX)
+            self.traffic_rear_gap = random.uniform(REFERENCE_GAP_MIN, REFERENCE_GAP_MAX)
+        print("[TRAFFIC SCENARIO]",
+              f"front_gap={self.traffic_front_gap:.1f}m",
+              f"rear_gap={self.traffic_rear_gap:.1f}m",
+              f"speed_variation=±{self.traffic_speed_variation:.1f}m/s",
+              f"randomized={randomize_traffic_gaps}")
 
         self.step_count = 0
         base_env = self.env.unwrapped
@@ -724,7 +740,8 @@ class HighwaySimulator:
         ego_s_target_lane = self._lane_longitudinal_position(ego, lane_index)
         gap = self.traffic_front_gap if side == "front" else self.traffic_rear_gap
         longitudinal = ego_s_target_lane + gap if side == "front" else ego_s_target_lane - gap
-        speed = float(np.clip(ego.speed + random.uniform(-1.5, 1.5), 8.0, 30.0))
+        speed_offset = random.uniform(-self.traffic_speed_variation, self.traffic_speed_variation)
+        speed = float(np.clip(ego.speed + speed_offset, 8.0, 30.0))
         traffic_vehicle = Vehicle.make_on_lane(base_env.road, lane_index,
                                                 longitudinal=longitudinal, speed=speed)
         base_env.road.vehicles.append(traffic_vehicle)
@@ -2713,6 +2730,33 @@ def make_lane_request_counters():
     }
 
 
+def make_action_mask_counters():
+    """Measure available lane actions independently of policy choices."""
+    return {"steps": 0, "left_valid": 0, "right_valid": 0,
+            "both_valid": 0, "only_keep": 0}
+
+
+def record_action_mask(counters, valid_action_mask):
+    mask = np.asarray(valid_action_mask, dtype=bool).reshape(-1)
+    left_valid = bool(mask[0]) if mask.size > 0 else False
+    right_valid = bool(mask[2]) if mask.size > 2 else False
+    counters["steps"] += 1
+    counters["left_valid"] += int(left_valid)
+    counters["right_valid"] += int(right_valid)
+    counters["both_valid"] += int(left_valid and right_valid)
+    counters["only_keep"] += int(mask.size > 1 and bool(mask[1]) and not left_valid and not right_valid)
+
+
+def print_action_mask_counters(tag, counters):
+    steps = max(1, counters["steps"])
+    print(f"[{tag} ACTION OPPORTUNITIES]",
+          f"steps={counters['steps']}",
+          f"left_valid={counters['left_valid']} ({100*counters['left_valid']/steps:.1f}%)",
+          f"right_valid={counters['right_valid']} ({100*counters['right_valid']/steps:.1f}%)",
+          f"both_valid={counters['both_valid']} ({100*counters['both_valid']/steps:.1f}%)",
+          f"only_keep={counters['only_keep']} ({100*counters['only_keep']/steps:.1f}%)")
+
+
 def record_lane_request_decision(counters, sampled_action, valid_action_mask, safety_info):
     """Count request, mask permission, and safety-filter acceptance for one step."""
     lane_index = int(np.clip(np.rint(float(sampled_action[1])), 0, 2))
@@ -2757,14 +2801,16 @@ def collect_rollouts(
 ):
     rollouts = []
     reference_counters = make_lane_request_counters()
+    reference_mask_counters = make_action_mask_counters()
     reference_seen_completed = {"LEFT": 0, "RIGHT": 0}
 
     for episode in range(num_episodes):
         simulator._trace_phase = "reference"
         simulator._trace_episode = episode + 1
-        state = simulator.reset()
+        state = simulator.reset(randomize_traffic_gaps=True)
         rollout = []
         episode_counters = make_lane_request_counters()
+        episode_mask_counters = make_action_mask_counters()
         episode_seen_completed = {
             "LEFT": int(getattr(simulator, "_lane_change_stats", {}).get("completed_LEFT", 0)),
             "RIGHT": int(getattr(simulator, "_lane_change_stats", {}).get("completed_RIGHT", 0)),
@@ -2775,6 +2821,8 @@ def collect_rollouts(
             # Policy chooses acceleration and a discrete lane intention.
             valid_mask = simulator.get_valid_lane_action_mask()
             simulator._trace_valid_action_mask = np.asarray(valid_mask, dtype=bool).tolist()
+            record_action_mask(episode_mask_counters, valid_mask)
+            record_action_mask(reference_mask_counters, valid_mask)
             sampled_action = np.asarray(
                 policy(state, valid_action_mask=valid_mask),
                 dtype=np.float32,
@@ -2845,6 +2893,7 @@ def collect_rollouts(
 
         print(f"[REFERENCE LANE-REQUEST COUNTER] episode={episode + 1}/{num_episodes}")
         print_lane_request_counters("REFERENCE EPISODE", episode_counters)
+        print_action_mask_counters("REFERENCE EPISODE", episode_mask_counters)
         print(
             f"Reference episode "
             f"{episode + 1}/"
@@ -2853,6 +2902,7 @@ def collect_rollouts(
 
     print(f"[REFERENCE LANE-REQUEST TOTALS] episodes={num_episodes}")
     print_lane_request_counters("REFERENCE TOTAL", reference_counters)
+    print_action_mask_counters("REFERENCE TOTAL", reference_mask_counters)
     return rollouts
 
 
