@@ -930,7 +930,9 @@ class HighwaySimulator:
             return ["target_lane_traffic_data_unavailable"]
 
         lane_ids = sorted(lane_ttc.keys())
-        speed_limit = float(base_env.config.get("speed_limit", LANE_RANKING_SPEED_LIMIT))
+        speed_limit = float(base_env.config.get(
+            "speed_limit", getattr(ego, "MAX_SPEED", LANE_RANKING_SPEED_LIMIT)
+        ))
         virtual_front_speed = speed_limit + NO_FRONT_VIRTUAL_SPEED_MARGIN
         effective_front_speeds = {}
         front_gaps = {}
@@ -1529,7 +1531,7 @@ class HighwaySimulator:
         # braking remains independent and cannot be suppressed.
         requested_lane_value = int(np.clip(np.rint(float(sampled_action[1])), 0, 2))
         requested_lane_delta_for_speed_match = {0: -1, 1: 0, 2: 1}[requested_lane_value]
-        safe_overtake_request = False
+        safe_lane_change_request = False
         if requested_lane_delta_for_speed_match != 0 and not self._lane_change_active:
             current_lane_for_speed_match = int(vehicle.lane_index[2])
             target_lane_for_speed_match = relative_lane_delta_to_absolute_lane(
@@ -1767,7 +1769,7 @@ class HighwaySimulator:
             )
 
         # The former distance/speed-ratio overtaking gate is removed.
-        # Lane-change eligibility is governed solely by the four principles below.
+        # Lane-change eligibility is governed solely by the four principles above.
 
         if requested_lane_delta != 0:
             # Check the actual road graph, not only a hard-coded lane count.
@@ -1937,8 +1939,9 @@ class HighwaySimulator:
             "candidate_front_gap_limit": float(candidate_front_gap_limit),
             "candidate_rear_gap_limit": float(candidate_rear_gap_limit),
             "candidate_lane_available": bool(candidate_lane_available),
-            "overtaking_motivated": bool(overtaking_motivated),
-            "overtaking_motivation": dict(overtaking_info),
+            "lane_change_principles_passed": bool(
+                requested_lane_delta == 0 or not lane_change_rejection_reasons
+            ),
             "lane_change_rejection_reasons": list(lane_change_rejection_reasons),
             "lane_change_rejection_reason": lane_change_rejection_reason,
 
