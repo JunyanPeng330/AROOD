@@ -129,6 +129,11 @@ RISK_EPOCHS = 20
 
 MMD_SIGMA = 1.0
 
+# Overtaking motivation: only consider a pass when the current-lane leader
+# is within this center-to-center distance and is not >=20% faster than ego.
+OVERTAKE_FRONT_DISTANCE_MAX = 200.0  # metres
+OVERTAKE_FRONT_SPEED_RATIO = 1.20    # no pass if leader speed >= 1.2 * ego speed
+
 # Reference-collection scenario diversity.
 REFERENCE_GAP_MIN = 35.0
 REFERENCE_GAP_MAX = 60.0
@@ -874,8 +879,51 @@ class HighwaySimulator:
                         pass
         return lane_ids
 
+    def _overtaking_motivation(self, current_lane_values=None):
+        """Return whether passing is worthwhile, independent of target-lane safety.
+
+        A pass is motivated only when a current-lane front vehicle exists,
+        its center distance is <= 200 m, and its speed is less than 120% of
+        ego speed. This is motivation only: target-lane safety is checked
+        separately by the TTC/gap shield.
+        """
+        ego = self.env.unwrapped.vehicle
+        if current_lane_values is None:
+            current_lane_values = self._min_ttc_by_lane().get(
+                int(ego.lane_index[2]), {}
+            )
+
+        front_vehicle_id = current_lane_values.get("front_vehicle_id")
+        front_distance = float(current_lane_values.get("front_center_gap", float("inf")))
+        front_speed = current_lane_values.get("front_speed")
+        ego_speed = max(0.0, float(ego.speed))
+
+        if front_vehicle_id is None or front_speed is None or not np.isfinite(front_distance):
+            return False, {
+                "reason": "no_current_lane_front_vehicle",
+                "front_distance_m": front_distance,
+                "front_speed_mps": front_speed,
+                "ego_speed_mps": ego_speed,
+            }
+        if front_distance > OVERTAKE_FRONT_DISTANCE_MAX:
+            reason = "front_vehicle_beyond_overtaking_distance"
+            should_overtake = False
+        elif float(front_speed) >= OVERTAKE_FRONT_SPEED_RATIO * ego_speed:
+            reason = "front_vehicle_not_slow_enough"
+            should_overtake = False
+        else:
+            reason = "front_vehicle_constrains_progress"
+            should_overtake = True
+
+        return should_overtake, {
+            "reason": reason,
+            "front_distance_m": front_distance,
+            "front_speed_mps": float(front_speed),
+            "ego_speed_mps": ego_speed,
+        }
+
     def get_valid_lane_action_mask(self):
-        """Mask unavailable or TTC/gap-unsafe lane changes; KEEP is always valid."""
+        """Mask lane changes unless overtaking is motivated and the target is safe."""
         base_env = self.env.unwrapped
         road = base_env.road
         vehicle = base_env.vehicle
@@ -892,7 +940,18 @@ class HighwaySimulator:
         mask = [False, True, False]
         current_values = lane_ttc.get(current_lane, {})
         current_front_ttc = float(current_values.get("front_ttc", float("inf")))
-        if current_front_ttc <= SAFETY_OVERRIDE_TTC:
+        should_overtake, overtaking_info = self._overtaking_motivation(current_values)
+        print(
+            "[OVERTAKING MOTIVATION]",
+            f"should_overtake={should_overtake}",
+            f"reason={overtaking_info['reason']}",
+            f"front_distance_m={overtaking_info['front_distance_m']:.3f}",
+            f"front_speed_mps={overtaking_info['front_speed_mps']}",
+            f"ego_speed_mps={overtaking_info['ego_speed_mps']:.3f}",
+            f"distance_limit_m={OVERTAKE_FRONT_DISTANCE_MAX:.1f}",
+            f"front_speed_ratio_limit={OVERTAKE_FRONT_SPEED_RATIO:.2f}",
+        )
+        if current_front_ttc <= SAFETY_OVERRIDE_TTC or not should_overtake:
             return np.asarray(mask, dtype=bool)
 
         # Policy index 0 means relative LEFT (-1); index 2 means
@@ -1649,6 +1708,12 @@ class HighwaySimulator:
                 f"target_lane_vehicles={target_lane_vehicles}",
             )
 
+        overtaking_motivated, overtaking_info = self._overtaking_motivation(current_values)
+        if requested_lane_delta != 0 and not overtaking_motivated:
+            lane_change_rejection_reasons.append(
+                "overtaking_not_motivated:" + str(overtaking_info["reason"])
+            )
+
         if requested_lane_delta != 0:
             # Check the actual road graph, not only a hard-coded lane count.
             try:
@@ -1836,6 +1901,8 @@ class HighwaySimulator:
             "candidate_front_gap_limit": float(candidate_front_gap_limit),
             "candidate_rear_gap_limit": float(candidate_rear_gap_limit),
             "candidate_lane_available": bool(candidate_lane_available),
+            "overtaking_motivated": bool(overtaking_motivated),
+            "overtaking_motivation": dict(overtaking_info),
             "lane_change_rejection_reasons": list(lane_change_rejection_reasons),
             "lane_change_rejection_reason": lane_change_rejection_reason,
 
