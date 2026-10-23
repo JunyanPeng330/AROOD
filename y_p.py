@@ -987,6 +987,10 @@ class HighwaySimulator:
         if not predicted_front_pass:
             reasons.append("predicted_post_change_front_ttc_triggers_emergency_braking")
 
+        front_vehicle_ids = {
+            lane_id: lane_ttc[lane_id].get("front_vehicle_id")
+            for lane_id in lane_ids
+        }
         print(
             "[MASK DEBUG][PRINCIPLES]",
             f"current_lane={current_lane}",
@@ -994,7 +998,7 @@ class HighwaySimulator:
             f"ego_speed_mps={ego_speed:.3f}",
             f"speed_limit_config={speed_limit:.3f}",
             f"virtual_no_front_speed={virtual_front_speed:.3f}",
-            f"front_vehicle_ids={{lane: lane_ttc[lane].get('front_vehicle_id') for lane in lane_ids}}",
+            f"front_vehicle_ids={front_vehicle_ids}",
             f"effective_front_speeds={effective_front_speeds}",
             f"candidate_speed={candidate_speed:.3f}",
             f"other_lane_speeds={other_speeds}",
