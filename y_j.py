@@ -3722,10 +3722,38 @@ def update_policy(
 def save_policy(policy, path):
     if not isinstance(policy, nn.Module):
         raise TypeError("save_policy() expected a PyTorch policy model, " f"but received {type(policy).__name__}.")
-
+    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
     torch.save(policy.state_dict(), path)
+    print(f"Policy weights saved to: {path}")
 
-    print(f"Policy saved to: {path}")
+
+def save_ppo_checkpoint(policy, path, results=None):
+    """Save resumable PPO state, optimizer, configuration, and training history."""
+    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+    checkpoint = {
+        "algorithm": "PPO",
+        "policy_state_dict": policy.state_dict(),
+        "optimizer_state_dict": policy.optimizer.state_dict(),
+        "ppo_config": {
+            "gamma": PPO_GAMMA,
+            "gae_lambda": PPO_GAE_LAMBDA,
+            "clip_coef": PPO_CLIP,
+            "value_coef": PPO_VALUE_COEF,
+            "entropy_coef": PPO_ENTROPY_COEF,
+            "update_epochs": PPO_EPOCHS,
+            "minibatch_size": PPO_MINIBATCH_SIZE,
+            "max_grad_norm": PPO_MAX_GRAD_NORM,
+            "num_online_episodes": NUM_ONLINE_EPISODES,
+            "max_steps": MAX_STEPS,
+            "seed": SEED,
+        },
+        "training_results": {
+            key: value for key, value in (results or {}).items()
+            if key != "policy"
+        },
+    }
+    torch.save(checkpoint, path)
+    print(f"Resumable PPO checkpoint saved to: {path}")
 
 
 
@@ -4347,9 +4375,12 @@ def main():
     check_model_device(policy, "Policy")
     results = AROOD(simulator=simulator, policy=policy)
     save_policy(results["policy"], MODEL_PATH)
-    print("Saved baseline policy to:", MODEL_PATH)
+    checkpoint_file = MODEL_PATH.replace(".pt", "_ppo_checkpoint.pt")
+    save_ppo_checkpoint(results["policy"], checkpoint_file, results)
+    print("Saved PPO policy weights to:", MODEL_PATH)
+    print("Saved resumable PPO checkpoint to:", checkpoint_file)
     print("Diagnostics:", os.path.abspath(DIAGNOSTIC_LOG_PATH))
-    print("Training completed. Review episode returns and collision-rate plot.")
+    print("Training completed. Review training and deterministic evaluation curves.")
     simulator.close()
 
 
