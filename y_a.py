@@ -37,9 +37,10 @@ lane_keeping_weight = 0.20
 
 # Stable long-term reward objectives. TTC is reserved for the independent
 # safety shield; it is not a continuous reward term.
-INITIAL_TRACKING_WEIGHT = 0.20
-INITIAL_PROGRESS_WEIGHT = 0.35
-INITIAL_HEADWAY_WEIGHT = 1.50
+# Semantic/embedding reward is disabled. Progress is the primary positive signal.
+INITIAL_TRACKING_WEIGHT = 0.0
+INITIAL_PROGRESS_WEIGHT = 1.50
+INITIAL_HEADWAY_WEIGHT = 0.75
 INITIAL_COLLISION_PENALTY = 10.0
 INITIAL_OFFROAD_PENALTY = 5.0
 INITIAL_LANE_CHANGE_COST = 0.01
@@ -3672,7 +3673,7 @@ def AutoReward_LLM(driving_context, performance_feedback=None,):
             "offers a useful improvement. Avoid unnecessary "
             "lane changes and never sacrifice safety for speed."
         )
-        tracking_weight = 0.15
+        tracking_weight = 0.0
         safety_weight = 12.0
         action_weight = 0.01
         reward_mode = "safety"
@@ -3682,7 +3683,7 @@ def AutoReward_LLM(driving_context, performance_feedback=None,):
             "Maintain safe following distance and smooth "
             "control while making cautious progress."
         )
-        tracking_weight = 0.18
+        tracking_weight = 0.0
         safety_weight = 10.0
         action_weight = 0.01
         reward_mode = "safety"
@@ -3694,7 +3695,7 @@ def AutoReward_LLM(driving_context, performance_feedback=None,):
             "nearby vehicles, maintain safe spacing, "
             "and make stable progress."
         )
-        tracking_weight = 0.20
+        tracking_weight = 0.0
         safety_weight = 8.0
         action_weight = 0.01
         reward_mode = "shift_adaptation"
@@ -3757,22 +3758,18 @@ def AutoReward_LLM(driving_context, performance_feedback=None,):
 # ============================================================
 def construct_reward(reward_specification, embedding_model):
     """
-    Construct the semantic adaptive reward with explicit
-    lane-keeping and off-road penalties.
-    Semantic reward:
-        r_semantic = (cos(e_behavior, e_target) + 1) / 2
+    Construct a progress-led adaptive reward with lane-keeping and
+    off-road penalties. Semantic/embedding reward is disabled.
+
     Total reward:
-        r = tracking_weight * r_semantic
-            + progress_weight * clip(ego_speed / target_speed, 0, 1)
+        r = progress_weight * clip(ego_speed / target_speed, 0, 1)
             - headway_penalty
             - safety / intervention / control / lane / off-road penalties
 
     TTC is excluded from reward construction and remains in the independent
-    execution-time safety shield.
+    execution-time safety shield. The embedding_model parameter is retained
+    for compatibility with existing callers but is not used.
     """
-
-    target_text = reward_specification.get("target_behavior", reward_specification["name"],)
-    target_embedding = embedding_model.encode(target_text)
 
     # Configurable road-keeping parameters.
     lane_keeping_weight = float(reward_specification.get("lane_keeping_weight"))
@@ -3794,12 +3791,9 @@ def construct_reward(reward_specification, embedding_model):
         policy_sampled_action=None,
         reward_diagnostics=None,
     ):
-        behavior_embedding = embedding_model.encode(behavior_description)
-
-        semantic_reward = cosine_similarity(behavior_embedding, target_embedding,)
-
-        # Map cosine similarity [-1, 1] to [0, 1].
-        semantic_reward = (semantic_reward + 1.0) / 2.0
+        # Semantic/embedding reward is disabled; no encoder call is made.
+        # Keep a zero-valued diagnostic for compatibility with existing logs.
+        semantic_reward = 0.0
 
         # Penalize an observed collision/safety violation separately from shield use.
         # Routine speed matching is a controller action, not a safety violation.
@@ -3949,11 +3943,10 @@ def construct_reward(reward_specification, embedding_model):
             f"weight={progress_weight:.3f}, "
             f"reward={progress_reward:.4f}"
         )
+        print("[SEMANTIC REWARD] disabled; semantic contribution=0.0.")
         print("[TTC REWARD] disabled; TTC is handled by the independent safety shield.")
         reward = (
-                float(reward_specification["tracking_weight"])
-                * float(semantic_reward)
-                + progress_reward
+                progress_reward
                 - safety_penalty
                 - shield_penalty
                 - intervention_penalty
@@ -3982,7 +3975,7 @@ def construct_reward(reward_specification, embedding_model):
 
         print(
             f"[REWARD DEBUG] "
-            f"semantic={semantic_reward:.3f}, "
+            f"semantic=DISABLED({semantic_reward:.3f}), "
             f"progress={progress_reward:.3f}, "
             f"speed={ego_speed:.2f}m/s, "
             f"safety={safety_penalty:.3f}, "
