@@ -1038,7 +1038,7 @@ class HighwaySimulator:
             f"mask={mask}",
             f"lane_change_active={self._lane_change_active}",
             f"cooldown={self._lane_change_cooldown}",
-            f"principles=safety_and_speed_benefit",
+            f"principles=front_ttc>={LANE_CHANGE_MIN_FRONT_TTC:.1f}s_and_rear_ttc>={LANE_CHANGE_MIN_REAR_TTC:.1f}s",
         )
         return np.asarray(mask, dtype=bool)
 
