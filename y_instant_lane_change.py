@@ -1,12 +1,8 @@
-# SIMPLIFIED / SINGLE-POLICY-DECISION VERSION
-# New standalone copy of y_action_consistent_lane_safety.py.
-# The original file is intentionally left unchanged.
-# A LEFT/RIGHT policy choice sets a persistent target lane; the low-level
-# steering controller executes the maneuver over multiple simulator steps.
-# This is not an instantaneous lane teleport. TTC/gap checks and the safety
-# shield remain active.
-# Changes: explicit same-longitudinal-position handling, clearer overlap-vs-collision
-# diagnostics, and TTC filter invocation IDs. Original y_discrete.py is unchanged.
+# INSTANT LANE-CHANGE DIAGNOSTIC EXPERIMENT
+# Standalone copy of y_a.py with discrete instantaneous lane transitions.
+# The TTC safety filter and longitudinal dynamics remain; steering and
+# multi-step lateral maneuver execution are bypassed for diagnosis.
+# This experiment is diagnostic, not a physically realistic driving simulator.
 import torch.nn as nn
 from torch.optim import Adam
 import torch.nn.functional as F
