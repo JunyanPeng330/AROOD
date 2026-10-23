@@ -907,17 +907,7 @@ class HighwaySimulator:
         return lane_ids
 
     def _lane_change_principle_reasons(self, candidate_lane, lane_ttc, current_lane=None, ego_speed=None):
-        """Apply all four lane-change principles as one strict conjunctive gate.
-
-        1) Candidate lane has the strictly highest effective front speed.
-        2) Candidate front gap is at least 80% of the largest front gap.
-        3) Candidate rear TTC is at least LANE_CHANGE_MIN_TTC.
-        4) Predicted front TTC after the transition horizon remains above the
-           emergency-braking threshold.
-
-        An absent front vehicle receives a finite virtual speed for ranking
-        only. Physical gap/TTC remain infinite when no front vehicle exists.
-        """
+        """Apply all four lane-change principles as one strict conjunctive gate."""
         base_env = self.env.unwrapped
         ego = base_env.vehicle
         if current_lane is None:
@@ -927,6 +917,9 @@ class HighwaySimulator:
         ego_speed = max(0.0, float(ego_speed))
 
         if candidate_lane not in lane_ttc:
+            print("[MASK DEBUG][INVALID CANDIDATE]",
+                  f"candidate_lane={candidate_lane}",
+                  f"available_lane_ids={sorted(lane_ttc.keys())}")
             return ["target_lane_traffic_data_unavailable"]
 
         lane_ids = sorted(lane_ttc.keys())
@@ -945,48 +938,101 @@ class HighwaySimulator:
                 effective_front_speeds[lane_id] = float(values["front_speed"])
                 front_gaps[lane_id] = float(values.get("front_gap", float("inf")))
 
-        reasons = []
         candidate_speed = effective_front_speeds[candidate_lane]
-        if not all(candidate_speed > speed for lane_id, speed in effective_front_speeds.items()
-                   if lane_id != candidate_lane):
-            reasons.append("candidate_front_speed_not_strictly_highest")
-
+        other_speeds = {lane_id: speed for lane_id, speed in effective_front_speeds.items()
+                        if lane_id != candidate_lane}
+        speed_pass = all(candidate_speed > speed for speed in other_speeds.values())
         max_front_gap = max(front_gaps.values(), default=float("inf"))
         candidate_gap = front_gaps[candidate_lane]
-        if not candidate_gap >= MIN_FRONT_GAP_RATIO * max_front_gap:
-            reasons.append("candidate_front_gap_below_80_percent_of_maximum")
+        required_gap = MIN_FRONT_GAP_RATIO * max_front_gap
+        gap_pass = candidate_gap >= required_gap
 
         values = lane_ttc[candidate_lane]
         rear_ttc = float(values.get("rear_ttc", float("inf")))
-        if rear_ttc < LANE_CHANGE_MIN_TTC:
-            reasons.append("candidate_rear_ttc_below_threshold")
+        rear_pass = rear_ttc >= LANE_CHANGE_MIN_TTC
 
-        if values.get("front_vehicle_id") is None or values.get("front_speed") is None:
+        front_gap = float(values.get("front_gap", float("inf")))
+        front_speed_raw = values.get("front_speed")
+        front_vehicle_id = values.get("front_vehicle_id")
+        closing_speed = None
+        predicted_gap = None
+        if front_vehicle_id is None or front_speed_raw is None:
             predicted_front_ttc = float("inf")
+            prediction_case = "no_front_vehicle"
         else:
-            front_gap = float(values.get("front_gap", float("inf")))
-            front_speed = float(values["front_speed"])
+            front_speed = float(front_speed_raw)
             closing_speed = ego_speed - front_speed
             if front_gap <= 0.0:
+                predicted_gap = front_gap
                 predicted_front_ttc = 0.0
+                prediction_case = "nonpositive_front_bumper_gap"
             elif closing_speed > 0.1:
                 predicted_gap = front_gap - closing_speed * LANE_CHANGE_PREDICTION_HORIZON
                 predicted_front_ttc = max(0.0, predicted_gap) / closing_speed
+                prediction_case = "ego_closing_on_front_vehicle"
             else:
+                predicted_gap = front_gap - closing_speed * LANE_CHANGE_PREDICTION_HORIZON
                 predicted_front_ttc = float("inf")
-        if predicted_front_ttc <= SAFETY_OVERRIDE_TTC:
+                prediction_case = "not_closing_on_front_vehicle"
+        predicted_front_pass = predicted_front_ttc > SAFETY_OVERRIDE_TTC
+
+        reasons = []
+        if not speed_pass:
+            reasons.append("candidate_front_speed_not_strictly_highest")
+        if not gap_pass:
+            # Preserve the existing reason key for downstream log parsers.
+            reasons.append("candidate_front_gap_below_80_percent_of_maximum")
+        if not rear_pass:
+            reasons.append("candidate_rear_ttc_below_threshold")
+        if not predicted_front_pass:
             reasons.append("predicted_post_change_front_ttc_triggers_emergency_braking")
 
         print(
-            "[LANE PRINCIPLE CHECK]",
+            "[MASK DEBUG][PRINCIPLES]",
+            f"current_lane={current_lane}",
             f"candidate_lane={candidate_lane}",
+            f"ego_speed_mps={ego_speed:.3f}",
+            f"speed_limit_config={speed_limit:.3f}",
+            f"virtual_no_front_speed={virtual_front_speed:.3f}",
+            f"front_vehicle_ids={{lane: lane_ttc[lane].get('front_vehicle_id') for lane in lane_ids}}",
             f"effective_front_speeds={effective_front_speeds}",
-            f"front_gaps={front_gaps}",
-            f"max_front_gap={max_front_gap:.3f}",
-            f"rear_ttc={rear_ttc:.3f}",
-            f"predicted_post_change_front_ttc={predicted_front_ttc:.3f}",
-            f"reasons={reasons}",
+            f"candidate_speed={candidate_speed:.3f}",
+            f"other_lane_speeds={other_speeds}",
+            f"principle1_speed_pass={speed_pass}",
         )
+        print(
+            "[MASK DEBUG][GAP]",
+            f"front_gaps_m={front_gaps}",
+            f"candidate_gap_m={candidate_gap:.3f}",
+            f"max_front_gap_m={max_front_gap:.3f}",
+            f"configured_gap_ratio={MIN_FRONT_GAP_RATIO:.3f}",
+            f"required_gap_m={required_gap:.3f}",
+            f"principle2_gap_pass={gap_pass}",
+        )
+        print(
+            "[MASK DEBUG][REAR TTC]",
+            f"candidate_rear_ttc_s={rear_ttc:.3f}",
+            f"required_rear_ttc_s={LANE_CHANGE_MIN_TTC:.3f}",
+            f"principle3_rear_ttc_pass={rear_pass}",
+        )
+        print(
+            "[MASK DEBUG][PREDICTED FRONT TTC]",
+            f"front_vehicle_id={front_vehicle_id}",
+            f"front_gap_m={front_gap:.3f}",
+            f"front_speed_mps={front_speed_raw}",
+            f"ego_speed_mps={ego_speed:.3f}",
+            f"closing_speed_mps={closing_speed}",
+            f"horizon_s={LANE_CHANGE_PREDICTION_HORIZON:.3f}",
+            f"predicted_gap_m={predicted_gap}",
+            f"predicted_front_ttc_s={predicted_front_ttc:.3f}",
+            f"emergency_ttc_threshold_s={SAFETY_OVERRIDE_TTC:.3f}",
+            f"prediction_case={prediction_case}",
+            f"principle4_predicted_ttc_pass={predicted_front_pass}",
+        )
+        print("[MASK DEBUG][DECISION]",
+              f"candidate_lane={candidate_lane}",
+              f"all_four_pass={speed_pass and gap_pass and rear_pass and predicted_front_pass}",
+              f"reasons={reasons}")
         return reasons
 
     def get_valid_lane_action_mask(self):
@@ -995,7 +1041,14 @@ class HighwaySimulator:
         road = base_env.road
         vehicle = base_env.vehicle
         if self._lane_change_active or self._lane_change_cooldown > 0:
-            return np.array([False, True, False], dtype=bool)
+            forced_mask = np.array([False, True, False], dtype=bool)
+            print("[MASK DEBUG][FORCED KEEP]",
+                  f"current_lane={int(vehicle.lane_index[2])}",
+                  f"lane_change_active={self._lane_change_active}",
+                  f"cooldown={self._lane_change_cooldown}",
+                  f"mask={forced_mask.tolist()}",
+                  "reason=active_maneuver_or_cooldown")
+            return forced_mask
 
         current_lane = int(vehicle.lane_index[2])
         start_node, end_node, _ = vehicle.lane_index
@@ -1003,15 +1056,39 @@ class HighwaySimulator:
         valid_ids = set(range(len(available_lanes)))
         lane_ttc = self._min_ttc_by_lane()
         mask = [False, True, False]
+        print("[MASK DEBUG][CONTEXT]",
+              f"current_lane={current_lane}",
+              f"lane_index={vehicle.lane_index}",
+              f"start_node={start_node}",
+              f"end_node={end_node}",
+              f"available_lane_ids={sorted(valid_ids)}",
+              f"lane_ttc_ids={sorted(lane_ttc.keys())}",
+              f"ego_speed_mps={float(vehicle.speed):.3f}",
+              f"policy_frequency={policy_frequency}",
+              f"simulation_frequency={simulation_frequency}",
+              f"lane_change_active={self._lane_change_active}",
+              f"cooldown={self._lane_change_cooldown}")
         for action_id, lane_delta in ((0, -1), (2, +1)):
             candidate_lane = relative_lane_delta_to_absolute_lane(current_lane, lane_delta)
             if candidate_lane not in valid_ids or candidate_lane not in lane_ttc:
+                print("[MASK DEBUG][LANE UNAVAILABLE]",
+                      f"action_id={action_id}",
+                      f"lane_delta={lane_delta}",
+                      f"candidate_lane={candidate_lane}",
+                      f"in_road_graph={candidate_lane in valid_ids}",
+                      f"has_traffic_metrics={candidate_lane in lane_ttc}")
                 continue
             reasons = self._lane_change_principle_reasons(
                 candidate_lane, lane_ttc, current_lane=current_lane,
                 ego_speed=float(vehicle.speed),
             )
             mask[action_id] = not reasons
+            print("[MASK DEBUG][ACTION RESULT]",
+                  f"action_id={action_id}",
+                  f"lane_delta={lane_delta}",
+                  f"candidate_lane={candidate_lane}",
+                  f"allowed={mask[action_id]}",
+                  f"blocking_reasons={reasons}")
 
         print(
             "[LANE ACTION MASK]",
@@ -1019,7 +1096,7 @@ class HighwaySimulator:
             f"mask={mask}",
             f"lane_change_active={self._lane_change_active}",
             f"cooldown={self._lane_change_cooldown}",
-            "principles=all_four_required",
+            f"principles=all_four_required",
         )
         return np.asarray(mask, dtype=bool)
 
