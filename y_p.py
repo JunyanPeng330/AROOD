@@ -130,13 +130,17 @@ RISK_EPOCHS = 20
 
 MMD_SIGMA = 1.0
 
-# Lane-change preference gate: boundary lanes use local comparison; interior lanes retain the global gate.
-# Highway-env traffic is capped at 30 m/s in this scenario; an unobstructed
-# lane receives a virtual ranking speed just above that cap. This value is
-# ONLY for ranking and is never used in physical TTC/gap calculations.
+# Lane-change preference gate: compare each candidate lane with the current lane.
+# A candidate lane is preferred when its front speed is at least 90% of the
+# current-lane front speed and its front gap is at least 60% of the current gap.
+# These are preference rules; rear-TTC and predicted-front-TTC checks remain
+# independent hard safety constraints.
+# An unobstructed lane receives a virtual ranking speed above the configured
+# speed limit. This value is ONLY for ranking, never physical TTC/gap calculations.
 LANE_RANKING_SPEED_LIMIT = 40.0
 NO_FRONT_VIRTUAL_SPEED_MARGIN = 2.0
-MIN_FRONT_GAP_RATIO = 0.70
+MIN_FRONT_SPEED_RATIO = 0.90
+MIN_FRONT_GAP_RATIO = 0.60
 
 # Reference-collection scenario diversity.
 # Keep the existing distribution-shift baseline range separate from the
@@ -907,19 +911,15 @@ class HighwaySimulator:
         return lane_ids
 
     def _lane_change_principle_reasons(self, candidate_lane, lane_ttc, current_lane=None, ego_speed=None):
-        """Apply lane-preference rules plus independent hard safety constraints.
+        """Compare candidate-lane front conditions with the current lane.
 
-        Boundary lanes use local comparisons against the current lane:
-          1) candidate front speed > current-lane front speed
-          2) candidate front gap >= 80% of current-lane front gap
+        Preference rules:
+          1) candidate front speed >= 90% of current-lane front speed
+          2) candidate front gap >= 60% of current-lane front gap
 
-        Interior lanes retain the previous global four-principle gate:
-          1) candidate front speed is strictly highest across observed lanes
-          2) candidate front gap >= MIN_FRONT_GAP_RATIO * largest lane gap
+        Independent hard safety constraints:
           3) candidate rear TTC >= LANE_CHANGE_MIN_TTC
-          4) predicted post-transition front TTC stays above the emergency threshold
-
-        Rear TTC and predicted front TTC remain hard safety constraints in both modes.
+          4) predicted post-transition front TTC stays above the emergency threshold.
         """
         base_env = self.env.unwrapped
         ego = base_env.vehicle
@@ -962,25 +962,14 @@ class HighwaySimulator:
         candidate_gap = front_gaps[candidate_lane]
         current_gap = front_gaps[current_lane]
 
-        # A boundary lane has only one in-road adjacent lane to move into.
-        # Use a local improvement test there, so a faster non-adjacent lane
-        # cannot block a useful first step toward it.
+        # Apply the same current-lane-relative preference rules in every lane.
+        # "No smaller than 9/10" and "no smaller than 6/10" are inclusive.
         is_boundary_lane = current_lane == lane_ids[0] or current_lane == lane_ids[-1]
-        if is_boundary_lane:
-            speed_pass = candidate_speed > current_front_speed
-            required_gap = 0.80 * current_gap
-            gap_pass = candidate_gap >= required_gap
-            preference_mode = "boundary_local_comparison"
-        else:
-            other_speeds = {
-                lane_id: speed for lane_id, speed in effective_front_speeds.items()
-                if lane_id != candidate_lane
-            }
-            speed_pass = all(candidate_speed > speed for speed in other_speeds.values())
-            max_front_gap = max(front_gaps.values(), default=float("inf"))
-            required_gap = MIN_FRONT_GAP_RATIO * max_front_gap
-            gap_pass = candidate_gap >= required_gap
-            preference_mode = "interior_global_comparison"
+        required_speed = MIN_FRONT_SPEED_RATIO * current_front_speed
+        speed_pass = candidate_speed >= required_speed
+        required_gap = MIN_FRONT_GAP_RATIO * current_gap
+        gap_pass = candidate_gap >= required_gap
+        preference_mode = "current_lane_relative_comparison"
 
         values = lane_ttc[candidate_lane]
         rear_ttc = float(values.get("rear_ttc", float("inf")))
@@ -1013,11 +1002,9 @@ class HighwaySimulator:
 
         reasons = []
         if not speed_pass:
-            reasons.append("candidate_front_speed_not_higher_than_current" if is_boundary_lane
-                           else "candidate_front_speed_not_strictly_highest")
+            reasons.append("candidate_front_speed_below_90_percent_of_current")
         if not gap_pass:
-            reasons.append("candidate_front_gap_below_80_percent_of_current" if is_boundary_lane
-                           else "candidate_front_gap_below_configured_ratio_of_maximum")
+            reasons.append("candidate_front_gap_below_60_percent_of_current")
         if not rear_pass:
             reasons.append("candidate_rear_ttc_below_threshold")
         if not predicted_front_pass:
@@ -1040,6 +1027,8 @@ class HighwaySimulator:
             f"effective_front_speeds={effective_front_speeds}",
             f"candidate_speed={candidate_speed:.3f}",
             f"current_front_speed={current_front_speed:.3f}",
+            f"required_speed_mps={required_speed:.3f}",
+            f"configured_speed_ratio={MIN_FRONT_SPEED_RATIO:.3f}",
             f"principle1_speed_pass={speed_pass}",
         )
         print(
@@ -1047,7 +1036,7 @@ class HighwaySimulator:
             f"front_gaps_m={front_gaps}",
             f"candidate_gap_m={candidate_gap:.3f}",
             f"current_gap_m={current_gap:.3f}",
-            f"configured_gap_ratio={0.80 if is_boundary_lane else MIN_FRONT_GAP_RATIO:.3f}",
+            f"configured_gap_ratio={MIN_FRONT_GAP_RATIO:.3f}",
             f"required_gap_m={required_gap:.3f}",
             f"principle2_gap_pass={gap_pass}",
         )
