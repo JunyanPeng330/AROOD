@@ -3952,6 +3952,22 @@ def AROOD(simulator, policy):
     episode_collision_rates, episode_lengths = [], []
     simulator.simple_baseline = True
 
+    # Live training plots: refresh the curves after every episode.
+    plt.ion()
+    live_fig, (reward_ax, collision_ax) = plt.subplots(2, 1, figsize=(9, 7))
+    live_fig.suptitle("Simple RL baseline training")
+    reward_line, = reward_ax.plot([], [], alpha=0.45, label="episode return")
+    smooth_line, = reward_ax.plot([], [], label="10-episode mean")
+    collision_line, = collision_ax.plot([], [], label="collision rate")
+    reward_ax.set_xlabel("episode")
+    reward_ax.set_ylabel("return")
+    reward_ax.legend()
+    collision_ax.set_xlabel("episode")
+    collision_ax.set_ylabel("collisions / steps")
+    collision_ax.set_ylim(0.0, 1.0)
+    collision_ax.legend()
+    live_fig.tight_layout()
+
     print("\n" + "=" * 72)
     print("SIMPLE RL BASELINE: forward progress + collision penalty")
     print(f"progress_weight={PROGRESS_WEIGHT} collision_penalty={COLLISION_PENALTY}")
@@ -4033,6 +4049,29 @@ def AROOD(simulator, policy):
             f"rolling{recent_n}_return={np.mean(episode_returns[-recent_n:]):+.3f}"
         )
 
+        # Refresh the on-screen curves while training is still running.
+        episodes_live = np.arange(1, len(episode_returns) + 1)
+        reward_line.set_data(episodes_live, episode_returns)
+        if len(episode_returns) >= 3:
+            window_live = min(10, len(episode_returns))
+            smooth_live = np.convolve(
+                np.asarray(episode_returns, dtype=np.float64),
+                np.ones(window_live, dtype=np.float64) / window_live,
+                mode="valid",
+            )
+            smooth_line.set_data(
+                np.arange(window_live, len(episode_returns) + 1), smooth_live
+            )
+        collision_line.set_data(episodes_live, episode_collision_rates)
+        reward_ax.relim()
+        reward_ax.autoscale_view()
+        collision_ax.relim()
+        collision_ax.autoscale_view()
+        collision_ax.set_ylim(0.0, max(0.05, min(1.0, max(episode_collision_rates) * 1.15)))
+        live_fig.tight_layout()
+        live_fig.canvas.draw_idle()
+        plt.pause(0.001)
+
     os.makedirs(os.path.dirname(reward_path) or ".", exist_ok=True)
     episodes = np.arange(1, len(episode_returns) + 1)
     plt.figure()
@@ -4057,7 +4096,10 @@ def AROOD(simulator, policy):
     plt.title("Simple RL baseline collision rate")
     plt.tight_layout()
     plt.savefig(reward_path.replace(".png", "_collision_rate.png"))
-    plt.close()
+
+    # Show the completed plots and keep their windows open until the user closes them.
+    plt.ioff()
+    plt.show()
 
     return {
         "policy": policy, "dynamics_model": None, "risk_model": None,
