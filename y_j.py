@@ -86,9 +86,21 @@ ACTION_DIM = 2
 HIDDEN_DIM = 128
 
 NUM_REFERENCE_EPISODES = 40
-NUM_ONLINE_EPISODES = 100
+NUM_ONLINE_EPISODES = 500
 
 MAX_STEPS = 100
+
+# PPO hyperparameters for reproducible training.
+PPO_GAMMA = 0.99
+PPO_GAE_LAMBDA = 0.95
+PPO_CLIP = 0.20
+PPO_VALUE_COEF = 0.50
+PPO_ENTROPY_COEF = 0.01
+PPO_EPOCHS = 8
+PPO_MINIBATCH_SIZE = 64
+PPO_MAX_GRAD_NORM = 0.50
+PPO_EVAL_INTERVAL = 25
+PPO_EVAL_EPISODES = 5
 
 RISK_HORIZON = 5
 
@@ -3938,8 +3950,126 @@ def construct_checkpoint_distribution( data ):
 # 23. Main AutoReward OOD Adaptive RL
 # ============================================================
 
+def hybrid_action_logprob_entropy(policy, states, actions, pre_tanh_accels):
+    """Return tanh-Gaussian + categorical joint log-probability and entropy."""
+    accel_dist, lane_dist = policy.action_distributions(states, valid_action_mask=None)
+    raw_accel = pre_tanh_accels.reshape(-1, 1)
+    bounded_accel = actions[:, 0:1].clamp(-1.0, 1.0)
+    accel_log_prob = accel_dist.log_prob(raw_accel) - torch.log(1.0 - bounded_accel.pow(2) + 1e-6)
+    lane_actions = actions[:, 1].round().long().clamp(0, 2)
+    lane_log_prob = lane_dist.log_prob(lane_actions).unsqueeze(-1)
+    joint_log_prob = (accel_log_prob + lane_log_prob).squeeze(-1)
+    # Gaussian entropy is measured before tanh; categorical entropy is exact.
+    entropy = accel_dist.entropy().squeeze(-1) + lane_dist.entropy()
+    return joint_log_prob, entropy
+
+
+def ppo_update(policy, rollout, gamma=0.99, gae_lambda=0.95,
+               clip_coef=0.2, value_coef=0.5, entropy_coef=0.01,
+               update_epochs=8, minibatch_size=64, max_grad_norm=0.5):
+    """PPO update for one episode rollout, using GAE and clipped policy ratios."""
+    states = to_tensor(np.asarray(rollout["states"], dtype=np.float32))
+    actions = to_tensor(np.asarray(rollout["actions"], dtype=np.float32))
+    pre_tanh = to_tensor(np.asarray(rollout["pre_tanh_accels"], dtype=np.float32))
+    old_log_probs = to_tensor(np.asarray(rollout["old_log_probs"], dtype=np.float32))
+    rewards = np.asarray(rollout["rewards"], dtype=np.float32)
+    values = np.asarray(rollout["values"], dtype=np.float32)
+    next_values = np.asarray(rollout["next_values"], dtype=np.float32)
+    terminated = np.asarray(rollout["terminated"], dtype=np.float32)
+    episode_ends = np.asarray(rollout["episode_ends"], dtype=np.float32)
+    n = len(rewards)
+    if n == 0:
+        return {"policy_loss": 0.0, "value_loss": 0.0, "entropy": 0.0, "approx_kl": 0.0}
+
+    advantages = np.zeros(n, dtype=np.float32)
+    last_gae = 0.0
+    for t in reversed(range(n)):
+        nonterminal = 1.0 - terminated[t]
+        delta = rewards[t] + gamma * next_values[t] * nonterminal - values[t]
+        # A rollout/episode boundary stops GAE recursion, but truncations bootstrap.
+        continuation = 1.0 - episode_ends[t]
+        last_gae = delta + gamma * gae_lambda * continuation * last_gae
+        advantages[t] = last_gae
+    returns = advantages + values
+    advantages_t = to_tensor(advantages)
+    returns_t = to_tensor(returns)
+    if n > 1:
+        advantages_t = (advantages_t - advantages_t.mean()) / (advantages_t.std(unbiased=False) + 1e-8)
+
+    totals = {"policy_loss": [], "value_loss": [], "entropy": [], "approx_kl": []}
+    batch_size = min(int(minibatch_size), n)
+    for _ in range(int(update_epochs)):
+        permutation = torch.randperm(n, device=DEVICE)
+        for begin in range(0, n, batch_size):
+            idx = permutation[begin:begin + batch_size]
+            new_log_probs, entropy = hybrid_action_logprob_entropy(policy, states[idx], actions[idx], pre_tanh[idx])
+            log_ratio = new_log_probs - old_log_probs[idx]
+            ratio = log_ratio.exp()
+            batch_adv = advantages_t[idx]
+            policy_loss = -torch.minimum(
+                ratio * batch_adv,
+                torch.clamp(ratio, 1.0 - clip_coef, 1.0 + clip_coef) * batch_adv
+            ).mean()
+            values_pred = policy.value(states[idx]).reshape(-1)
+            value_loss = F.mse_loss(values_pred, returns_t[idx])
+            entropy_mean = entropy.mean()
+            loss = policy_loss + value_coef * value_loss - entropy_coef * entropy_mean
+            policy.optimizer.zero_grad(set_to_none=True)
+            loss.backward()
+            torch.nn.utils.clip_grad_norm_(policy.parameters(), max_grad_norm)
+            policy.optimizer.step()
+            with torch.no_grad():
+                approx_kl = ((ratio - 1.0) - log_ratio).mean()
+            totals["policy_loss"].append(float(policy_loss.item()))
+            totals["value_loss"].append(float(value_loss.item()))
+            totals["entropy"].append(float(entropy_mean.item()))
+            totals["approx_kl"].append(float(approx_kl.item()))
+    return {key: float(np.mean(val)) if val else 0.0 for key, val in totals.items()}
+
+
+def evaluate_ppo_policy(policy, episodes=5, seed=10000):
+    """Evaluate deterministically in a separate simulator; never update weights."""
+    eval_sim = create_highway_simulator()
+    eval_sim.simple_baseline = True
+    returns, collisions, lengths, distances = [], [], [], []
+    try:
+        for ep in range(episodes):
+            state = eval_sim.reset(seed=seed + ep)
+            episode_return, collision_count, steps = 0.0, 0, 0
+            x_start = float(eval_sim.env.unwrapped.vehicle.position[0])
+            for _ in range(MAX_STEPS):
+                with torch.no_grad():
+                    action = policy.act(state, deterministic=True, valid_action_mask=None)
+                x_before = float(eval_sim.env.unwrapped.vehicle.position[0])
+                next_state, _env_reward, done, info = eval_sim.step(
+                    action, apply_safety_filter=False, sampled_action=action,
+                    safety_info={"safety_filter_applied": False, "evaluation": True},
+                )
+                ego = eval_sim.env.unwrapped.vehicle
+                collision = bool(info.get("collision", getattr(ego, "crashed", False)))
+                progress = float(ego.position[0]) - x_before
+                episode_return += progress - (100.0 if collision else 0.0)
+                collision_count += int(collision)
+                steps += 1
+                state = next_state
+                if collision or done:
+                    break
+            returns.append(float(episode_return))
+            collisions.append(float(collision_count > 0))
+            lengths.append(steps)
+            distances.append(float(eval_sim.env.unwrapped.vehicle.position[0]) - x_start)
+    finally:
+        eval_sim.close()
+    return {
+        "mean_return": float(np.mean(returns)),
+        "collision_rate": float(np.mean(collisions)),
+        "mean_length": float(np.mean(lengths)),
+        "mean_distance": float(np.mean(distances)),
+    }
+
+
 def AROOD(simulator, policy):
-    """Minimal trial-and-error baseline: forward progress plus collision penalty only."""
+    """PPO-only driving agent. Reference collection and all adaptive modules are optional/off."""
     try:
         with open(DIAGNOSTIC_LOG_PATH, "w", encoding="utf-8") as log_file:
             log_file.write("")
@@ -3950,49 +4080,73 @@ def AROOD(simulator, policy):
     COLLISION_PENALTY = 100.0
     episode_returns, episode_mean_rewards = [], []
     episode_collision_rates, episode_lengths = [], []
+    episode_distances, evaluation_history = [], []
     simulator.simple_baseline = True
 
-    # Live training plots: refresh the curves after every episode.
     plt.ion()
     live_fig, (reward_ax, collision_ax) = plt.subplots(2, 1, figsize=(9, 7))
-    live_fig.suptitle("Simple RL baseline training")
-    reward_line, = reward_ax.plot([], [], alpha=0.45, label="episode return")
+    live_fig.suptitle("PPO-only RL training")
+    reward_line, = reward_ax.plot([], [], alpha=0.35, label="episode return")
     smooth_line, = reward_ax.plot([], [], label="10-episode mean")
-    collision_line, = collision_ax.plot([], [], label="collision rate")
+    eval_line, = reward_ax.plot([], [], marker="o", label="deterministic eval return")
+    collision_line, = collision_ax.plot([], [], label="training collision rate")
+    eval_collision_line, = collision_ax.plot([], [], marker="o", label="eval collision rate")
     reward_ax.set_xlabel("episode")
     reward_ax.set_ylabel("return")
     reward_ax.legend()
     collision_ax.set_xlabel("episode")
-    collision_ax.set_ylabel("collisions / steps")
+    collision_ax.set_ylabel("fraction of episodes with collision")
     collision_ax.set_ylim(0.0, 1.0)
     collision_ax.legend()
     live_fig.tight_layout()
 
     print("\n" + "=" * 72)
-    print("SIMPLE RL BASELINE: forward progress + collision penalty")
+    print("PPO-ONLY RL AGENT: hybrid action [tanh-Gaussian acceleration, categorical lane intention]")
+    print(f"gamma={PPO_GAMMA} gae_lambda={PPO_GAE_LAMBDA} clip={PPO_CLIP} epochs={PPO_EPOCHS} minibatch={PPO_MINIBATCH_SIZE}")
     print(f"progress_weight={PROGRESS_WEIGHT} collision_penalty={COLLISION_PENALTY}")
-    print("lane mask=OFF | TTC/action safety filter=OFF | adaptive reward=OFF")
+    print("lane mask=OFF | TTC/action safety filter=OFF | adaptive reward=OFF | reference collection=OFF")
     print("=" * 72)
 
+    global_step = 0
     for episode in range(NUM_ONLINE_EPISODES):
-        simulator._trace_phase = "simple_baseline"
+        simulator._trace_phase = "ppo_training"
         simulator._trace_episode = episode + 1
-        state = simulator.reset()
+        state = simulator.reset(seed=SEED + episode)
+        rollout = {k: [] for k in (
+            "states", "actions", "pre_tanh_accels", "old_log_probs", "rewards",
+            "values", "next_values", "terminated", "episode_ends"
+        )}
         episode_return, collision_count = 0.0, 0
-        rewards, actor_losses, critic_losses = [], [], []
+        rewards = []
+        x_start = float(simulator.env.unwrapped.vehicle.position[0])
+        lane_requests = {"LEFT": 0, "KEEP": 0, "RIGHT": 0}
+        lane_stats_before = getattr(simulator, "_lane_change_stats", {})
+        lane_starts_before = int(lane_stats_before.get("started", 0))
+        lane_completions_before = int(lane_stats_before.get("completed", 0))
 
         for step_idx in range(MAX_STEPS):
-            sampled_action, pre_tanh_accel = policy.act(
-                state, deterministic=False, valid_action_mask=None, return_aux=True
-            )
-            sampled_action = np.asarray(sampled_action, dtype=np.float32).reshape(-1)
-            x_before = float(simulator.env.unwrapped.vehicle.position[0])
+            state_tensor = to_tensor(state).reshape(1, -1)
+            with torch.no_grad():
+                accel_dist, lane_dist = policy.action_distributions(state_tensor, valid_action_mask=None)
+                sampled_action, pre_tanh_accel = policy.act(
+                    state, deterministic=False, valid_action_mask=None, return_aux=True
+                )
+                pre_tanh_tensor = to_tensor(pre_tanh_accel).reshape(1, 1)
+                action_tensor = to_tensor(sampled_action).reshape(1, -1)
+                accel_log_prob = accel_dist.log_prob(pre_tanh_tensor) - torch.log(
+                    1.0 - action_tensor[:, 0:1].pow(2) + 1e-6
+                )
+                lane_index_tensor = action_tensor[:, 1].round().long().clamp(0, 2)
+                old_log_prob = (accel_log_prob + lane_dist.log_prob(lane_index_tensor).unsqueeze(-1)).item()
+                value = float(policy.value(state_tensor).item())
 
+            sampled_action = np.asarray(sampled_action, dtype=np.float32).reshape(-1)
+            lane_idx = int(np.clip(np.rint(float(sampled_action[1])), 0, 2))
+            lane_requests[("LEFT", "KEEP", "RIGHT")[lane_idx]] += 1
+            x_before = float(simulator.env.unwrapped.vehicle.position[0])
             next_state, _env_reward, done, info = simulator.step(
-                sampled_action,
-                apply_safety_filter=False,
-                sampled_action=sampled_action,
-                safety_info={"safety_filter_applied": False, "baseline": True},
+                sampled_action, apply_safety_filter=False, sampled_action=sampled_action,
+                safety_info={"safety_filter_applied": False, "ppo_training": True},
             )
             ego_after = simulator.env.unwrapped.vehicle
             x_after = float(ego_after.position[0])
@@ -4001,73 +4155,107 @@ def AROOD(simulator, policy):
             progress_reward = PROGRESS_WEIGHT * progress
             collision_reward = -COLLISION_PENALTY if collision else 0.0
             reward = float(progress_reward + collision_reward)
+            true_terminated = bool(info.get("terminated", False) or collision)
+            truncated = bool(info.get("truncated", False))
+            episode_end = bool(done or collision or step_idx == MAX_STEPS - 1)
+            with torch.no_grad():
+                next_value = float(policy.value(to_tensor(next_state).reshape(1, -1)).item())
+
+            rollout["states"].append(np.asarray(state, dtype=np.float32).copy())
+            rollout["actions"].append(sampled_action.copy())
+            rollout["pre_tanh_accels"].append(float(np.asarray(pre_tanh_accel).reshape(-1)[0]))
+            rollout["old_log_probs"].append(float(old_log_prob))
+            rollout["rewards"].append(reward)
+            rollout["values"].append(value)
+            rollout["next_values"].append(next_value)
+            rollout["terminated"].append(float(true_terminated))
+            rollout["episode_ends"].append(float(episode_end))
 
             write_diagnostic_event(
-                "simple_baseline_step", simulator,
-                step=int(step_idx + 1), x_before=x_before, x_after=x_after,
+                "ppo_training_step", simulator, step=int(step_idx + 1), global_step=global_step + 1,
                 forward_progress=float(progress), progress_reward=float(progress_reward),
-                collision=collision, collision_penalty=float(collision_reward),
-                reward=reward, sampled_action=sampled_action.tolist(),
+                collision=collision, collision_penalty=float(collision_reward), reward=reward,
+                sampled_action=sampled_action.tolist(), pre_tanh_accel=float(np.asarray(pre_tanh_accel).reshape(-1)[0]),
+                old_log_prob=float(old_log_prob), value=value, next_value=next_value,
+                terminated=true_terminated, truncated=truncated,
+                requested_lane=("LEFT", "KEEP", "RIGHT")[lane_idx],
+                accepted_target_lane_id=info.get("accepted_target_lane_id"),
                 safety_filter_applied=False,
             )
-            update_stats = update_policy(
-                policy, state, sampled_action, reward, next_state, done,
-                valid_action_mask=None,
-                terminated=bool(info.get("terminated", False) or collision),
-                pre_tanh_accel=pre_tanh_accel,
-            )
-            actor_losses.append(float(update_stats["actor_loss"]))
-            critic_losses.append(float(update_stats["critic_loss"]))
             episode_return += reward
             rewards.append(reward)
             collision_count += int(collision)
             state = next_state
-            if collision or done:
+            global_step += 1
+            if episode_end:
                 break
 
+        ppo_stats = ppo_update(
+            policy, rollout, gamma=PPO_GAMMA, gae_lambda=PPO_GAE_LAMBDA,
+            clip_coef=PPO_CLIP, value_coef=PPO_VALUE_COEF,
+            entropy_coef=PPO_ENTROPY_COEF, update_epochs=PPO_EPOCHS,
+            minibatch_size=PPO_MINIBATCH_SIZE, max_grad_norm=PPO_MAX_GRAD_NORM,
+        )
         steps_taken = len(rewards)
         mean_reward = float(np.mean(rewards)) if rewards else 0.0
-        collision_rate = float(collision_count / max(steps_taken, 1))
+        collision_rate = float(collision_count > 0)
+        episode_distance = float(simulator.env.unwrapped.vehicle.position[0]) - x_start
         episode_returns.append(float(episode_return))
         episode_mean_rewards.append(mean_reward)
         episode_collision_rates.append(collision_rate)
         episode_lengths.append(steps_taken)
+        episode_distances.append(episode_distance)
+        lane_stats = getattr(simulator, "_lane_change_stats", {})
+        lane_starts = int(lane_stats.get("started", 0)) - lane_starts_before
+        lane_completions = int(lane_stats.get("completed", 0)) - lane_completions_before
         write_diagnostic_event(
-            "simple_baseline_episode", simulator,
+            "ppo_training_episode", simulator, global_step=global_step,
             episode_return=float(episode_return), mean_reward=mean_reward,
-            steps=steps_taken, collisions=int(collision_count), collision_rate=collision_rate,
-            mean_actor_loss=float(np.mean(actor_losses)) if actor_losses else 0.0,
-            mean_critic_loss=float(np.mean(critic_losses)) if critic_losses else 0.0,
-            progress_weight=PROGRESS_WEIGHT, collision_penalty=COLLISION_PENALTY,
+            steps=steps_taken, collisions=int(collision_count), collision_episode_rate=collision_rate,
+            distance=episode_distance, lane_requests=lane_requests,
+            lane_change_starts=lane_starts, lane_change_completions=lane_completions,
+            ppo_stats=ppo_stats, progress_weight=PROGRESS_WEIGHT, collision_penalty=COLLISION_PENALTY,
         )
         recent_n = min(10, len(episode_returns))
         print(
-            f"[BASELINE EPISODE {episode + 1:03d}/{NUM_ONLINE_EPISODES}] "
-            f"return={episode_return:+.3f} mean_reward={mean_reward:+.3f} "
-            f"steps={steps_taken} collisions={collision_count} "
-            f"collision_rate={collision_rate:.1%} "
-            f"rolling{recent_n}_return={np.mean(episode_returns[-recent_n:]):+.3f}"
+            f"[PPO EPISODE {episode + 1:03d}/{NUM_ONLINE_EPISODES}] "
+            f"return={episode_return:+.2f} mean_reward={mean_reward:+.3f} distance={episode_distance:.1f}m "
+            f"steps={steps_taken} collision={int(collision_count > 0)} lane_req={lane_requests} "
+            f"lane_started={lane_starts} lane_completed={lane_completions} "
+            f"roll{recent_n}={np.mean(episode_returns[-recent_n:]):+.2f} "
+            f"policy_loss={ppo_stats['policy_loss']:+.4f} value_loss={ppo_stats['value_loss']:.4f} "
+            f"entropy={ppo_stats['entropy']:.3f} kl={ppo_stats['approx_kl']:.5f}"
         )
 
-        # Refresh the on-screen curves while training is still running.
+        if (episode + 1) % PPO_EVAL_INTERVAL == 0:
+            evaluation = evaluate_ppo_policy(
+                policy, episodes=PPO_EVAL_EPISODES,
+                seed=SEED + 10000 + episode * PPO_EVAL_EPISODES,
+            )
+            evaluation["episode"] = episode + 1
+            evaluation_history.append(evaluation)
+            write_diagnostic_event("ppo_evaluation", simulator, **evaluation)
+            print(
+                f"[PPO EVAL episode={episode + 1}] return={evaluation['mean_return']:+.2f} "
+                f"collision_rate={evaluation['collision_rate']:.1%} "
+                f"distance={evaluation['mean_distance']:.1f}m length={evaluation['mean_length']:.1f}"
+            )
+
         episodes_live = np.arange(1, len(episode_returns) + 1)
         reward_line.set_data(episodes_live, episode_returns)
         if len(episode_returns) >= 3:
             window_live = min(10, len(episode_returns))
-            smooth_live = np.convolve(
-                np.asarray(episode_returns, dtype=np.float64),
-                np.ones(window_live, dtype=np.float64) / window_live,
-                mode="valid",
-            )
-            smooth_line.set_data(
-                np.arange(window_live, len(episode_returns) + 1), smooth_live
-            )
-        collision_line.set_data(episodes_live, episode_collision_rates)
+            smooth_live = np.convolve(np.asarray(episode_returns, dtype=np.float64),
+                                      np.ones(window_live, dtype=np.float64) / window_live, mode="valid")
+            smooth_line.set_data(np.arange(window_live, len(episode_returns) + 1), smooth_live)
+        if evaluation_history:
+            eval_eps = [item["episode"] for item in evaluation_history]
+            eval_line.set_data(eval_eps, [item["mean_return"] for item in evaluation_history])
+            eval_collision_line.set_data(eval_eps, [item["collision_rate"] for item in evaluation_history])
         reward_ax.relim()
         reward_ax.autoscale_view()
         collision_ax.relim()
         collision_ax.autoscale_view()
-        collision_ax.set_ylim(0.0, max(0.05, min(1.0, max(episode_collision_rates) * 1.15)))
         live_fig.tight_layout()
         live_fig.canvas.draw_idle()
         plt.pause(0.001)
@@ -4075,39 +4263,47 @@ def AROOD(simulator, policy):
     os.makedirs(os.path.dirname(reward_path) or ".", exist_ok=True)
     episodes = np.arange(1, len(episode_returns) + 1)
     plt.figure()
-    plt.plot(episodes, episode_returns, alpha=0.45, label="episode return")
+    plt.plot(episodes, episode_returns, alpha=0.4, label="episode return")
     if len(episode_returns) >= 3:
         window = min(10, len(episode_returns))
         smooth = np.convolve(np.asarray(episode_returns, dtype=np.float64),
                              np.ones(window, dtype=np.float64) / window, mode="valid")
         plt.plot(np.arange(window, len(episode_returns) + 1), smooth, label=f"{window}-episode mean")
+    if evaluation_history:
+        plt.plot([e["episode"] for e in evaluation_history],
+                 [e["mean_return"] for e in evaluation_history], marker="o", label="deterministic eval")
     plt.xlabel("episode")
     plt.ylabel("return")
-    plt.title("Simple RL baseline: progress + collision penalty")
+    plt.title("PPO-only RL: progress + collision penalty")
     plt.legend()
     plt.tight_layout()
     plt.savefig(reward_path)
     plt.close()
 
     plt.figure()
-    plt.plot(episodes, episode_collision_rates, label="collision rate")
+    plt.plot(episodes, episode_collision_rates, label="training collision episodes")
+    if evaluation_history:
+        plt.plot([e["episode"] for e in evaluation_history],
+                 [e["collision_rate"] for e in evaluation_history], marker="o", label="evaluation collision rate")
     plt.xlabel("episode")
-    plt.ylabel("collisions / steps")
-    plt.title("Simple RL baseline collision rate")
+    plt.ylabel("fraction of episodes with collision")
+    plt.title("PPO-only collision rate")
+    plt.ylim(0.0, 1.0)
+    plt.legend()
     plt.tight_layout()
     plt.savefig(reward_path.replace(".png", "_collision_rate.png"))
+    plt.close()
 
-    # Show the completed plots and keep their windows open until the user closes them.
     plt.ioff()
     plt.show()
-
     return {
         "policy": policy, "dynamics_model": None, "risk_model": None,
         "reference_distribution": None, "episode_returns": episode_returns,
         "episode_mean_rewards": episode_mean_rewards,
         "episode_collision_rates": episode_collision_rates, "episode_lengths": episode_lengths,
+        "episode_distances": episode_distances, "evaluation_history": evaluation_history,
+        "global_step": global_step,
     }
-
 
 def check_model_device(model, name):
     devices = {
@@ -4137,10 +4333,10 @@ def main():
     print("Selected DEVICE:", DEVICE)
     if torch.cuda.is_available():
         print("GPU:", torch.cuda.get_device_name(0))
-    print("\nSIMPLE RL BASELINE")
+    print("\nPPO-ONLY RL AGENT")
     print("State dimension:", STATE_DIM)
     print("Action dimension:", ACTION_DIM, "(normalized acceleration, discrete lane intention)")
-    print("Reward: forward displacement - collision penalty")
+    print("Algorithm: PPO with GAE, clipped objective, minibatches, entropy bonus, deterministic evaluation")
 
     simulator = create_highway_simulator()
     simulator.reset(seed=SEED)
