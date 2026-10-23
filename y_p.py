@@ -130,7 +130,7 @@ RISK_EPOCHS = 20
 
 MMD_SIGMA = 1.0
 
-# Strict four-principle lane-change gate.
+# Lane-change preference gate: boundary lanes use local comparison; interior lanes retain the global gate.
 # Highway-env traffic is capped at 30 m/s in this scenario; an unobstructed
 # lane receives a virtual ranking speed just above that cap. This value is
 # ONLY for ranking and is never used in physical TTC/gap calculations.
@@ -907,11 +907,25 @@ class HighwaySimulator:
         return lane_ids
 
     def _lane_change_principle_reasons(self, candidate_lane, lane_ttc, current_lane=None, ego_speed=None):
-        """Apply all four lane-change principles as one strict conjunctive gate."""
+        """Apply lane-preference rules plus independent hard safety constraints.
+
+        Boundary lanes use local comparisons against the current lane:
+          1) candidate front speed > current-lane front speed
+          2) candidate front gap >= 80% of current-lane front gap
+
+        Interior lanes retain the previous global four-principle gate:
+          1) candidate front speed is strictly highest across observed lanes
+          2) candidate front gap >= MIN_FRONT_GAP_RATIO * largest lane gap
+          3) candidate rear TTC >= LANE_CHANGE_MIN_TTC
+          4) predicted post-transition front TTC stays above the emergency threshold
+
+        Rear TTC and predicted front TTC remain hard safety constraints in both modes.
+        """
         base_env = self.env.unwrapped
         ego = base_env.vehicle
         if current_lane is None:
             current_lane = int(ego.lane_index[2])
+        current_lane = int(current_lane)
         if ego_speed is None:
             ego_speed = float(ego.speed)
         ego_speed = max(0.0, float(ego_speed))
@@ -921,6 +935,11 @@ class HighwaySimulator:
                   f"candidate_lane={candidate_lane}",
                   f"available_lane_ids={sorted(lane_ttc.keys())}")
             return ["target_lane_traffic_data_unavailable"]
+        if current_lane not in lane_ttc:
+            print("[MASK DEBUG][INVALID CURRENT LANE]",
+                  f"current_lane={current_lane}",
+                  f"available_lane_ids={sorted(lane_ttc.keys())}")
+            return ["current_lane_traffic_data_unavailable"]
 
         lane_ids = sorted(lane_ttc.keys())
         speed_limit = float(base_env.config.get(
@@ -939,13 +958,29 @@ class HighwaySimulator:
                 front_gaps[lane_id] = float(values.get("front_gap", float("inf")))
 
         candidate_speed = effective_front_speeds[candidate_lane]
-        other_speeds = {lane_id: speed for lane_id, speed in effective_front_speeds.items()
-                        if lane_id != candidate_lane}
-        speed_pass = all(candidate_speed > speed for speed in other_speeds.values())
-        max_front_gap = max(front_gaps.values(), default=float("inf"))
+        current_front_speed = effective_front_speeds[current_lane]
         candidate_gap = front_gaps[candidate_lane]
-        required_gap = MIN_FRONT_GAP_RATIO * max_front_gap
-        gap_pass = candidate_gap >= required_gap
+        current_gap = front_gaps[current_lane]
+
+        # A boundary lane has only one in-road adjacent lane to move into.
+        # Use a local improvement test there, so a faster non-adjacent lane
+        # cannot block a useful first step toward it.
+        is_boundary_lane = current_lane == lane_ids[0] or current_lane == lane_ids[-1]
+        if is_boundary_lane:
+            speed_pass = candidate_speed > current_front_speed
+            required_gap = 0.80 * current_gap
+            gap_pass = candidate_gap >= required_gap
+            preference_mode = "boundary_local_comparison"
+        else:
+            other_speeds = {
+                lane_id: speed for lane_id, speed in effective_front_speeds.items()
+                if lane_id != candidate_lane
+            }
+            speed_pass = all(candidate_speed > speed for speed in other_speeds.values())
+            max_front_gap = max(front_gaps.values(), default=float("inf"))
+            required_gap = MIN_FRONT_GAP_RATIO * max_front_gap
+            gap_pass = candidate_gap >= required_gap
+            preference_mode = "interior_global_comparison"
 
         values = lane_ttc[candidate_lane]
         rear_ttc = float(values.get("rear_ttc", float("inf")))
@@ -978,10 +1013,11 @@ class HighwaySimulator:
 
         reasons = []
         if not speed_pass:
-            reasons.append("candidate_front_speed_not_strictly_highest")
+            reasons.append("candidate_front_speed_not_higher_than_current" if is_boundary_lane
+                           else "candidate_front_speed_not_strictly_highest")
         if not gap_pass:
-            # Preserve the existing reason key for downstream log parsers.
-            reasons.append("candidate_front_gap_below_80_percent_of_maximum")
+            reasons.append("candidate_front_gap_below_80_percent_of_current" if is_boundary_lane
+                           else "candidate_front_gap_below_configured_ratio_of_maximum")
         if not rear_pass:
             reasons.append("candidate_rear_ttc_below_threshold")
         if not predicted_front_pass:
@@ -995,21 +1031,23 @@ class HighwaySimulator:
             "[MASK DEBUG][PRINCIPLES]",
             f"current_lane={current_lane}",
             f"candidate_lane={candidate_lane}",
+            f"preference_mode={preference_mode}",
+            f"is_boundary_lane={is_boundary_lane}",
             f"ego_speed_mps={ego_speed:.3f}",
             f"speed_limit_config={speed_limit:.3f}",
             f"virtual_no_front_speed={virtual_front_speed:.3f}",
             f"front_vehicle_ids={front_vehicle_ids}",
             f"effective_front_speeds={effective_front_speeds}",
             f"candidate_speed={candidate_speed:.3f}",
-            f"other_lane_speeds={other_speeds}",
+            f"current_front_speed={current_front_speed:.3f}",
             f"principle1_speed_pass={speed_pass}",
         )
         print(
             "[MASK DEBUG][GAP]",
             f"front_gaps_m={front_gaps}",
             f"candidate_gap_m={candidate_gap:.3f}",
-            f"max_front_gap_m={max_front_gap:.3f}",
-            f"configured_gap_ratio={MIN_FRONT_GAP_RATIO:.3f}",
+            f"current_gap_m={current_gap:.3f}",
+            f"configured_gap_ratio={0.80 if is_boundary_lane else MIN_FRONT_GAP_RATIO:.3f}",
             f"required_gap_m={required_gap:.3f}",
             f"principle2_gap_pass={gap_pass}",
         )
@@ -1035,7 +1073,8 @@ class HighwaySimulator:
         )
         print("[MASK DEBUG][DECISION]",
               f"candidate_lane={candidate_lane}",
-              f"all_four_pass={speed_pass and gap_pass and rear_pass and predicted_front_pass}",
+              f"preference_mode={preference_mode}",
+              f"all_preferences_and_safety_pass={speed_pass and gap_pass and rear_pass and predicted_front_pass}",
               f"reasons={reasons}")
         return reasons
 
