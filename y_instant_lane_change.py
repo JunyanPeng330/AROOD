@@ -51,10 +51,15 @@ SPEED_MATCH_TTC = 6.0
 SPEED_MATCH_GAP_TOLERANCE = 3.0  # metres; avoid needless overrides for tiny gap deviations
 # Execution-time safety shield (TTC is measured in seconds).
 SAFETY_OVERRIDE_TTC = 2.0       # Emergency braking threshold
-LANE_CHANGE_MIN_TTC = 3.0       # Minimum current front TTC for entering a target lane
-LANE_CHANGE_PREDICTION_HORIZON = 1.5  # Approximate lateral-transition safety horizon (seconds)
+# Candidate-lane TTC thresholds. Keep front TTC at least as conservative as rear TTC.
+LANE_CHANGE_MIN_FRONT_TTC = 4.0
+LANE_CHANGE_MIN_REAR_TTC = 3.0
+assert LANE_CHANGE_MIN_FRONT_TTC >= LANE_CHANGE_MIN_REAR_TTC, (
+    "Design constraint violated: minimum front TTC must be >= minimum rear TTC."
+)
+LANE_CHANGE_PREDICTION_HORIZON = 1.5  # Retained for transition/diagnostic predictions (seconds)
 LANE_CHANGE_TTC_MARGIN = 0.5     # Extra rear-TTC margin during the transition
-LANE_CHANGE_MIN_GAP = 8.0        # Shared static/predicted bumper-gap requirement (metres)
+LANE_CHANGE_MIN_GAP = 8.0        # Independent minimum bumper-gap safeguard (metres)
 
 # Maneuver completion uses geometric alignment over consecutive policy decisions.
 LANE_CHANGE_COMPLETE_LATERAL_TOL = 0.45   # metres from target-lane centre
@@ -907,131 +912,73 @@ class HighwaySimulator:
     def _lane_change_principle_reasons(self, candidate_lane, lane_ttc, current_lane=None, ego_speed=None):
         """Return blocking reasons for a candidate lane change.
 
-        Simplified principles:
-          1) Safety: candidate-lane rear TTC must meet LANE_CHANGE_MIN_TTC.
-          2) Safety: predicted front TTC after transition must stay above the
-             emergency-braking threshold.
-          3) Benefit: candidate front speed must be faster than ego speed OR
-             faster than the current-lane front speed.
+        Core target-lane safety rules:
+          1) Candidate front TTC must meet LANE_CHANGE_MIN_FRONT_TTC.
+          2) Candidate rear TTC must meet LANE_CHANGE_MIN_REAR_TTC.
+          3) Front TTC threshold is constrained to be >= rear TTC threshold.
+          4) Front/rear bumper gaps must satisfy the independent minimum-gap
+             safeguard whenever a corresponding vehicle exists.
 
-        A lane without a front vehicle is treated as having a virtual front
-        speed above the speed limit for the benefit comparison only.
-        The virtual speed is never used for physical TTC calculations.
+        TTC is calculated from bumper gap and positive closing speed. If a
+        vehicle is not closing on the ego, its TTC is infinite. An absent
+        vehicle is also treated as infinite TTC, but its gap is not fabricated.
         """
         base_env = self.env.unwrapped
         ego = base_env.vehicle
-        if current_lane is None:
-            current_lane = int(ego.lane_index[2])
-        current_lane = int(current_lane)
-        if ego_speed is None:
-            ego_speed = float(ego.speed)
-        ego_speed = max(0.0, float(ego_speed))
+        current_lane = int(ego.lane_index[2] if current_lane is None else current_lane)
+        ego_speed = max(0.0, float(ego.speed if ego_speed is None else ego_speed))
 
         if candidate_lane not in lane_ttc:
             print("[MASK DEBUG][INVALID CANDIDATE]",
                   f"candidate_lane={candidate_lane}",
                   f"available_lane_ids={sorted(lane_ttc.keys())}")
             return ["target_lane_traffic_data_unavailable"]
-        if current_lane not in lane_ttc:
-            print("[MASK DEBUG][INVALID CURRENT LANE]",
-                  f"current_lane={current_lane}",
-                  f"available_lane_ids={sorted(lane_ttc.keys())}")
-            return ["current_lane_traffic_data_unavailable"]
 
-        lane_ids = sorted(lane_ttc.keys())
-        speed_limit = float(base_env.config.get(
-            "speed_limit", getattr(ego, "MAX_SPEED", LANE_RANKING_SPEED_LIMIT)
-        ))
-        virtual_front_speed = speed_limit + NO_FRONT_VIRTUAL_SPEED_MARGIN
-
-        def get_front_speed(lane_id):
-            values = lane_ttc[lane_id]
-            if values.get("front_vehicle_id") is None or values.get("front_speed") is None:
-                return virtual_front_speed
-            return float(values["front_speed"])
-
-        candidate_speed = get_front_speed(candidate_lane)
-        current_front_speed = get_front_speed(current_lane)
-
-        # New benefit rule: the candidate front vehicle need only be faster
-        # than ego OR faster than the current-lane front vehicle.
-        faster_than_ego = candidate_speed > ego_speed
-        faster_than_current_front = candidate_speed > current_front_speed
-        benefit_pass = faster_than_ego or faster_than_current_front
+        if LANE_CHANGE_MIN_FRONT_TTC < LANE_CHANGE_MIN_REAR_TTC:
+            # Guard at the decision point as well as in the configuration.
+            raise ValueError("Minimum front TTC must be >= minimum rear TTC.")
 
         values = lane_ttc[candidate_lane]
+        front_ttc = float(values.get("front_ttc", float("inf")))
         rear_ttc = float(values.get("rear_ttc", float("inf")))
-        rear_pass = rear_ttc >= LANE_CHANGE_MIN_TTC
-
         front_gap = float(values.get("front_gap", float("inf")))
-        front_speed_raw = values.get("front_speed")
-        front_vehicle_id = values.get("front_vehicle_id")
-        closing_speed = None
-        predicted_gap = None
-        if front_vehicle_id is None or front_speed_raw is None:
-            predicted_front_ttc = float("inf")
-            prediction_case = "no_front_vehicle"
-        else:
-            front_speed = float(front_speed_raw)
-            closing_speed = ego_speed - front_speed
-            if front_gap <= 0.0:
-                predicted_gap = front_gap
-                predicted_front_ttc = 0.0
-                prediction_case = "nonpositive_front_bumper_gap"
-            elif closing_speed > 0.1:
-                predicted_gap = front_gap - closing_speed * LANE_CHANGE_PREDICTION_HORIZON
-                predicted_front_ttc = max(0.0, predicted_gap) / closing_speed
-                prediction_case = "ego_closing_on_front_vehicle"
-            else:
-                predicted_gap = front_gap - closing_speed * LANE_CHANGE_PREDICTION_HORIZON
-                predicted_front_ttc = float("inf")
-                prediction_case = "not_closing_on_front_vehicle"
-        predicted_front_pass = predicted_front_ttc > SAFETY_OVERRIDE_TTC
+        rear_gap = float(values.get("rear_gap", float("inf")))
+        front_speed = values.get("front_speed")
+        rear_speed = values.get("rear_speed")
 
         reasons = []
-        if not benefit_pass:
-            reasons.append("candidate_front_not_faster_than_ego_or_current_front")
-        if not rear_pass:
+        if front_ttc < LANE_CHANGE_MIN_FRONT_TTC:
+            reasons.append("candidate_front_ttc_below_threshold")
+        if rear_ttc < LANE_CHANGE_MIN_REAR_TTC:
             reasons.append("candidate_rear_ttc_below_threshold")
-        if not predicted_front_pass:
-            reasons.append("predicted_post_change_front_ttc_triggers_emergency_braking")
+        if values.get("front_vehicle_id") is not None and front_gap < LANE_CHANGE_MIN_GAP:
+            reasons.append("candidate_front_gap_below_minimum")
+        if values.get("rear_vehicle_id") is not None and rear_gap < LANE_CHANGE_MIN_GAP:
+            reasons.append("candidate_rear_gap_below_minimum")
 
-        front_vehicle_ids = {
-            lane_id: lane_ttc[lane_id].get("front_vehicle_id")
-            for lane_id in lane_ids
-        }
         print(
-            "[MASK DEBUG][LANE CHANGE PRINCIPLE]",
+            "[MASK DEBUG][LANE CHANGE TTC PRINCIPLES]",
             f"current_lane={current_lane}",
             f"candidate_lane={candidate_lane}",
             f"ego_speed_mps={ego_speed:.3f}",
-            f"candidate_front_speed_mps={candidate_speed:.3f}",
-            f"current_front_speed_mps={current_front_speed:.3f}",
-            f"faster_than_ego={faster_than_ego}",
-            f"faster_than_current_front={faster_than_current_front}",
-            f"benefit_pass={benefit_pass}",
-            f"front_vehicle_ids={front_vehicle_ids}",
-        )
-        print(
-            "[MASK DEBUG][LANE CHANGE SAFETY]",
-            f"candidate_rear_ttc_s={rear_ttc:.3f}",
-            f"required_rear_ttc_s={LANE_CHANGE_MIN_TTC:.3f}",
-            f"rear_ttc_pass={rear_pass}",
+            f"candidate_front_speed_mps={front_speed}",
+            f"candidate_rear_speed_mps={rear_speed}",
             f"front_gap_m={front_gap:.3f}",
-            f"front_speed_mps={front_speed_raw}",
-            f"closing_speed_mps={closing_speed}",
-            f"prediction_horizon_s={LANE_CHANGE_PREDICTION_HORIZON:.3f}",
-            f"predicted_gap_m={predicted_gap}",
-            f"predicted_front_ttc_s={predicted_front_ttc:.3f}",
-            f"emergency_ttc_threshold_s={SAFETY_OVERRIDE_TTC:.3f}",
-            f"predicted_front_ttc_pass={predicted_front_pass}",
-            f"prediction_case={prediction_case}",
+            f"rear_gap_m={rear_gap:.3f}",
+            f"front_ttc_s={front_ttc:.3f}",
+            f"required_front_ttc_s={LANE_CHANGE_MIN_FRONT_TTC:.3f}",
+            f"front_ttc_pass={front_ttc >= LANE_CHANGE_MIN_FRONT_TTC}",
+            f"rear_ttc_s={rear_ttc:.3f}",
+            f"required_rear_ttc_s={LANE_CHANGE_MIN_REAR_TTC:.3f}",
+            f"rear_ttc_pass={rear_ttc >= LANE_CHANGE_MIN_REAR_TTC}",
+            f"threshold_ordering_pass={LANE_CHANGE_MIN_FRONT_TTC >= LANE_CHANGE_MIN_REAR_TTC}",
+            f"minimum_gap_m={LANE_CHANGE_MIN_GAP:.3f}",
             f"reasons={reasons}",
         )
         return reasons
 
     def get_valid_lane_action_mask(self):
-        """Mask lane changes unless the simplified benefit and safety checks pass."""
+        """Mask lane changes unless target-lane front/rear TTC and gap checks pass."""
         base_env = self.env.unwrapped
         road = base_env.road
         vehicle = base_env.vehicle
@@ -1840,8 +1787,9 @@ class HighwaySimulator:
                 f"target_lane_vehicles={target_lane_vehicles}",
             )
 
-        # The former distance/speed-ratio overtaking gate is removed.
-        # Lane-change eligibility is governed solely by the four principles above.
+        # Lane-change eligibility is governed by front/rear TTC thresholds and
+        # independent minimum-gap safeguards; no separate front-speed benefit gate
+        # is used.
 
         if requested_lane_delta != 0:
             # Check the actual road graph, not only a hard-coded lane count.
@@ -1869,8 +1817,8 @@ class HighwaySimulator:
                 candidate_front_gap = float(candidate_values.get("front_gap", float("inf")))
                 candidate_rear_gap = float(candidate_values.get("rear_gap", float("inf")))
 
-                # Enforce exactly the same four principles at execution time
-                # as in the policy action mask.
+                # Enforce exactly the same TTC-threshold and minimum-gap rules
+                # at execution time as in the policy action mask.
                 lane_change_rejection_reasons.extend(
                     self._lane_change_principle_reasons(
                         candidate_lane,
