@@ -1314,7 +1314,7 @@ class HighwaySimulator:
         lanes_count = int(base_env.config["lanes_count"])
 
         emergency_threshold = float(SAFETY_OVERRIDE_TTC)
-        lane_change_threshold = float(LANE_CHANGE_MIN_TTC)
+        lane_change_threshold = float(LANE_CHANGE_MIN_REAR_TTC)
 
         # ---------------------------------------------------------
         # 1. Assess current-lane emergency risk.
