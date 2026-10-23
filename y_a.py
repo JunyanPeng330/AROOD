@@ -130,17 +130,12 @@ RISK_EPOCHS = 20
 
 MMD_SIGMA = 1.0
 
-# Lane-change preference gate: compare each candidate lane with the current lane.
-# A candidate lane is preferred when its front speed is at least 90% of the
-# current-lane front speed and its front gap is at least 60% of the current gap.
-# These are preference rules; rear-TTC and predicted-front-TTC checks remain
-# independent hard safety constraints.
-# An unobstructed lane receives a virtual ranking speed above the configured
-# speed limit. This value is ONLY for ranking, never physical TTC/gap calculations.
+# Lane-change principle: allow a candidate lane when it is safe and its front
+# vehicle is faster than the ego OR faster than the current-lane front vehicle.
+# An unobstructed lane receives a virtual speed above the configured speed limit
+# for the benefit comparison only; it is never used for physical TTC calculations.
 LANE_RANKING_SPEED_LIMIT = 40.0
 NO_FRONT_VIRTUAL_SPEED_MARGIN = 2.0
-MIN_FRONT_SPEED_RATIO = 0.70
-MIN_FRONT_GAP_RATIO = 0.60
 
 # Reference-collection scenario diversity.
 # Keep the existing distribution-shift baseline range separate from the
@@ -912,15 +907,18 @@ class HighwaySimulator:
         return lane_ids
 
     def _lane_change_principle_reasons(self, candidate_lane, lane_ttc, current_lane=None, ego_speed=None):
-        """Compare candidate-lane front conditions with the current lane.
+        """Return blocking reasons for a candidate lane change.
 
-        Preference rules:
-          1) candidate front speed >= 90% of current-lane front speed
-          2) candidate front gap >= 60% of current-lane front gap
+        Simplified principles:
+          1) Safety: candidate-lane rear TTC must meet LANE_CHANGE_MIN_TTC.
+          2) Safety: predicted front TTC after transition must stay above the
+             emergency-braking threshold.
+          3) Benefit: candidate front speed must be faster than ego speed OR
+             faster than the current-lane front speed.
 
-        Independent hard safety constraints:
-          3) candidate rear TTC >= LANE_CHANGE_MIN_TTC
-          4) predicted post-transition front TTC stays above the emergency threshold.
+        A lane without a front vehicle is treated as having a virtual front
+        speed above the speed limit for the benefit comparison only.
+        The virtual speed is never used for physical TTC calculations.
         """
         base_env = self.env.unwrapped
         ego = base_env.vehicle
@@ -947,30 +945,21 @@ class HighwaySimulator:
             "speed_limit", getattr(ego, "MAX_SPEED", LANE_RANKING_SPEED_LIMIT)
         ))
         virtual_front_speed = speed_limit + NO_FRONT_VIRTUAL_SPEED_MARGIN
-        effective_front_speeds = {}
-        front_gaps = {}
-        for lane_id in lane_ids:
+
+        def get_front_speed(lane_id):
             values = lane_ttc[lane_id]
             if values.get("front_vehicle_id") is None or values.get("front_speed") is None:
-                effective_front_speeds[lane_id] = virtual_front_speed
-                front_gaps[lane_id] = float("inf")
-            else:
-                effective_front_speeds[lane_id] = float(values["front_speed"])
-                front_gaps[lane_id] = float(values.get("front_gap", float("inf")))
+                return virtual_front_speed
+            return float(values["front_speed"])
 
-        candidate_speed = effective_front_speeds[candidate_lane]
-        current_front_speed = effective_front_speeds[current_lane]
-        candidate_gap = front_gaps[candidate_lane]
-        current_gap = front_gaps[current_lane]
+        candidate_speed = get_front_speed(candidate_lane)
+        current_front_speed = get_front_speed(current_lane)
 
-        # Apply the same current-lane-relative preference rules in every lane.
-        # "No smaller than 9/10" and "no smaller than 6/10" are inclusive.
-        is_boundary_lane = current_lane == lane_ids[0] or current_lane == lane_ids[-1]
-        required_speed = MIN_FRONT_SPEED_RATIO * current_front_speed
-        speed_pass = candidate_speed >= required_speed
-        required_gap = MIN_FRONT_GAP_RATIO * current_gap
-        gap_pass = candidate_gap >= required_gap
-        preference_mode = "current_lane_relative_comparison"
+        # New benefit rule: the candidate front vehicle need only be faster
+        # than ego OR faster than the current-lane front vehicle.
+        faster_than_ego = candidate_speed > ego_speed
+        faster_than_current_front = candidate_speed > current_front_speed
+        benefit_pass = faster_than_ego or faster_than_current_front
 
         values = lane_ttc[candidate_lane]
         rear_ttc = float(values.get("rear_ttc", float("inf")))
@@ -1002,10 +991,8 @@ class HighwaySimulator:
         predicted_front_pass = predicted_front_ttc > SAFETY_OVERRIDE_TTC
 
         reasons = []
-        if not speed_pass:
-            reasons.append("candidate_front_speed_below_90_percent_of_current")
-        if not gap_pass:
-            reasons.append("candidate_front_gap_below_60_percent_of_current")
+        if not benefit_pass:
+            reasons.append("candidate_front_not_faster_than_ego_or_current_front")
         if not rear_pass:
             reasons.append("candidate_rear_ttc_below_threshold")
         if not predicted_front_pass:
@@ -1016,60 +1003,37 @@ class HighwaySimulator:
             for lane_id in lane_ids
         }
         print(
-            "[MASK DEBUG][PRINCIPLES]",
+            "[MASK DEBUG][LANE CHANGE PRINCIPLE]",
             f"current_lane={current_lane}",
             f"candidate_lane={candidate_lane}",
-            f"preference_mode={preference_mode}",
-            f"is_boundary_lane={is_boundary_lane}",
             f"ego_speed_mps={ego_speed:.3f}",
-            f"speed_limit_config={speed_limit:.3f}",
-            f"virtual_no_front_speed={virtual_front_speed:.3f}",
+            f"candidate_front_speed_mps={candidate_speed:.3f}",
+            f"current_front_speed_mps={current_front_speed:.3f}",
+            f"faster_than_ego={faster_than_ego}",
+            f"faster_than_current_front={faster_than_current_front}",
+            f"benefit_pass={benefit_pass}",
             f"front_vehicle_ids={front_vehicle_ids}",
-            f"effective_front_speeds={effective_front_speeds}",
-            f"candidate_speed={candidate_speed:.3f}",
-            f"current_front_speed={current_front_speed:.3f}",
-            f"required_speed_mps={required_speed:.3f}",
-            f"configured_speed_ratio={MIN_FRONT_SPEED_RATIO:.3f}",
-            f"principle1_speed_pass={speed_pass}",
         )
         print(
-            "[MASK DEBUG][GAP]",
-            f"front_gaps_m={front_gaps}",
-            f"candidate_gap_m={candidate_gap:.3f}",
-            f"current_gap_m={current_gap:.3f}",
-            f"configured_gap_ratio={MIN_FRONT_GAP_RATIO:.3f}",
-            f"required_gap_m={required_gap:.3f}",
-            f"principle2_gap_pass={gap_pass}",
-        )
-        print(
-            "[MASK DEBUG][REAR TTC]",
+            "[MASK DEBUG][LANE CHANGE SAFETY]",
             f"candidate_rear_ttc_s={rear_ttc:.3f}",
             f"required_rear_ttc_s={LANE_CHANGE_MIN_TTC:.3f}",
-            f"principle3_rear_ttc_pass={rear_pass}",
-        )
-        print(
-            "[MASK DEBUG][PREDICTED FRONT TTC]",
-            f"front_vehicle_id={front_vehicle_id}",
+            f"rear_ttc_pass={rear_pass}",
             f"front_gap_m={front_gap:.3f}",
             f"front_speed_mps={front_speed_raw}",
-            f"ego_speed_mps={ego_speed:.3f}",
             f"closing_speed_mps={closing_speed}",
-            f"horizon_s={LANE_CHANGE_PREDICTION_HORIZON:.3f}",
+            f"prediction_horizon_s={LANE_CHANGE_PREDICTION_HORIZON:.3f}",
             f"predicted_gap_m={predicted_gap}",
             f"predicted_front_ttc_s={predicted_front_ttc:.3f}",
             f"emergency_ttc_threshold_s={SAFETY_OVERRIDE_TTC:.3f}",
+            f"predicted_front_ttc_pass={predicted_front_pass}",
             f"prediction_case={prediction_case}",
-            f"principle4_predicted_ttc_pass={predicted_front_pass}",
+            f"reasons={reasons}",
         )
-        print("[MASK DEBUG][DECISION]",
-              f"candidate_lane={candidate_lane}",
-              f"preference_mode={preference_mode}",
-              f"all_preferences_and_safety_pass={speed_pass and gap_pass and rear_pass and predicted_front_pass}",
-              f"reasons={reasons}")
         return reasons
 
     def get_valid_lane_action_mask(self):
-        """Mask lane changes unless all four new lane-selection principles pass."""
+        """Mask lane changes unless the simplified benefit and safety checks pass."""
         base_env = self.env.unwrapped
         road = base_env.road
         vehicle = base_env.vehicle
@@ -1129,7 +1093,7 @@ class HighwaySimulator:
             f"mask={mask}",
             f"lane_change_active={self._lane_change_active}",
             f"cooldown={self._lane_change_cooldown}",
-            f"principles=all_four_required",
+            f"principles=safety_and_speed_benefit",
         )
         return np.asarray(mask, dtype=bool)
 
