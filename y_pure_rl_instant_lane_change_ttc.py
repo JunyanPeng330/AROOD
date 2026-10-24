@@ -135,13 +135,6 @@ POLICY_LR = 3e-4
 
 
 
-# Lane-change principle: allow a candidate lane when it is safe and its front
-# vehicle is faster than the ego OR faster than the current-lane front vehicle.
-# An unobstructed lane receives a virtual speed above the configured speed limit
-# for the benefit comparison only; it is never used for physical TTC calculations.
-LANE_RANKING_SPEED_LIMIT = 40.0
-NO_FRONT_VIRTUAL_SPEED_MARGIN = 2.0
-
 # Traffic scenario diversity for training.
 # Randomized traffic gaps create varied lane-change opportunities.
 
@@ -159,14 +152,14 @@ DEVICE = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
 # Structured diagnostics: one JSON object per line.
 
-DIAGNOSTIC_LOG_PATH = "training_diagnostics_instant_lane_change.jsonl"
+DIAGNOSTIC_LOG_PATH = "training_diagnostics_pure_rl_instant_lane_change.jsonl"
 
 
-reward_path = 'figures/' + 'Re_instant_lane_change.png'
-reward_per_step_path = 'figures/' + 'Re_instant_lane_change_per_step.png'
+reward_path = 'figures/' + 'Re_pure_rl_instant_lane_change.png'
+reward_per_step_path = 'figures/' + 'Re_pure_rl_instant_lane_change_per_step.png'
 
-plot_path = 'figures/' + 'plot_instant_lane_change.txt'
-MODEL_PATH = 'policy/' + 'adaptive_policy_highway_instant_lane_change.pt'
+plot_path = 'figures/' + 'plot_pure_rl_instant_lane_change.txt'
+MODEL_PATH = 'policy/' + 'pure_rl_policy_highway_instant_lane_change.pt'
 
 
 
@@ -3265,6 +3258,8 @@ def train_pure_rl(simulator, policy):
     plt.legend()
     plt.tight_layout()
     plt.savefig(reward_path)
+    plt.show(block=False)
+    plt.pause(0.1)
     plt.close()
 
     plt.figure()
@@ -3280,6 +3275,8 @@ def train_pure_rl(simulator, policy):
     plt.legend()
     plt.tight_layout()
     plt.savefig(reward_per_step_path)
+    plt.show(block=False)
+    plt.pause(0.1)
     plt.close()
 
     with open(plot_path, "w", encoding="utf-8") as f:
