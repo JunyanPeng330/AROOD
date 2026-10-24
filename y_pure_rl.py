@@ -2919,6 +2919,8 @@ def collect_reference_rollouts(simulator, policy, reward_function):
     """
     trajectories = []
     total_transitions = 0
+    reference_total_lane_counters = make_lane_request_counters()
+    reference_total_mask_counters = make_action_mask_counters()
     old_phase = getattr(simulator, "_trace_phase", None)
 
     for episode in range(NUM_REFERENCE_EPISODES):
@@ -2931,11 +2933,18 @@ def collect_reference_rollouts(simulator, policy, reward_function):
             "states": [], "actions": [], "pre_tanh_accels": [], "masks": [],
             "rewards": [], "next_states": [], "terminated": []
         }
+        lane_counters = make_lane_request_counters()
+        action_mask_counters = make_action_mask_counters()
+        seen_completed = {
+            "LEFT": int(getattr(simulator, "_lane_change_stats", {}).get("completed_LEFT", 0)),
+            "RIGHT": int(getattr(simulator, "_lane_change_stats", {}).get("completed_RIGHT", 0)),
+        }
 
         for step_index in range(MAX_STEPS):
             valid_mask = np.asarray(
                 simulator.get_valid_lane_action_mask(), dtype=bool
             )
+            record_action_mask(action_mask_counters, valid_mask)
             sampled_action, pre_tanh_accel = policy.act(
                 state, deterministic=False,
                 valid_action_mask=valid_mask, return_aux=True,
@@ -2945,6 +2954,9 @@ def collect_reference_rollouts(simulator, policy, reward_function):
 
             filtered_action, safety_info = simulator.filter_ttc_action(sampled_action)
             filtered_action = np.asarray(filtered_action, dtype=np.float32).reshape(-1)
+            record_lane_request_decision(
+                lane_counters, sampled_action, valid_mask, safety_info or {}
+            )
             next_state, _, done, step_info = simulator.step(
                 filtered_action,
                 apply_safety_filter=False,
@@ -2952,6 +2964,7 @@ def collect_reference_rollouts(simulator, policy, reward_function):
                 safety_info=safety_info,
             )
             next_state = np.asarray(next_state, dtype=np.float32)
+            sync_lane_completion_counters(lane_counters, simulator, seen_completed)
 
             min_ttc, _ = calculate_min_ttc(simulator)
             safety_violation = bool(
@@ -3023,7 +3036,16 @@ def collect_reference_rollouts(simulator, policy, reward_function):
             f"[REFERENCE COLLECTION] episode={episode + 1}/{NUM_REFERENCE_EPISODES} "
             f"steps={len(returns)} return={float(returns[0]) if len(returns) else 0.0:+.3f}"
         )
+        print_lane_request_counters("REFERENCE EPISODE", lane_counters)
+        print_action_mask_counters("REFERENCE EPISODE", action_mask_counters)
+        for direction in ("LEFT", "RIGHT"):
+            for counter_name in ("requested", "mask_allowed", "safety_accepted", "completed"):
+                reference_total_lane_counters[direction][counter_name] += lane_counters[direction][counter_name]
+        for counter_name in reference_total_mask_counters:
+            reference_total_mask_counters[counter_name] += action_mask_counters[counter_name]
 
+    print_lane_request_counters("REFERENCE TOTAL", reference_total_lane_counters)
+    print_action_mask_counters("REFERENCE TOTAL", reference_total_mask_counters)
     simulator._trace_phase = old_phase or "pure_rl"
     if total_transitions == 0:
         raise RuntimeError("Reference collection produced no transitions.")
