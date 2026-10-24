@@ -452,7 +452,7 @@ class HighwaySimulator:
         if gym is None or highway_env is None:
             raise ImportError(
                 "Highway-env dependencies are missing. Install with: "
-                "pip install highway-env gymnasium sentence-transformers"
+                "pip install highway-env gymnasium"
             )
         if state_dim != STATE_DIM or action_dim != ACTION_DIM:
             raise ValueError(f"HighwaySimulator expects STATE_DIM={STATE_DIM} and ACTION_DIM={ACTION_DIM}")
