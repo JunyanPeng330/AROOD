@@ -541,18 +541,6 @@ class HighwaySimulator:
 
 
 
-    def set_distribution_shift(self, level):
-        """Vary traffic gaps within the configured [35, 60] m range."""
-        level = float(np.clip(level, 0.0, 1.0))
-        gap = REFERENCE_GAP_MAX - (REFERENCE_GAP_MAX - REFERENCE_GAP_MIN) * level
-        self.traffic_front_gap = float(np.clip(gap, REFERENCE_GAP_MIN, REFERENCE_GAP_MAX))
-        self.traffic_rear_gap = float(np.clip(gap, REFERENCE_GAP_MIN, REFERENCE_GAP_MAX))
-        print("[TRAFFIC SETTING]", f"vehicles={NUM_SURROUNDING_VEHICLES}",
-              f"front_gap={self.traffic_front_gap:.1f}m",
-              f"rear_gap={self.traffic_rear_gap:.1f}m",
-              f"speed_variation=±{self.traffic_speed_variation:.1f}m/s")
-
-
 
     def reset(self, seed=None, randomize_traffic_gaps=False):
 
@@ -573,7 +561,7 @@ class HighwaySimulator:
         print("[TRAFFIC SCENARIO]",
               f"front_gap_range={RANDOMIZED_FRONT_GAP_MIN:.1f}-{RANDOMIZED_FRONT_GAP_MAX:.1f}m",
               f"rear_gap_range={RANDOMIZED_REAR_GAP_MIN:.1f}-{RANDOMIZED_REAR_GAP_MAX:.1f}m",
-              f"gap_sampling={'independent_per_lane_and_side' if self.randomize_traffic_gaps else 'configured_shift_setting'}",
+              f"gap_sampling={'independent_per_lane_and_side' if self.randomize_traffic_gaps else 'configured_baseline_setting'}",
               f"speed_variation=±{self.traffic_speed_variation:.1f}m/s",
               f"randomized={self.randomize_traffic_gaps}")
 
@@ -3311,6 +3299,20 @@ def train_pure_rl(simulator, policy):
     }
 
 
+def check_model_device(model, name):
+    devices = {
+        str(parameter.device)
+        for parameter in model.parameters()
+    }
+
+    print(f"{name}: {devices}")
+
+    assert all(
+        parameter.device == DEVICE
+        for parameter in model.parameters()
+    ), f"{name} has parameters on the wrong device"
+
+
 def main():
     print("PyTorch version:", torch.__version__)
     print("CUDA available:", torch.cuda.is_available())
@@ -3338,24 +3340,8 @@ if __name__ == "__main__":
     main()
 
 
-def check_model_device(model, name):
-    devices = {
-        str(parameter.device)
-        for parameter in model.parameters()
-    }
-
-    print(f"{name}: {devices}")
-
-    assert all(
-        parameter.device == DEVICE
-        for parameter in model.parameters()
-    ), f"{name} has parameters on the wrong device"
 
 
 
 
 
-
-# ============================================================
-# 24. Main Entry Point
-# ============================================================
