@@ -2147,12 +2147,11 @@ class HighwaySimulator:
 
 
     def step(self, action, apply_safety_filter=True, sampled_action=None, safety_info=None):
-        """Step with instantaneous, discrete lane changes.
+        """Step with two-stage KEEP/CHANGE decisions and instantaneous lane changes.
 
-        This experimental adapter preserves the high-level action and TTC
-        shield, but removes the steering controller and multi-step maneuver.
-        An accepted LEFT/RIGHT action moves ego to the target lane at the same
-        road-longitudinal coordinate before longitudinal physics advances.
+        The policy chooses KEEP or CHANGE. For CHANGE, the TTC shield selects
+        and validates a safe adjacent target lane, then this diagnostic adapter
+        moves ego to that lane at the same longitudinal coordinate.
         """
         action = np.asarray(action, dtype=np.float32).reshape(-1)
         if action.size != 2:
@@ -2179,18 +2178,14 @@ class HighwaySimulator:
         ego = base_env.vehicle
         source_lane_id = int(ego.lane_index[2])
         acceleration = float(np.clip(action[0], -1.0, 1.0))
-        lane_action_id = int(np.clip(np.rint(action[1]), 0, 2))
-        lane_delta = lane_action_index_to_delta(lane_action_id)
-        lane_name = {-1: "LEFT", 0: "KEEP", 1: "RIGHT"}[lane_delta]
-        requested_target_lane_id = relative_lane_delta_to_absolute_lane(source_lane_id, lane_delta)
+        lane_action_id = int(np.clip(np.rint(action[1]), 0, 1))
+        lane_name = ("KEEP", "CHANGE")[lane_action_id]
+        requested_target_lane_id = int(safety_info.get("requested_target_lane_id", source_lane_id))
 
         lane_changed = False
         lane_rejection_reason = safety_info.get("lane_change_rejection_reason", "none")
-        if lane_delta != 0 and requested_target_lane_id != source_lane_id:
-            # The safety filter is the authority: only execute a lane change
-            # if it leaves LEFT/RIGHT in the filtered action.
-            filtered_delta = lane_action_index_to_delta(lane_action_id)
-            if filtered_delta == lane_delta and not safety_info.get("lane_change_blocked", False):
+        if lane_action_id == 1 and requested_target_lane_id != source_lane_id:
+            if not safety_info.get("lane_change_blocked", False):
                 try:
                     source_lane_index = tuple(ego.lane_index)
                     source_lane = base_env.road.network.get_lane(source_lane_index)
@@ -2199,9 +2194,8 @@ class HighwaySimulator:
                         source_lane_index[0], source_lane_index[1], int(requested_target_lane_id)
                     )
                     target_lane = base_env.road.network.get_lane(target_lane_index)
-                    # Preserve the longitudinal coordinate and snap laterally
-                    # to the target lane centre. This is intentionally not a
-                    # physical lateral trajectory.
+                    # Preserve longitudinal position and snap to the selected
+                    # safe target lane centre (instantaneous diagnostic mode).
                     ego.position = np.asarray(target_lane.position(longitudinal, 0.0), dtype=float)
                     ego.heading = float(target_lane.heading_at(longitudinal))
                     ego.lane_index = target_lane_index
@@ -2218,33 +2212,37 @@ class HighwaySimulator:
                     stats = getattr(self, "_lane_change_stats", None)
                     if stats is not None:
                         stats["completed"] = int(stats.get("completed", 0)) + 1
-                        direction = "LEFT" if lane_delta == -1 else "RIGHT"
-                        key = "completed_" + direction
-                        stats[key] = int(stats.get(key, 0)) + 1
+                        direction = "LEFT" if requested_target_lane_id > source_lane_id else "RIGHT"
+                        stats["completed_" + direction] = int(stats.get("completed_" + direction, 0)) + 1
                     write_diagnostic_event(
                         "instant_lane_change", self,
                         source_lane=source_lane_id,
                         target_lane=int(requested_target_lane_id),
-                        direction=lane_name,
+                        direction="LEFT" if requested_target_lane_id > source_lane_id else "RIGHT",
                         outcome="COMPLETED_INSTANTLY",
                         longitudinal_position=float(longitudinal),
                         request_id=safety_info.get("lane_request_trace_id"),
                     )
                 except (KeyError, IndexError, TypeError, ValueError) as exc:
-                    # A malformed or unavailable target lane must fail closed.
-                    lane_action_id = 1
-                    lane_delta = 0
+                    lane_action_id = 0
                     lane_name = "KEEP"
-                    action[1] = 1.0
+                    action[1] = 0.0
                     lane_rejection_reason = "instant_target_lane_error:" + str(exc)
                     safety_info["lane_change_rejection_reason"] = lane_rejection_reason
+                    safety_info["lane_change_blocked"] = True
                     print("[INSTANT LANE CHANGE ERROR]", lane_rejection_reason)
             else:
-                # The shield rejected the request. Stay in the source lane.
-                lane_action_id = 1
-                lane_delta = 0
+                lane_action_id = 0
                 lane_name = "KEEP"
-                action[1] = 1.0
+                action[1] = 0.0
+        elif lane_action_id == 1:
+            # A CHANGE action without a selected adjacent target fails closed.
+            lane_action_id = 0
+            lane_name = "KEEP"
+            action[1] = 0.0
+            lane_rejection_reason = "change_action_missing_safe_target"
+            safety_info["lane_change_rejection_reason"] = lane_rejection_reason
+            safety_info["lane_change_blocked"] = True
 
         current_speed = float(ego.speed)
         if current_speed >= float(getattr(ego, "MAX_SPEED", np.inf)) and acceleration > 0.0:
@@ -2294,7 +2292,7 @@ class HighwaySimulator:
             "env_reward": float(env_reward),
             "lane_action_id": lane_action_id,
             "lane_action_index": lane_action_id,
-            "lane_action_delta": lane_delta,
+            "lane_action_delta": (int(requested_target_lane_id - source_lane_id) if lane_changed else 0),
             "lane_action_name": lane_name,
             "current_lane_id": source_lane_id,
             "requested_target_lane_id": requested_target_lane_id,
@@ -2425,45 +2423,43 @@ def make_lane_request_counters():
 
 
 def make_action_mask_counters():
-    """Measure available lane actions independently of policy choices."""
-    return {"steps": 0, "left_valid": 0, "right_valid": 0,
-            "both_valid": 0, "only_keep": 0}
+    """Measure high-level lane-change opportunities independently of choices."""
+    return {"steps": 0, "change_valid": 0, "only_keep": 0}
 
 
 def record_action_mask(counters, valid_action_mask):
     mask = np.asarray(valid_action_mask, dtype=bool).reshape(-1)
-    left_valid = bool(mask[0]) if mask.size > 0 else False
-    right_valid = bool(mask[2]) if mask.size > 2 else False
     counters["steps"] += 1
-    counters["left_valid"] += int(left_valid)
-    counters["right_valid"] += int(right_valid)
-    counters["both_valid"] += int(left_valid and right_valid)
-    counters["only_keep"] += int(mask.size > 1 and bool(mask[1]) and not left_valid and not right_valid)
+    change_valid = bool(mask[1]) if mask.size > 1 else False
+    counters["change_valid"] += int(change_valid)
+    counters["only_keep"] += int(not change_valid)
 
 
 def print_action_mask_counters(tag, counters):
     steps = max(1, counters["steps"])
     print(f"[{tag} ACTION OPPORTUNITIES]",
           f"steps={counters['steps']}",
-          f"left_valid={counters['left_valid']} ({100*counters['left_valid']/steps:.1f}%)",
-          f"right_valid={counters['right_valid']} ({100*counters['right_valid']/steps:.1f}%)",
-          f"both_valid={counters['both_valid']} ({100*counters['both_valid']/steps:.1f}%)",
+          f"change_valid={counters['change_valid']} ({100*counters['change_valid']/steps:.1f}%)",
           f"only_keep={counters['only_keep']} ({100*counters['only_keep']/steps:.1f}%)")
 
 
 def record_lane_request_decision(counters, sampled_action, valid_action_mask, safety_info):
-    """Count request, mask permission, and safety-filter acceptance for one step."""
-    lane_index = int(np.clip(np.rint(float(sampled_action[1])), 0, 2))
-    if lane_index == 1:
+    """Count CHANGE requests and attribute accepted target direction separately."""
+    lane_index = int(np.clip(np.rint(float(sampled_action[1])), 0, 1))
+    if lane_index == 0:
         return
-    direction = "LEFT" if lane_index == 0 else "RIGHT"
+    target_lane = safety_info.get("requested_target_lane_id")
+    current_lane = safety_info.get("current_lane_id")
+    if target_lane is None or current_lane is None or int(target_lane) == int(current_lane):
+        # No target was selected; the rejection remains visible in filter diagnostics.
+        return
+    direction = "LEFT" if int(target_lane) > int(current_lane) else "RIGHT"
     counters[direction]["requested"] += 1
     mask = np.asarray(valid_action_mask, dtype=bool).reshape(-1)
-    if lane_index < len(mask) and bool(mask[lane_index]):
+    if len(mask) > 1 and bool(mask[1]):
         counters[direction]["mask_allowed"] += 1
     if not bool(safety_info.get("lane_change_blocked", False)):
         counters[direction]["safety_accepted"] += 1
-
 
 def sync_lane_completion_counters(counters, simulator, seen_completed):
     """Record newly completed lane changes, attributed by their actual direction."""
@@ -2578,12 +2574,12 @@ def construct_reward(reward_specification, embedding_model=None):
                             safety_info.get("lane_change_completed_instantly", False))
         )
         sampled_lane_action = (
-            int(np.clip(np.rint(sampled_action[1]), 0, 2))
-            if sampled_action.size > 1 else 1
+            int(np.clip(np.rint(sampled_action[1]), 0, 1))
+            if sampled_action.size > 1 else 0
         )
         lane_change_cost = (
             lane_change_cost_weight
-            if lane_change_accepted and sampled_lane_action != 1 else 0.0
+            if lane_change_accepted and sampled_lane_action == 1 else 0.0
         )
 
         reward = float(progress_reward - safety_penalty - lane_change_cost)
@@ -2654,7 +2650,7 @@ def update_policy(
     """
     One-step actor-critic update for a hybrid action:
       action[0] = tanh-squashed Gaussian acceleration
-      action[1] = categorical lane ID (0, 1, or 2)
+      action[1] = categorical high-level intent (0=KEEP, 1=CHANGE)
     """
 
     state_tensor = to_tensor(state).reshape(1, -1)
@@ -2712,7 +2708,7 @@ def update_policy(
         action_tensor[:, 1]
         .round()
         .long()
-        .clamp(0, 2)
+        .clamp(0, 1)
     )
 
     lane_log_prob = lane_dist.log_prob(lane_action)
@@ -2795,7 +2791,7 @@ def _hybrid_action_log_probability(policy, states, actions, pre_tanh_accels, mas
     accel = actions[:, 0].clamp(-1.0, 1.0)
     accel_log_prob = accel_dist.log_prob(pre_tanh).squeeze(-1)
     accel_log_prob = accel_log_prob - torch.log(1.0 - accel.pow(2) + 1e-6)
-    lane_actions = actions[:, 1].round().long().clamp(0, 2)
+    lane_actions = actions[:, 1].round().long().clamp(0, 1)
     return accel_log_prob + lane_dist.log_prob(lane_actions)
 
 
