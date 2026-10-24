@@ -240,8 +240,9 @@ class ActorCriticPolicy(nn.Module):
     """
     Hybrid actor-critic:
       action[0] = continuous acceleration in [-1, 1]
-      action[1] = discrete lane intention:
-                 0=left, 1=keep lane, 2=right
+      action[1] = high-level lane intention: 0=KEEP, 1=CHANGE.
+    When CHANGE is selected, the simulator's separate target-lane selector
+    chooses the best adjacent lane that passes the TTC/gap safety principles.
     """
 
     def __init__(
@@ -256,7 +257,7 @@ class ActorCriticPolicy(nn.Module):
         if action_dim != 2:
             raise ValueError(
                 "Hybrid policy expects ACTION_DIM=2: "
-                "[acceleration, lane_action_id]"
+                "[acceleration, keep_or_change_id]"
             )
 
         # Shared feature extractor
@@ -1896,12 +1897,14 @@ class HighwaySimulator:
 #???????????????????????????????????????????????????????????????????????????????????????????????????????????
     def _update_lane_target(self, lane_action_id):
         """
-        Convert a categorical policy index into a persistent absolute lane target.
+        Legacy persistent-target helper for the non-instantaneous controller.
 
-        Policy index 0/1/2 maps to semantic relative delta -1/0/+1
-        (LEFT/KEEP/RIGHT). Absolute Highway lane IDs are retained for geometry;
-        in this road graph, absolute IDs increase toward the left.
+        The active instantaneous KEEP/CHANGE policy selects its safe target in
+        filter_ttc_action() and executes it in step(), so this legacy controller
+        must not reinterpret the binary action as LEFT/KEEP/RIGHT.
         """
+        if INSTANT_LANE_CHANGE_MODE:
+            return
 
         base_env = self.env.unwrapped
         ego = base_env.vehicle
