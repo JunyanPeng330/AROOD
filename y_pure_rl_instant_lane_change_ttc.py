@@ -1,4 +1,5 @@
-# PURE REINFORCEMENT LEARNING — NO LLM / NO OOD DETECTION
+# PURE REINFORCEMENT LEARNING — REFERENCE WARM-START + ONLINE RL; NO LLM / NO OOD
+# Phase I collects and learns from reward-scored reference trajectories; Phase II fine-tunes online.
 # Uses the current instant lane-change principles and independent TTC safety shield.
 # Discrete instantaneous lane changes with TTC-based safety filtering.
 # multi-step lateral maneuver execution are bypassed for diagnosis.
@@ -113,6 +114,9 @@ ACTION_DIM = 2
 HIDDEN_DIM = 128
 
 
+NUM_REFERENCE_EPISODES = 20
+REFERENCE_TRAINING_EPOCHS = 5
+REFERENCE_BATCH_SIZE = 256
 NUM_ONLINE_EPISODES = 200
 
 MAX_STEPS = 200
@@ -2525,8 +2529,6 @@ def create_initial_policy(
 # ============================================================
 
 def make_lane_request_counters():
-
-def make_lane_request_counters():
     """Counters for each lane-change direction at distinct decision stages."""
     return {
         direction: {"requested": 0, "mask_allowed": 0, "safety_accepted": 0, "completed": 0}
@@ -3051,17 +3053,9 @@ def save_policy(policy, path):
 
 
 # ============================================================
-# Pure online Actor-Critic training — no reference phase, no OOD
+# Phase I: collect reference rollouts, then learn from them
 # ============================================================
-def train_pure_rl(simulator, policy):
-    reward_history = []
-    mean_step_reward_history = []
-    episode_times = []
-    collision_history = []
-    lane_change_history = []
-    actor_loss_history = []
-    critic_loss_history = []
-
+def build_fixed_reward_function():
     reward_specification = {
         "name": "pure_rl_fixed_reward",
         "target_behavior": (
@@ -3085,7 +3079,225 @@ def train_pure_rl(simulator, policy):
         "ttc_critical_threshold": ttc_critical_threshold,
         "ttc_safe_threshold": ttc_caution_threshold,
     }
-    reward_function = construct_reward(reward_specification)
+    return construct_reward(reward_specification)
+
+
+def _hybrid_action_log_probability(policy, states, actions, pre_tanh_accels, masks):
+    """Log probability for the sampled hybrid actions, including tanh correction."""
+    accel_dist, lane_dist = policy.action_distributions(
+        states, valid_action_mask=masks
+    )
+    pre_tanh = pre_tanh_accels.reshape(-1, 1)
+    accel = actions[:, 0].clamp(-1.0, 1.0)
+    accel_log_prob = accel_dist.log_prob(pre_tanh).squeeze(-1)
+    accel_log_prob = accel_log_prob - torch.log(1.0 - accel.pow(2) + 1e-6)
+    lane_actions = actions[:, 1].round().long().clamp(0, 2)
+    return accel_log_prob + lane_dist.log_prob(lane_actions)
+
+
+def collect_reference_rollouts(simulator, policy, reward_function):
+    """
+    Collect complete policy trajectories without updating the policy.
+    These trajectories are subsequently used for reward/return-weighted
+    policy warm-start, not for OOD detection.
+    """
+    trajectories = []
+    total_transitions = 0
+    old_phase = getattr(simulator, "_trace_phase", None)
+
+    for episode in range(NUM_REFERENCE_EPISODES):
+        simulator._trace_phase = "reference_collection"
+        simulator._trace_episode = episode + 1
+        state = np.asarray(
+            simulator.reset(randomize_traffic_gaps=True), dtype=np.float32
+        )
+        trajectory = {
+            "states": [], "actions": [], "pre_tanh_accels": [], "masks": [],
+            "rewards": [], "next_states": [], "terminated": []
+        }
+
+        for step_index in range(MAX_STEPS):
+            valid_mask = np.asarray(
+                simulator.get_valid_lane_action_mask(), dtype=bool
+            )
+            sampled_action, pre_tanh_accel = policy.act(
+                state, deterministic=False,
+                valid_action_mask=valid_mask, return_aux=True,
+            )
+            sampled_action = np.asarray(sampled_action, dtype=np.float32).reshape(-1)
+            pre_tanh_accel = float(np.asarray(pre_tanh_accel).reshape(-1)[0])
+
+            filtered_action, safety_info = simulator.filter_ttc_action(sampled_action)
+            filtered_action = np.asarray(filtered_action, dtype=np.float32).reshape(-1)
+            next_state, _, done, step_info = simulator.step(
+                filtered_action,
+                apply_safety_filter=False,
+                sampled_action=sampled_action,
+                safety_info=safety_info,
+            )
+            next_state = np.asarray(next_state, dtype=np.float32)
+
+            min_ttc, _ = calculate_min_ttc(simulator)
+            safety_violation = bool(
+                step_info.get("safety_violation", False)
+                if isinstance(step_info, dict) else step_info
+            )
+            lane_info = simulator.get_lane_information()
+            offroad = not bool(lane_info.get("on_road", True))
+            lane_deviation = float(lane_info.get("lane_deviation", 0.0))
+            if offroad:
+                done = True
+
+            reward = compute_reward(
+                reward_function=reward_function,
+                behavior_description="",
+                safety_violation=safety_violation,
+                action=np.asarray(
+                    step_info.get("filtered_policy_action", filtered_action)
+                    if isinstance(step_info, dict) else filtered_action,
+                    dtype=np.float32,
+                ),
+                lane_deviation=lane_deviation,
+                offroad=offroad,
+                min_ttc=min_ttc,
+                lane_change_allowed=True,
+                ego_speed=float(simulator.env.unwrapped.vehicle.speed),
+                safety_info=safety_info,
+                policy_sampled_action=sampled_action,
+                reward_diagnostics={},
+            )
+
+            trajectory["states"].append(state.copy())
+            trajectory["actions"].append(sampled_action.copy())
+            trajectory["pre_tanh_accels"].append(pre_tanh_accel)
+            trajectory["masks"].append(valid_mask.copy())
+            trajectory["rewards"].append(float(reward))
+            trajectory["next_states"].append(next_state.copy())
+            is_terminated = (
+                bool(step_info.get("terminated", False) or offroad)
+                if isinstance(step_info, dict) else bool(done or offroad)
+            )
+            trajectory["terminated"].append(is_terminated)
+            total_transitions += 1
+            state = next_state
+            if done:
+                break
+
+        # Monte-Carlo discounted returns, computed separately per episode.
+        returns = np.zeros(len(trajectory["rewards"]), dtype=np.float32)
+        running_return = 0.0
+        for i in range(len(returns) - 1, -1, -1):
+            running_return = trajectory["rewards"][i] + 0.99 * running_return
+            returns[i] = running_return
+        trajectory["returns"] = returns
+        trajectories.append(trajectory)
+        print(
+            f"[REFERENCE COLLECTION] episode={episode + 1}/{NUM_REFERENCE_EPISODES} "
+            f"steps={len(returns)} return={float(returns[0]) if len(returns) else 0.0:+.3f}"
+        )
+
+    simulator._trace_phase = old_phase or "pure_rl"
+    if total_transitions == 0:
+        raise RuntimeError("Reference collection produced no transitions.")
+
+    # Persist the exact data used for warm-start so experiments are reproducible.
+    os.makedirs("data", exist_ok=True)
+    flattened = {
+        key: np.concatenate([np.asarray(traj[key]) for traj in trajectories], axis=0)
+        for key in (
+            "states", "actions", "pre_tanh_accels", "masks", "rewards",
+            "next_states", "terminated", "returns"
+        )
+    }
+    reference_data_path = os.path.join("data", "pure_rl_reference_rollouts.npz")
+    np.savez_compressed(reference_data_path, **flattened)
+    print(
+        f"[REFERENCE COLLECTION COMPLETE] episodes={len(trajectories)} "
+        f"transitions={total_transitions} saved={reference_data_path}"
+    )
+    return flattened
+
+
+def warm_start_policy_from_reference(policy, reference_data):
+    """
+    Reward/return-weighted offline warm-start.
+
+    The actor learns to increase likelihood of collected actions with higher
+    estimated advantage; the critic regresses to discounted trajectory returns.
+    This is deliberately separate from the online one-step Actor-Critic update.
+    """
+    states = to_tensor(reference_data["states"])
+    actions = to_tensor(reference_data["actions"])
+    pre_tanh = to_tensor(reference_data["pre_tanh_accels"]).reshape(-1)
+    masks = torch.as_tensor(reference_data["masks"], dtype=torch.bool, device=DEVICE)
+    returns = to_tensor(reference_data["returns"]).reshape(-1)
+
+    with torch.no_grad():
+        baseline = policy.value(states).reshape(-1)
+        advantages = returns - baseline
+        if advantages.numel() > 1:
+            advantages = (advantages - advantages.mean()) / (
+                advantages.std(unbiased=False) + 1e-6
+            )
+        # Exponentiated advantage weights are bounded to avoid one trajectory
+        # dominating the warm-start.
+        weights = torch.exp(advantages.clamp(-2.0, 2.0) / 2.0)
+        weights = weights / (weights.mean() + 1e-6)
+
+    count = states.shape[0]
+    batch_size = min(REFERENCE_BATCH_SIZE, count)
+    for epoch in range(REFERENCE_TRAINING_EPOCHS):
+        permutation = torch.randperm(count, device=DEVICE)
+        actor_losses, critic_losses = [], []
+        for start in range(0, count, batch_size):
+            idx = permutation[start:start + batch_size]
+            batch_states = states[idx]
+            batch_actions = actions[idx]
+            batch_pre_tanh = pre_tanh[idx]
+            batch_masks = masks[idx]
+            batch_returns = returns[idx]
+            batch_weights = weights[idx]
+
+            log_prob = _hybrid_action_log_probability(
+                policy, batch_states, batch_actions, batch_pre_tanh, batch_masks
+            )
+            actor_loss = -(batch_weights.detach() * log_prob).mean()
+            predicted_returns = policy.value(batch_states).reshape(-1)
+            critic_loss = F.mse_loss(predicted_returns, batch_returns)
+            loss = actor_loss + critic_loss
+
+            policy.optimizer.zero_grad()
+            loss.backward()
+            torch.nn.utils.clip_grad_norm_(policy.parameters(), max_norm=1.0)
+            policy.optimizer.step()
+            actor_losses.append(float(actor_loss.detach().item()))
+            critic_losses.append(float(critic_loss.detach().item()))
+
+        print(
+            f"[REFERENCE WARM-START] epoch={epoch + 1}/{REFERENCE_TRAINING_EPOCHS} "
+            f"actor_loss={np.mean(actor_losses):+.5f} "
+            f"critic_loss={np.mean(critic_losses):.5f}"
+        )
+
+    print(
+        "[REFERENCE WARM-START COMPLETE] The reference dataset has updated "
+        "the actor and critic; online Actor-Critic training starts next."
+    )
+
+
+# ============================================================
+# Phase II: online Actor-Critic fine-tuning — no OOD
+# ============================================================
+def train_pure_rl(simulator, policy):
+    reward_history = []
+    mean_step_reward_history = []
+    episode_times = []
+    collision_history = []
+    lane_change_history = []
+    actor_loss_history = []
+    critic_loss_history = []
+
+    reward_function = build_fixed_reward_function()
 
     os.makedirs(os.path.dirname(reward_path) or ".", exist_ok=True)
     os.makedirs(os.path.dirname(MODEL_PATH) or ".", exist_ok=True)
@@ -3094,6 +3306,11 @@ def train_pure_rl(simulator, policy):
             f.write("")
     except OSError as exc:
         print("[DIAGNOSTIC LOG WARNING]", exc)
+
+    # Phase I: collect trajectories with the initial policy and update it
+    # from those returns before starting ordinary online RL.
+    reference_data = collect_reference_rollouts(simulator, policy, reward_function)
+    warm_start_policy_from_reference(policy, reference_data)
 
     for episode in range(NUM_ONLINE_EPISODES):
         simulator._trace_phase = "pure_rl"
@@ -3316,7 +3533,7 @@ def main():
     print("Selected DEVICE:", DEVICE)
     if torch.cuda.is_available():
         print("GPU:", torch.cuda.get_device_name(0))
-    print("PURE RL: no LLM, no embeddings, no OOD detector, no dynamics/risk model.")
+    print("PURE RL: reference-trajectory warm-start + online Actor-Critic; no LLM or OOD detector.")
     print(f"State dimension: {STATE_DIM}; action dimension: {ACTION_DIM}")
     print(f"Lane-change TTC thresholds: front >= {LANE_CHANGE_MIN_FRONT_TTC:.1f}s; "
           f"rear >= {LANE_CHANGE_MIN_REAR_TTC:.1f}s; minimum gap={LANE_CHANGE_MIN_GAP:.1f}m")
