@@ -1,7 +1,7 @@
 # PURE REINFORCEMENT LEARNING — REFERENCE WARM-START + ONLINE RL; NO LLM / NO OOD
 # Phase I collects and learns from reward-scored reference trajectories; Phase II fine-tunes online.
 # Uses the current instant lane-change principles and independent TTC safety shield.
-# Discrete instantaneous lane changes with TTC-based safety filtering.
+# Two-stage lane decisions: RL chooses KEEP/CHANGE; a separate selector chooses a safe target lane.
 # multi-step lateral maneuver execution are bypassed for diagnosis.
 # Fixed hand-designed reward; no language or embedding models.
 
@@ -273,8 +273,8 @@ class ActorCriticPolicy(nn.Module):
         # Learnable standard deviation for acceleration only
         self.accel_log_std = nn.Parameter(torch.zeros(1))
 
-        # Discrete lane-intention head: left / keep / right
-        self.lane_logits = nn.Linear(hidden_dim, 3)
+        # High-level lane-intention head: KEEP / CHANGE.
+        self.lane_logits = nn.Linear(hidden_dim, 2)
 
         # Critic
         self.critic = nn.Sequential(
@@ -422,8 +422,8 @@ def lane_policy_diagnostic(policy, state, valid_action_mask, sampled_action, pha
         masked_logits_np = masked_logits.squeeze(0).cpu().numpy()
         masked_probs_np = masked_probs.squeeze(0).cpu().numpy()
 
-    lane_index = int(np.clip(np.rint(float(sampled_action[1])), 0, 2))
-    lane_name = ("LEFT", "KEEP", "RIGHT")[lane_index]
+    lane_index = int(np.clip(np.rint(float(sampled_action[1])), 0, 1))
+    lane_name = ("KEEP", "CHANGE")[lane_index]
     print(
         "[LANE POLICY DISTRIBUTION]",
         f"phase={phase}",
@@ -849,70 +849,83 @@ class HighwaySimulator:
         )
         return reasons
 
-    def get_valid_lane_action_mask(self):
-        """Mask lane changes unless target-lane front/rear TTC and gap checks pass."""
+    def _safe_lane_change_candidates(self, lane_ttc=None):
+        """Return safe adjacent-lane candidates with a comparable utility score."""
         base_env = self.env.unwrapped
-        road = base_env.road
         vehicle = base_env.vehicle
+        if lane_ttc is None:
+            lane_ttc = self._min_ttc_by_lane()
+        start_node, end_node, current_lane = vehicle.lane_index
+        available_lanes = base_env.road.network.graph[start_node][end_node]
+        valid_ids = set(range(len(available_lanes)))
+        ego_speed = float(vehicle.speed)
+        candidates = []
+        # Lane IDs are geometry only. The selector checks both adjacent IDs;
+        # LEFT/RIGHT are not separate policy actions.
+        for candidate_lane in (int(current_lane) - 1, int(current_lane) + 1):
+            if candidate_lane not in valid_ids or candidate_lane not in lane_ttc:
+                continue
+            reasons = self._lane_change_principle_reasons(
+                candidate_lane, lane_ttc, current_lane=int(current_lane),
+                ego_speed=ego_speed,
+            )
+            if reasons:
+                continue
+            values = lane_ttc[candidate_lane]
+            front_gap = float(values.get("front_gap", float("inf")))
+            rear_gap = float(values.get("rear_gap", float("inf")))
+            front_speed = values.get("front_speed")
+            # Hard TTC/gap constraints are applied before this utility score.
+            front_space_score = min(front_gap, 100.0) if np.isfinite(front_gap) else 100.0
+            rear_space_score = min(rear_gap, 100.0) if np.isfinite(rear_gap) else 100.0
+            lead_speed_score = float(front_speed) if front_speed is not None else ego_speed
+            utility = front_space_score + 0.5 * lead_speed_score + 0.25 * rear_space_score
+            candidates.append({
+                "target_lane": int(candidate_lane),
+                "utility": float(utility),
+                "front_gap": front_gap,
+                "rear_gap": rear_gap,
+                "front_ttc": float(values.get("front_ttc", float("inf"))),
+                "rear_ttc": float(values.get("rear_ttc", float("inf"))),
+                "front_speed": front_speed,
+                "rear_speed": values.get("rear_speed"),
+            })
+        return candidates
+
+    def _select_best_safe_lane_candidate(self, lane_ttc=None):
+        """Choose the highest-utility safe target lane, or None if none is safe."""
+        candidates = self._safe_lane_change_candidates(lane_ttc)
+        if not candidates:
+            return None
+        selected = max(candidates, key=lambda item: (item["utility"], -item["target_lane"]))
+        print("[TARGET LANE SELECTOR]",
+              f"candidates={candidates}",
+              f"selected_lane={selected['target_lane']}",
+              f"selected_utility={selected['utility']:.3f}")
+        return selected
+
+    def get_valid_lane_action_mask(self):
+        """Two-action mask: [KEEP, CHANGE]; CHANGE is valid if any safe target exists."""
+        vehicle = self.env.unwrapped.vehicle
         if self._lane_change_active or self._lane_change_cooldown > 0:
-            forced_mask = np.array([False, True, False], dtype=bool)
+            mask = np.array([True, False], dtype=bool)
             print("[MASK DEBUG][FORCED KEEP]",
                   f"current_lane={int(vehicle.lane_index[2])}",
                   f"lane_change_active={self._lane_change_active}",
                   f"cooldown={self._lane_change_cooldown}",
-                  f"mask={forced_mask.tolist()}",
+                  f"mask={mask.tolist()}",
                   "reason=active_maneuver_or_cooldown")
-            return forced_mask
-
-        current_lane = int(vehicle.lane_index[2])
-        start_node, end_node, _ = vehicle.lane_index
-        available_lanes = road.network.graph[start_node][end_node]
-        valid_ids = set(range(len(available_lanes)))
+            return mask
         lane_ttc = self._min_ttc_by_lane()
-        mask = [False, True, False]
-        print("[MASK DEBUG][CONTEXT]",
-              f"current_lane={current_lane}",
-              f"lane_index={vehicle.lane_index}",
-              f"start_node={start_node}",
-              f"end_node={end_node}",
-              f"available_lane_ids={sorted(valid_ids)}",
-              f"lane_ttc_ids={sorted(lane_ttc.keys())}",
-              f"ego_speed_mps={float(vehicle.speed):.3f}",
-              f"policy_frequency={policy_frequency}",
-              f"simulation_frequency={simulation_frequency}",
-              f"lane_change_active={self._lane_change_active}",
-              f"cooldown={self._lane_change_cooldown}")
-        for action_id, lane_delta in ((0, -1), (2, +1)):
-            candidate_lane = relative_lane_delta_to_absolute_lane(current_lane, lane_delta)
-            if candidate_lane not in valid_ids or candidate_lane not in lane_ttc:
-                print("[MASK DEBUG][LANE UNAVAILABLE]",
-                      f"action_id={action_id}",
-                      f"lane_delta={lane_delta}",
-                      f"candidate_lane={candidate_lane}",
-                      f"in_road_graph={candidate_lane in valid_ids}",
-                      f"has_traffic_metrics={candidate_lane in lane_ttc}")
-                continue
-            reasons = self._lane_change_principle_reasons(
-                candidate_lane, lane_ttc, current_lane=current_lane,
-                ego_speed=float(vehicle.speed),
-            )
-            mask[action_id] = not reasons
-            print("[MASK DEBUG][ACTION RESULT]",
-                  f"action_id={action_id}",
-                  f"lane_delta={lane_delta}",
-                  f"candidate_lane={candidate_lane}",
-                  f"allowed={mask[action_id]}",
-                  f"blocking_reasons={reasons}")
-
-        print(
-            "[LANE ACTION MASK]",
-            f"current_lane={current_lane}",
-            f"mask={mask}",
-            f"lane_change_active={self._lane_change_active}",
-            f"cooldown={self._lane_change_cooldown}",
-            f"principles=front_ttc>={LANE_CHANGE_MIN_FRONT_TTC:.1f}s_and_rear_ttc>={LANE_CHANGE_MIN_REAR_TTC:.1f}s",
-        )
-        return np.asarray(mask, dtype=bool)
+        candidates = self._safe_lane_change_candidates(lane_ttc)
+        mask = np.array([True, bool(candidates)], dtype=bool)
+        print("[LANE ACTION MASK]",
+              f"current_lane={int(vehicle.lane_index[2])}",
+              f"mask={mask.tolist()}",
+              f"safe_target_lanes={[item['target_lane'] for item in candidates]}",
+              f"principles=front_ttc>={LANE_CHANGE_MIN_FRONT_TTC:.1f}s_and_rear_ttc>={LANE_CHANGE_MIN_REAR_TTC:.1f}s",
+              "action_order=[KEEP, CHANGE]")
+        return mask
 
     def _min_ttc_by_lane(self):
         """
