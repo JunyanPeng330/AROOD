@@ -3128,7 +3128,9 @@ def train_pure_rl(simulator, policy):
                     # 1-based index: a collision on the first transition is step 1.
                     first_collision_step = episode_steps + 1
                 # Do not count the collision transition as safely travelled distance.
-            else:
+            elif first_collision_step is None:
+                # Once the first collision has occurred, later motion is not counted
+                # as safely travelled distance even if the episode continues.
                 safe_travel_dis += float(
                     np.linalg.norm(current_ego_position - previous_ego_position)
                 )
@@ -3306,6 +3308,12 @@ def train_pure_rl(simulator, policy):
         f.write(str(lane_change_rate_history) + "\n")
         f.write(str(safe_travel_dis_history) + "\n")
         f.write(str(safe_step_count_history) + "\n")
+
+    print("\\n[FINAL EPISODE METRICS]")
+    print(f"collision_rate={float(np.mean(collision_rate_history)) if collision_rate_history else 0.0:.4f}")
+    print(f"lane_change_rate={float(np.mean(lane_change_rate_history)) if lane_change_rate_history else 0.0:.4f}")
+    print(f"safe_travel_dis={float(np.mean(safe_travel_dis_history)) if safe_travel_dis_history else 0.0:.2f} m/episode (mean)")
+    print(f"safe_step_count={float(np.mean(safe_step_count_history)) if safe_step_count_history else 0.0:.2f} steps/episode (mean)")
 
     save_policy(policy, MODEL_PATH)
     return {
