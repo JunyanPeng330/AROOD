@@ -3030,6 +3030,15 @@ def train_pure_rl(simulator, policy):
     episode_times = []
     collision_history = []
     lane_change_history = []
+    # Episode-level evaluation metrics:
+    # collision_rate: 1 if any collision occurs in the episode, otherwise 0.
+    # lane_change_rate: completed lane changes divided by episode steps.
+    # safe_travel_dis: collision-free distance accumulated before the first collision.
+    # safe_step_count: 1-based collision step, or episode length if no collision occurs.
+    collision_rate_history = []
+    lane_change_rate_history = []
+    safe_travel_dis_history = []
+    safe_step_count_history = []
     actor_loss_history = []
     critic_loss_history = []
 
@@ -3062,6 +3071,11 @@ def train_pure_rl(simulator, policy):
         episode_return = 0.0
         episode_steps = 0
         collisions = 0
+        first_collision_step = None
+        safe_travel_dis = 0.0
+        previous_ego_position = np.asarray(
+            simulator.env.unwrapped.vehicle.position, dtype=np.float64
+        ).copy()
         episode_actor_losses = []
         episode_critic_losses = []
         lane_counters = make_lane_request_counters()
@@ -3101,12 +3115,26 @@ def train_pure_rl(simulator, policy):
             ).reshape(-1)
 
             min_ttc, closing_vehicle_count = calculate_min_ttc(simulator)
-            safety_violation = bool(
-                step_info.get("safety_violation", False)
+            collision_occurred = bool(
+                step_info.get("collision", step_info.get("safety_violation", False))
                 if isinstance(step_info, dict) else step_info
             )
-            collisions += int(safety_violation)
+            collisions += int(collision_occurred)
+            current_ego_position = np.asarray(
+                simulator.env.unwrapped.vehicle.position, dtype=np.float64
+            ).copy()
+            if collision_occurred:
+                if first_collision_step is None:
+                    # 1-based index: a collision on the first transition is step 1.
+                    first_collision_step = episode_steps + 1
+                # Do not count the collision transition as safely travelled distance.
+            else:
+                safe_travel_dis += float(
+                    np.linalg.norm(current_ego_position - previous_ego_position)
+                )
+            previous_ego_position = current_ego_position
 
+            safety_violation = collision_occurred
             lane_info = simulator.get_lane_information()
             offroad = not bool(lane_info.get("on_road", True))
             lane_deviation = float(lane_info.get("lane_deviation", 0.0))
@@ -3184,6 +3212,19 @@ def train_pure_rl(simulator, policy):
         collision_history.append(collisions)
         lane_stats = dict(getattr(simulator, "_lane_change_stats", {}))
         lane_change_history.append(lane_stats)
+
+        # A collision-free episode contributes 0 to collision_rate. For an episode
+        # without collision, safe_step_count is the full number of completed steps.
+        collision_rate = float(first_collision_step is not None)
+        lane_change_rate = float(lane_stats.get("completed", 0)) / max(episode_steps, 1)
+        safe_step_count = int(
+            first_collision_step if first_collision_step is not None else episode_steps
+        )
+        collision_rate_history.append(collision_rate)
+        lane_change_rate_history.append(lane_change_rate)
+        safe_travel_dis_history.append(float(safe_travel_dis))
+        safe_step_count_history.append(safe_step_count)
+
         actor_loss_history.append(float(np.mean(episode_actor_losses)) if episode_actor_losses else 0.0)
         critic_loss_history.append(float(np.mean(episode_critic_losses)) if episode_critic_losses else 0.0)
 
@@ -3192,6 +3233,10 @@ def train_pure_rl(simulator, policy):
             f"Episode {episode + 1:03d}/{NUM_ONLINE_EPISODES} | "
             f"steps={episode_steps} | return={episode_return:.3f} | "
             f"mean_step_reward={mean_step_reward:+.4f} | collisions={collisions} | "
+            f"collision_rate={collision_rate:.0f} | "
+            f"lane_change_rate={lane_change_rate:.4f} | "
+            f"safe_travel_dis={safe_travel_dis:.2f}m | "
+            f"safe_step_count={safe_step_count} | "
             f"lane_requested={lane_stats.get('requested', 0)} | "
             f"lane_accepted={lane_stats.get('accepted', 0)} | "
             f"lane_completed={lane_stats.get('completed', 0)} | "
@@ -3204,6 +3249,11 @@ def train_pure_rl(simulator, policy):
             mean_reward_per_step=float(mean_step_reward),
             steps=int(episode_steps),
             collisions=int(collisions),
+            collision_rate=float(collision_rate),
+            lane_change_rate=float(lane_change_rate),
+            safe_travel_dis=float(safe_travel_dis),
+            safe_step_count=int(safe_step_count),
+            first_collision_step=first_collision_step,
             lane_change_stats=lane_stats,
             lane_request_counters=lane_counters,
             mean_actor_loss=actor_loss_history[-1],
@@ -3252,6 +3302,10 @@ def train_pure_rl(simulator, policy):
         f.write(str(collision_history) + "\n")
         f.write(str(mean_step_reward_history) + "\n")
         f.write(str(lane_change_history) + "\n")
+        f.write(str(collision_rate_history) + "\n")
+        f.write(str(lane_change_rate_history) + "\n")
+        f.write(str(safe_travel_dis_history) + "\n")
+        f.write(str(safe_step_count_history) + "\n")
 
     save_policy(policy, MODEL_PATH)
     return {
@@ -3260,6 +3314,10 @@ def train_pure_rl(simulator, policy):
         "mean_step_reward_history": mean_step_reward_history,
         "collision_history": collision_history,
         "lane_change_history": lane_change_history,
+        "collision_rate": collision_rate_history,
+        "lane_change_rate": lane_change_rate_history,
+        "safe_travel_dis": safe_travel_dis_history,
+        "safe_step_count": safe_step_count_history,
     }
 
 
