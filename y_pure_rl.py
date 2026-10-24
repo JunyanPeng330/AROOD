@@ -1433,24 +1433,11 @@ class HighwaySimulator:
         # four lane-selection principles, routine headway regulation should not
         # cancel the acceleration needed to complete that maneuver. Emergency
         # braking remains independent and cannot be suppressed.
-        requested_lane_value = int(np.clip(np.rint(float(sampled_action[1])), 0, 2))
-        requested_lane_delta_for_speed_match = {0: -1, 1: 0, 2: 1}[requested_lane_value]
+        requested_lane_value = int(np.clip(np.rint(float(sampled_action[1])), 0, 1))
         safe_lane_change_request = False
-        if requested_lane_delta_for_speed_match != 0 and not self._lane_change_active:
-            current_lane_for_speed_match = int(vehicle.lane_index[2])
-            target_lane_for_speed_match = relative_lane_delta_to_absolute_lane(
-                current_lane_for_speed_match, requested_lane_delta_for_speed_match
-            )
+        if requested_lane_value == 1 and not self._lane_change_active:
             lane_snapshot_for_speed_match = self._min_ttc_by_lane()
-            safe_lane_change_request = (
-                target_lane_for_speed_match in lane_snapshot_for_speed_match
-                and not self._lane_change_principle_reasons(
-                    target_lane_for_speed_match,
-                    lane_snapshot_for_speed_match,
-                    current_lane=current_lane_for_speed_match,
-                    ego_speed=float(vehicle.speed),
-                )
-            )
+            safe_lane_change_request = bool(self._safe_lane_change_candidates(lane_snapshot_for_speed_match))
 
         speed_match_active = (
             front_vehicle_present
@@ -1552,36 +1539,15 @@ class HighwaySimulator:
         accel_after_ttc_control = float(filtered_action[0])
 
         # ---------------------------------------------------------
-        # 2. Decode the discrete lane action correctly.
+        # 2. Decode high-level KEEP/CHANGE and select a target separately.
         # ---------------------------------------------------------
-        policy_requested_lane_action = int(np.clip(np.rint(sampled_action[1]), 0, 2))
+        policy_requested_lane_action = int(np.clip(np.rint(float(sampled_action[1])), 0, 1))
         requested_lane_action = policy_requested_lane_action
-        # Prioritize speed matching over initiating a new lane change.
-        # Emergency braking is handled separately above.
-        lane_action_names = {
-            0: "LEFT",
-            1: "KEEP",
-            2: "RIGHT",
-        }
-
-        # Prioritize speed matching over initiating a new lane change.
-        # Only report a deferred lane change if LEFT or RIGHT was requested.
-
-
-        requested_lane_delta = lane_action_index_to_delta(policy_requested_lane_action)
-        candidate_lane = relative_lane_delta_to_absolute_lane(
-            current_lane, requested_lane_delta
-        )
-        requested_lane_name = {-1: "LEFT", 0: "KEEP", 1: "RIGHT"}[requested_lane_delta]
-
+        requested_lane_name = ("KEEP", "CHANGE")[policy_requested_lane_action]
+        requested_lane_delta = 0
+        candidate_lane = current_lane
         filtered_lane_action = requested_lane_action
         filtered_lane_name = requested_lane_name
-        if requested_lane_delta != 0 and getattr(self, "_lane_change_stats", None) is not None:
-            self._lane_change_stats["requested"] += 1
-
-        # Each rejection must have an explicit cause. Routine speed matching
-        # is deliberately NOT a lane-change veto; only target-lane safety,
-        # lane availability, an active lane change, or cooldown can reject it.
         lane_change_rejection_reasons = []
         lane_change_blocked = False
         candidate_front_ttc = float("inf")
@@ -1591,153 +1557,60 @@ class HighwaySimulator:
         candidate_front_gap_limit = LANE_CHANGE_MIN_GAP
         candidate_rear_gap_limit = LANE_CHANGE_MIN_GAP
         candidate_lane_available = False
+        selected_candidate = None
 
-        # One authoritative pre-decision snapshot. The selected neighbor IDs/gaps
-        # and the raw target-lane vehicles below are all derived from this same
-        # live simulator state and the same lane_ttc_current calculation.
-        if requested_lane_delta != 0:
-            ego_s_snapshot = float(vehicle.position[0])
-            ego_speed_snapshot = float(vehicle.speed)
-            ego_length_snapshot = float(getattr(vehicle, "LENGTH", getattr(vehicle, "length", 5.0)))
-            target_lane_vehicles = []
-            for other in list(base_env.road.vehicles):
-                if other is vehicle or bool(getattr(other, "crashed", False)):
-                    continue
-                try:
-                    other_lane_snapshot = int(other.lane_index[2])
-                except (AttributeError, TypeError, ValueError, IndexError):
-                    continue
-                if other_lane_snapshot != candidate_lane:
-                    continue
-
-                center_gap_snapshot = float(other.position[0]) - ego_s_snapshot
-                other_length_snapshot = float(getattr(other, "LENGTH", getattr(other, "length", 5.0)))
-                bumper_gap_snapshot = abs(center_gap_snapshot) - 0.5 * (
-                    ego_length_snapshot + other_length_snapshot
-                )
-                other_speed_snapshot = float(other.speed)
-                if center_gap_snapshot > 0.0:
-                    side_snapshot = "front"
-                    closing_speed_snapshot = ego_speed_snapshot - other_speed_snapshot
-                elif center_gap_snapshot < 0.0:
-                    side_snapshot = "rear"
-                    closing_speed_snapshot = other_speed_snapshot - ego_speed_snapshot
-                else:
-                    side_snapshot = "overlap"
-                    closing_speed_snapshot = float("nan")
-
-                if bumper_gap_snapshot <= 0.0:
-                    ttc_snapshot = 0.0
-                elif np.isfinite(closing_speed_snapshot) and closing_speed_snapshot > 0.1:
-                    ttc_snapshot = bumper_gap_snapshot / closing_speed_snapshot
-                else:
-                    ttc_snapshot = float("inf")
-
-                target_lane_vehicles.append({
-                    "id": id(other),
-                    "lane": other_lane_snapshot,
-                    "side": side_snapshot,
-                    "center_gap_m": round(center_gap_snapshot, 3),
-                    "bumper_gap_m": round(bumper_gap_snapshot, 3),
-                    "speed_mps": round(other_speed_snapshot, 3),
-                    "closing_speed_mps": (
-                        round(float(closing_speed_snapshot), 3)
-                        if np.isfinite(closing_speed_snapshot) else None
-                    ),
-                    "ttc_s": (
-                        round(float(ttc_snapshot), 3)
-                        if np.isfinite(ttc_snapshot) else "inf"
-                    ),
-                })
-            target_lane_vehicles.sort(key=lambda item: abs(item["center_gap_m"]))
-            selected_target_values = lane_ttc_current.get(candidate_lane, {})
-            print(
-                "[LANE-CHANGE SAFETY SNAPSHOT]",
-                f"filter_call={ttc_filter_call_id}",
-                f"sim_time={getattr(base_env, 'time', None)}",
-                f"physics_steps={getattr(base_env, 'steps', None)}",
-                f"policy_step={self.step_count}",
-                f"ego_lane={current_lane}",
-                f"target_lane={candidate_lane}",
-                f"requested={requested_lane_name}",
-                f"ego_speed_mps={ego_speed_snapshot:.3f}",
-                f"source_rear_ttc_s={current_values.get('rear_ttc', float('inf')):.3f}",
-                f"source_rear_pressure={float(current_values.get('rear_ttc', float('inf'))) <= ttc_danger_threshold}",
-                f"selected_front_id={selected_target_values.get('front_vehicle_id')}",
-                f"selected_front_gap_m={selected_target_values.get('front_gap', float('inf')):.3f}",
-                f"selected_front_ttc_s={selected_target_values.get('front_ttc', float('inf')):.3f}",
-                f"selected_rear_id={selected_target_values.get('rear_vehicle_id')}",
-                f"selected_rear_gap_m={selected_target_values.get('rear_gap', float('inf')):.3f}",
-                f"selected_rear_ttc_s={selected_target_values.get('rear_ttc', float('inf')):.3f}",
-                f"target_lane_vehicles={target_lane_vehicles}",
-            )
-
-        # Lane-change eligibility is governed by front/rear TTC thresholds and
-        # independent minimum-gap safeguards; no separate front-speed benefit gate
-        # is used.
-
-        if requested_lane_delta != 0:
-            # Check the actual road graph, not only a hard-coded lane count.
-            try:
-                start_node, end_node, _ = vehicle.lane_index
-                available_lanes = base_env.road.network.graph[start_node][end_node]
-                available_lane_ids = set(range(len(available_lanes)))
-                candidate_lane_available = candidate_lane in available_lane_ids
-            except (AttributeError, KeyError, TypeError, IndexError):
-                candidate_lane_available = 0 <= candidate_lane < lanes_count
-
-            if not candidate_lane_available:
-                lane_change_rejection_reasons.append("target_lane_unavailable")
-
+        if policy_requested_lane_action == 1:
+            if getattr(self, "_lane_change_stats", None) is not None:
+                self._lane_change_stats["requested"] += 1
             if self._lane_change_active:
                 lane_change_rejection_reasons.append("lane_change_already_in_progress")
-
             if self._lane_change_cooldown > 0:
                 lane_change_rejection_reasons.append("lane_change_cooldown")
-
-            candidate_values = lane_ttc_current.get(candidate_lane)
-            if candidate_lane_available and candidate_values is not None:
-                candidate_front_ttc = float(candidate_values["front_ttc"])
-                candidate_rear_ttc = float(candidate_values["rear_ttc"])
-                candidate_front_gap = float(candidate_values.get("front_gap", float("inf")))
-                candidate_rear_gap = float(candidate_values.get("rear_gap", float("inf")))
-
-                # Enforce exactly the same TTC-threshold and minimum-gap rules
-                # at execution time as in the policy action mask.
-                lane_change_rejection_reasons.extend(
-                    self._lane_change_principle_reasons(
-                        candidate_lane,
-                        lane_ttc_current,
-                        current_lane=current_lane,
+            if not lane_change_rejection_reasons:
+                selected_candidate = self._select_best_safe_lane_candidate(lane_ttc_current)
+                if selected_candidate is None:
+                    lane_change_rejection_reasons.append("no_safe_adjacent_lane")
+                else:
+                    candidate_lane = int(selected_candidate["target_lane"])
+                    candidate_lane_available = True
+                    requested_lane_delta = int(candidate_lane - current_lane)
+                    requested_lane_name = "CHANGE_LEFT" if candidate_lane > current_lane else "CHANGE_RIGHT"
+                    candidate_values = lane_ttc_current[candidate_lane]
+                    candidate_front_ttc = float(candidate_values.get("front_ttc", float("inf")))
+                    candidate_rear_ttc = float(candidate_values.get("rear_ttc", float("inf")))
+                    candidate_front_gap = float(candidate_values.get("front_gap", float("inf")))
+                    candidate_rear_gap = float(candidate_values.get("rear_gap", float("inf")))
+                    lane_change_rejection_reasons.extend(self._lane_change_principle_reasons(
+                        candidate_lane, lane_ttc_current, current_lane=current_lane,
                         ego_speed=float(vehicle.speed),
-                    )
-                )
-
-                # Source-lane rear pressure is logged separately, not treated as
-                # an automatic veto. A fast-approaching source-lane vehicle can
-                # make leaving the lane desirable; target-lane/transition safety
-                # remains the deciding constraint.
-                source_rear_ttc = float(current_values.get("rear_ttc", float("inf")))
-                source_rear_pressure = source_rear_ttc <= ttc_danger_threshold
-            elif candidate_lane_available:
-                lane_change_rejection_reasons.append("target_lane_traffic_data_unavailable")
-
-            # Emergency braking is a longitudinal override, not an automatic
-            # lane-change veto. Target-lane and maneuver safety checks above
-            # still reject unsafe lateral moves. This allows an escape lane to
-            # be selected while braking for a critical current-lane leader.
+                    ))
+                    print("[LANE-CHANGE SAFETY SNAPSHOT]",
+                          f"filter_call={ttc_filter_call_id}",
+                          f"ego_lane={current_lane}",
+                          f"target_lane={candidate_lane}",
+                          f"direction={requested_lane_name}",
+                          f"front_gap_m={candidate_front_gap:.3f}",
+                          f"rear_gap_m={candidate_rear_gap:.3f}",
+                          f"front_ttc_s={candidate_front_ttc:.3f}",
+                          f"rear_ttc_s={candidate_rear_ttc:.3f}",
+                          f"utility={selected_candidate['utility']:.3f}")
 
             lane_change_blocked = bool(lane_change_rejection_reasons)
             if lane_change_blocked:
-                filtered_action[1] = 1.0
-                filtered_lane_action = 1
+                filtered_action[1] = 0.0
+                filtered_lane_action = 0
                 filtered_lane_name = "KEEP"
+                candidate_lane = current_lane
+                requested_lane_delta = 0
+            else:
+                filtered_lane_action = 1
+                filtered_lane_name = "CHANGE"
 
         lane_change_rejection_reason = (
             ",".join(lane_change_rejection_reasons)
             if lane_change_rejection_reasons else "none"
         )
-        if requested_lane_delta != 0 and getattr(self, "_lane_change_stats", None) is not None:
+        if policy_requested_lane_action == 1 and getattr(self, "_lane_change_stats", None) is not None:
             if lane_change_blocked:
                 self._lane_change_stats["rejected"] += 1
             else:
@@ -1810,7 +1683,7 @@ class HighwaySimulator:
                 filtered_action[0] = float(np.clip(max_allowed_normalized_accel, 0.0, 1.0))
                 speed_limit_override = True
 
-        filtered_action[1] = float(np.clip(np.rint(filtered_action[1]), 0, 2))
+        filtered_action[1] = float(np.clip(np.rint(filtered_action[1]), 0, 1))
 
 
 
@@ -1829,7 +1702,9 @@ class HighwaySimulator:
             "requested_lane_delta": requested_lane_delta,
             "filtered_lane_action": filtered_lane_action,  # categorical index
             "filtered_lane_name": filtered_lane_name,
-            "filtered_lane_delta": lane_action_index_to_delta(filtered_lane_action),
+            "filtered_lane_delta": int(requested_lane_delta if filtered_lane_action == 1 else 0),
+            "lane_action_semantics": "0=KEEP,1=CHANGE",
+            "target_lane_selection": selected_candidate,
             "current_lane_id": current_lane,
             "requested_target_lane_id": candidate_lane,
 
@@ -1845,7 +1720,7 @@ class HighwaySimulator:
             "candidate_rear_gap_limit": float(candidate_rear_gap_limit),
             "candidate_lane_available": bool(candidate_lane_available),
             "lane_change_principles_passed": bool(
-                requested_lane_delta == 0 or not lane_change_rejection_reasons
+                policy_requested_lane_action == 0 or not lane_change_rejection_reasons
             ),
             "lane_change_rejection_reasons": list(lane_change_rejection_reasons),
             "lane_change_rejection_reason": lane_change_rejection_reason,
@@ -1902,7 +1777,7 @@ class HighwaySimulator:
             f"emergency={emergency_braking}",
         )
 
-        if requested_lane_delta == 0:
+        if policy_requested_lane_action == 0:
             # KEEP does not evaluate a candidate lane; report measured current
             # lane values instead of misleading default inf candidate values.
             current_lane_values = lane_ttc_current.get(current_lane, {})
@@ -1955,9 +1830,9 @@ class HighwaySimulator:
 
 
 
-        # Structured request-level trace: one ID per sampled LEFT/RIGHT decision.
+        # Structured request-level trace: one ID per sampled high-level CHANGE decision.
         # This intentionally does not equate a request with a unique physical maneuver.
-        if requested_lane_delta != 0:
+        if policy_requested_lane_action == 1:
             request_trace_id = int(getattr(self, "_lane_request_trace_sequence", 0)) + 1
             self._lane_request_trace_sequence = request_trace_id
             rejection_reasons = list(lane_change_rejection_reasons)
