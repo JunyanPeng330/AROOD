@@ -2170,9 +2170,11 @@ class HighwaySimulator:
         incoming_action = action.copy()
 
         if apply_safety_filter:
+            # Backward-compatible argument name only: this version's selector
+            # does not override actions. It only chooses a target lane for CHANGE.
             action, safety_info = self.filter_ttc_action(incoming_action.copy())
             action = np.asarray(action, dtype=np.float32).reshape(-1).copy()
-            filter_applied_here = True
+            filter_applied_here = False
         else:
             action = incoming_action.copy()
             safety_info = dict(safety_info or {})
@@ -2302,7 +2304,13 @@ class HighwaySimulator:
             "executed_action": physical_action.copy(),
             "executed_acceleration": float(acceleration),
             "executed_steering": 0.0,
-            "ttc_safety_filter": safety_info,
+            "ttc_safety_filter": safety_info,  # legacy field name; now non-intervening assessment
+            "episode_evaluator_assessment": {
+                "target_selector_mode": safety_info.get("target_selector_mode"),
+                "lane_change_candidate_front_ttc": safety_info.get("lane_change_candidate_front_ttc"),
+                "lane_change_candidate_rear_ttc": safety_info.get("lane_change_candidate_rear_ttc"),
+                "lane_change_candidate_utility": safety_info.get("lane_change_candidate_utility"),
+            },
             "instant_lane_change_mode": True,
             "observed_acceleration": (speed_after - speed_before) / policy_dt,
         })
@@ -2413,7 +2421,7 @@ def create_initial_policy(
 def make_lane_request_counters():
     """Counters for each lane-change direction at distinct decision stages."""
     return {
-        direction: {"requested": 0, "mask_allowed": 0, "safety_accepted": 0, "completed": 0}
+        direction: {"requested": 0, "mask_allowed": 0, "target_selected": 0, "completed": 0}
         for direction in ("LEFT", "RIGHT")
     }
 
@@ -2757,7 +2765,7 @@ def record_lane_request_decision(counters, sampled_action, valid_action_mask, sa
     if len(mask) > 1 and bool(mask[1]):
         counters[direction]["mask_allowed"] += 1
     if not bool(safety_info.get("lane_change_blocked", False)):
-        counters[direction]["safety_accepted"] += 1
+        counters[direction]["target_selected"] += 1
 
 def sync_lane_completion_counters(counters, simulator, seen_completed):
     """Record newly completed lane changes, attributed by their actual direction."""
@@ -2776,7 +2784,7 @@ def print_lane_request_counters(tag, counters):
             f"[{tag} {direction} COUNTERS]",
             f"requested={values['requested']}",
             f"mask_allowed={values['mask_allowed']}",
-            f"safety_accepted={values['safety_accepted']}",
+            f"target_selected={values['target_selected']}",
             f"completed={values['completed']}",
         )
 
@@ -3224,7 +3232,7 @@ def collect_reference_rollouts(simulator, policy, reward_function):
         print_lane_request_counters("REFERENCE EPISODE", lane_counters)
         print_action_mask_counters("REFERENCE EPISODE", action_mask_counters)
         for direction in ("LEFT", "RIGHT"):
-            for counter_name in ("requested", "mask_allowed", "safety_accepted", "completed"):
+            for counter_name in ("requested", "mask_allowed", "target_selected", "completed"):
                 reference_total_lane_counters[direction][counter_name] += lane_counters[direction][counter_name]
         for counter_name in reference_total_mask_counters:
             reference_total_mask_counters[counter_name] += action_mask_counters[counter_name]
