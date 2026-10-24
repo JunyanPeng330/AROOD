@@ -2653,242 +2653,69 @@ def calculate_min_ttc(simulator):
 
 
 def construct_reward(reward_specification, embedding_model=None):
+    """Minimal reward: progress minus collision/safety penalty minus accepted lane-change cost.
+    TTC is enforced by the independent shield, not by reward shaping.
     """
-    Construct a progress-led adaptive reward with lane-keeping and
-    off-road penalties. Semantic/embedding reward is disabled.
-
-    Total reward:
-        r = progress_weight * clip(ego_speed / target_speed, 0, 1)
-            - headway_penalty
-            - safety / intervention / control / lane / off-road penalties
-
-    TTC is excluded from reward construction and remains in the independent
-    execution-time safety shield. No language model or sentence-embedding
-    model is used.
-    """
-
-    # Configurable road-keeping parameters.
-    lane_keeping_weight = float(reward_specification.get("lane_keeping_weight"))
-    max_lateral_deviation = max(float(reward_specification.get("max_lateral_deviation")), 1e-6,)
-    offroad_penalty_magnitude = float(reward_specification.get("offroad_penalty"))
-
-
-
     def reward_function(
-        behavior_description,
-        safety_violation,
-        action,
-        lane_deviation,
-        offroad,
-        min_ttc,
-        lane_change_allowed=True,
-        ego_speed=0.0,
-        safety_info=None,
-        policy_sampled_action=None,
-        reward_diagnostics=None,
+        behavior_description, safety_violation, action, lane_deviation, offroad,
+        min_ttc, lane_change_allowed=True, ego_speed=0.0, safety_info=None,
+        policy_sampled_action=None, reward_diagnostics=None,
     ):
-        # Semantic/embedding reward is disabled; no encoder call is made.
-        # Keep a zero-valued diagnostic for compatibility with existing logs.
-        semantic_reward = 0.0
-
-        # Penalize an observed collision/safety violation separately from shield use.
-        # Routine speed matching is a controller action, not a safety violation.
-        safety_penalty = (
-            float(reward_specification.get("safety_weight", 1.0))
-            if safety_violation
-            else 0.0
-        )
         safety_info = dict(safety_info or {})
-        shield_penalty = float(
-            safety_info.get(
-                "reward_safety_penalty",
-                SAFETY_OVERRIDE_REWARD_PENALTY
-                if safety_info.get("emergency_braking", False)
-                else LANE_REJECTION_REWARD_PENALTY
-                if safety_info.get("lane_change_blocked", False)
-                else 0.0,
-            )
-        )
-
-        # Existing action/control penalty.
-        action = np.asarray(action, dtype=np.float32).reshape(-1)
-
-        acceleration = float(np.clip(action[0], -1.0, 1.0))
-        lane_action_id = int(np.clip(np.rint(action[1]), 0, 2))
-        # Keep acceleration regularization very small: a large action penalty
-        # would teach the policy to coast rather than make safe forward progress.
-        control_penalty = float(reward_specification.get("action_weight", 0.01)) * abs(acceleration)
-        lane_change_cost = max(0.0, float(reward_specification.get("lane_change_cost", INITIAL_LANE_CHANGE_COST)))
-        control_penalty += lane_change_cost if lane_action_id != 1 else 0.0
-
-        # Explicitly expose routine shield intervention to the reward. Without
-        # this term, a raw +1.0 request filtered to -0.02 receives reward based
-        # almost entirely on -0.02, hiding the policy's repeated over-request.
-        sampled_for_reward = np.asarray(
+        sampled_action = np.asarray(
             action if policy_sampled_action is None else policy_sampled_action,
-            dtype=np.float32).reshape(-1)
-        sampled_accel_for_reward = (float(np.clip(sampled_for_reward[0], -1.0, 1.0))
-                                    if sampled_for_reward.size else acceleration)
-        accel_intervention_magnitude = abs(sampled_accel_for_reward - acceleration)
-        intervention_penalty = SHIELD_ACCEL_INTERVENTION_WEIGHT * min(accel_intervention_magnitude, 2.0)
-        print(
-            "[REWARD ACTION UNITS]",
-            f"sampled_accel_normalized={sampled_accel_for_reward:+.4f}",
-            f"executed_accel_normalized={acceleration:+.4f}",
-            f"sampled_accel_physical_mps2={sampled_accel_for_reward * MAX_PHYSICAL_ACCELERATION:+.3f}",
-            f"executed_accel_physical_mps2={acceleration * MAX_PHYSICAL_ACCELERATION:+.3f}",
-            f"intervention_delta_normalized={accel_intervention_magnitude:.4f}",
-            f"intervention_delta_physical_mps2={accel_intervention_magnitude * MAX_PHYSICAL_ACCELERATION:.3f}",
-            "control_penalty_input_units=normalized_acceleration",
-        )
+            dtype=np.float32,
+        ).reshape(-1)
 
-        # No instantaneous TTC-triggered lane-change bonus. Lane changes
-        # are learned through stable task objectives while the independent
-        # safety shield continues to enforce TTC constraints.
-        lane_change_bonus = 0.0
-
-
-
-        # New lane-keeping penalty.
-        lane_deviation = abs(float(lane_deviation))
-        normalized_deviation = np.clip(lane_deviation / max_lateral_deviation, 0.0, 1.0,)
-        lane_penalty = lane_keeping_weight * normalized_deviation
-
-
-        # New explicit off-road penalty.
-        road_penalty = offroad_penalty_magnitude if offroad else 0.0
-
-
-        # TTC is not converted into a reward penalty. min_ttc remains in the
-        # signature for compatibility and diagnostics; the safety shield still
-        # uses TTC independently.
-        min_ttc = float(min_ttc)
-        ttc_penalty = 0.0
-
-        # Reward progress explicitly, rather than relying on semantic text similarity.
-        # Clip at target_speed so the policy is not encouraged to exceed it.
+        # 1. Forward progress, capped at the target speed.
+        target_speed = max(1e-6, float(reward_specification.get("target_speed", 25.0)))
+        progress_weight = max(0.0, float(reward_specification.get("progress_weight", INITIAL_PROGRESS_WEIGHT)))
         ego_speed = max(0.0, float(ego_speed))
-        target_speed = max(
-            1e-6,
-            float(reward_specification.get("target_speed", 25.0)),
-        )
-        progress_weight = max(
-            0.0,
-            float(reward_specification.get("progress_weight", 0.20)),
-        )
         progress_ratio = float(np.clip(ego_speed / target_speed, 0.0, 1.0))
         progress_reward = progress_weight * progress_ratio
 
-        # Headway shaping: penalize a short gap only while the ego is closing
-        # on the lead vehicle (or the gap is approximately stable). If the lead
-        # vehicle is pulling away, do not punish the ego merely for a currently
-        # short gap: the gap is already recovering naturally.
-        front_gap_for_reward = float(safety_info.get("front_gap", float("inf")))
-        front_speed_for_reward = safety_info.get("front_speed", None)
-        headway_time_headway = max(
-            0.1, float(reward_specification.get("headway_time_headway", DESIRED_TIME_HEADWAY))
-        )
-        headway_min_gap = max(
-            0.0, float(reward_specification.get("headway_min_gap", MIN_FOLLOWING_GAP))
-        )
-        # The TTC filter snapshot is pre-action, so use its matching ego
-        # speed for gap/closing calculations. Progress still uses post-step speed.
-        ego_speed_for_headway = max(
-            0.0, float(safety_info.get("current_speed", ego_speed))
-        )
-        desired_headway_gap = headway_min_gap + headway_time_headway * ego_speed_for_headway
-        front_closing_speed_for_reward = (
-            ego_speed_for_headway - float(front_speed_for_reward)
-            if front_speed_for_reward is not None else 0.0
-        )
-        headway_weight = max(0.0, float(reward_specification.get("headway_weight", INITIAL_HEADWAY_WEIGHT)))
-        headway_shortfall = (
-            float(np.clip(
-                (desired_headway_gap - max(0.0, front_gap_for_reward))
-                / max(desired_headway_gap, 1e-6),
-                0.0, 1.0
-            ))
-            if front_speed_for_reward is not None and np.isfinite(front_gap_for_reward)
-            else 0.0
-        )
-        lead_pulling_away_for_reward = front_speed_for_reward is not None and front_closing_speed_for_reward < -0.1
-        headway_penalty = (
-            headway_weight * headway_shortfall
-            if not lead_pulling_away_for_reward else 0.0
+        # 2. Collision/safety penalty only. Routine shield interventions do not
+        # receive a reward penalty.
+        safety_penalty = (
+            max(0.0, float(reward_specification.get("safety_weight", INITIAL_COLLISION_PENALTY)))
+            if bool(safety_violation) else 0.0
         )
 
-        # Rear TTC remains a safety-shield signal, not a reward penalty.
-        rear_ttc_for_reward = float(safety_info.get("current_rear_ttc", float("inf")))
-        rear_ttc_penalty = 0.0
-
-        print(
-            "[LONG-TERM OBJECTIVE]",
-            f"desired_gap={desired_headway_gap:.3f}",
-            f"front_gap={front_gap_for_reward:.3f}",
-            f"front_closing_speed={front_closing_speed_for_reward:.3f}",
-            f"lead_pulling_away={lead_pulling_away_for_reward}",
-            f"headway_shortfall={headway_shortfall:.3f}",
-            f"headway_penalty={headway_penalty:.3f}",
-            f"rear_ttc_shield_only={rear_ttc_for_reward:.3f}",
+        # 3. Charge a small cost only when a lane change was accepted/executed.
+        lane_change_cost_weight = max(
+            0.0, float(reward_specification.get("lane_change_cost", INITIAL_LANE_CHANGE_COST))
+        )
+        lane_change_accepted = bool(
+            safety_info.get("lane_change_accepted",
+                            safety_info.get("lane_change_completed_instantly", False))
+        )
+        sampled_lane_action = (
+            int(np.clip(np.rint(sampled_action[1]), 0, 2))
+            if sampled_action.size > 1 else 1
+        )
+        lane_change_cost = (
+            lane_change_cost_weight
+            if lane_change_accepted and sampled_lane_action != 1 else 0.0
         )
 
-        print(
-            f"[PROGRESS REWARD] speed={ego_speed:.3f} m/s, "
-            f"target={target_speed:.3f} m/s, "
-            f"ratio={progress_ratio:.3f}, "
-            f"weight={progress_weight:.3f}, "
-            f"reward={progress_reward:.4f}"
-        )
-        print("[SEMANTIC REWARD] disabled; semantic contribution=0.0.")
-        print("[TTC REWARD] disabled; TTC is handled by the independent safety shield.")
-        reward = (
-                progress_reward
-                - safety_penalty
-                - shield_penalty
-                - intervention_penalty
-                - control_penalty
-                - lane_penalty
-                - road_penalty
-                - headway_penalty
-        )
-
+        reward = float(progress_reward - safety_penalty - lane_change_cost)
         if reward_diagnostics is not None:
             reward_diagnostics.update({
-                "semantic_reward": float(semantic_reward),
                 "progress_reward": float(progress_reward),
                 "safety_penalty": float(safety_penalty),
-                "shield_penalty": float(shield_penalty),
-                "intervention_penalty": float(intervention_penalty),
-                "control_penalty": float(control_penalty),
-                "lane_penalty": float(lane_penalty),
-                "offroad_penalty": float(road_penalty),
-                "ttc_penalty": 0.0,
-                "headway_penalty": float(headway_penalty),
-                "rear_ttc_penalty": 0.0,
-                "lane_change_bonus": 0.0,
-                "total_reward": float(reward),
+                "lane_change_cost": float(lane_change_cost),
+                "lane_change_accepted": lane_change_accepted,
+                "total_reward": reward,
             })
-
         print(
-            f"[REWARD DEBUG] "
-            f"semantic=DISABLED({semantic_reward:.3f}), "
-            f"progress={progress_reward:.3f}, "
-            f"speed={ego_speed:.2f}m/s, "
-            f"safety={safety_penalty:.3f}, "
-            f"shield={shield_penalty:.3f}, "
-            f"action_intervention_penalty={intervention_penalty:.3f}, "
-            f"accel_intervention={accel_intervention_magnitude:.3f}, "
-            f"intervention={safety_info.get('intervention_reason', 'none')}, "
-            f"lane={lane_penalty:.3f}, "
-            f"offroad={road_penalty:.3f}, "
-            f"ttc_penalty=0.000 (shield-only), "
-            f"headway_penalty={headway_penalty:.3f}, "
-            f"total={reward:.3f}"
+            f"[REWARD DEBUG] progress={progress_reward:.3f}, "
+            f"speed={ego_speed:.2f}m/s, target_speed={target_speed:.2f}m/s, "
+            f"safety_penalty={safety_penalty:.3f}, "
+            f"lane_change_cost={lane_change_cost:.3f}, "
+            f"lane_change_accepted={lane_change_accepted}, total={reward:.3f}"
         )
-
-
-        return float(reward)
-
+        print("[TTC REWARD] disabled; TTC is handled by the independent safety shield.")
+        return reward
     return reward_function
 
 
@@ -3057,27 +2884,16 @@ def save_policy(policy, path):
 # ============================================================
 def build_fixed_reward_function():
     reward_specification = {
-        "name": "pure_rl_fixed_reward",
+        "name": "pure_rl_three_component_reward",
         "target_behavior": (
-            "Make steady forward progress, maintain safe following distance, "
-            "and consider a lane change when the current lane limits progress "
-            "and the target lane offers a useful improvement. Never sacrifice "
-            "safety for speed."
+            "Maximize steady forward progress, avoid collisions, and pay a small "
+            "cost only for an accepted lane change. TTC safety is enforced by "
+            "the independent safety shield."
         ),
-        "tracking_weight": INITIAL_TRACKING_WEIGHT,
         "safety_weight": INITIAL_COLLISION_PENALTY,
-        "action_weight": 0.01,
         "progress_weight": INITIAL_PROGRESS_WEIGHT,
         "target_speed": 25.0,
-        "headway_weight": INITIAL_HEADWAY_WEIGHT,
-        "headway_time_headway": DESIRED_TIME_HEADWAY,
-        "headway_min_gap": MIN_FOLLOWING_GAP,
         "lane_change_cost": INITIAL_LANE_CHANGE_COST,
-        "lane_keeping_weight": lane_keeping_weight,
-        "max_lateral_deviation": 2.0,
-        "offroad_penalty": INITIAL_OFFROAD_PENALTY,
-        "ttc_critical_threshold": ttc_critical_threshold,
-        "ttc_safe_threshold": ttc_caution_threshold,
     }
     return construct_reward(reward_specification)
 
@@ -3148,6 +2964,18 @@ def collect_reference_rollouts(simulator, policy, reward_function):
             if offroad:
                 done = True
 
+            reward_safety_info = dict(safety_info or {})
+
+
+            reward_safety_info["lane_change_accepted"] = bool(
+
+
+                step_info.get("lane_change_completed_instantly", False)
+
+
+            ) if isinstance(step_info, dict) else False
+
+
             reward = compute_reward(
                 reward_function=reward_function,
                 behavior_description="",
@@ -3162,7 +2990,7 @@ def collect_reference_rollouts(simulator, policy, reward_function):
                 min_ttc=min_ttc,
                 lane_change_allowed=True,
                 ego_speed=float(simulator.env.unwrapped.vehicle.speed),
-                safety_info=safety_info,
+                safety_info=reward_safety_info,
                 policy_sampled_action=sampled_action,
                 reward_diagnostics={},
             )
@@ -3372,6 +3200,14 @@ def train_pure_rl(simulator, policy):
                 done = True
 
             reward_components = {}
+            reward_safety_info = dict(safety_info or {})
+
+            reward_safety_info["lane_change_accepted"] = bool(
+
+                step_info.get("lane_change_completed_instantly", False)
+
+            ) if isinstance(step_info, dict) else False
+
             reward = compute_reward(
                 reward_function=reward_function,
                 behavior_description="",
@@ -3382,7 +3218,7 @@ def train_pure_rl(simulator, policy):
                 min_ttc=min_ttc,
                 lane_change_allowed=True,
                 ego_speed=float(simulator.env.unwrapped.vehicle.speed),
-                safety_info=safety_info,
+                safety_info=reward_safety_info,
                 policy_sampled_action=sampled_action,
                 reward_diagnostics=reward_components,
             )
