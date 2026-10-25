@@ -2095,6 +2095,65 @@ class HighwaySimulator:
 
 
 
+    def _sanitize_traffic_slot_speeds(self, where):
+        """Prevent managed traffic-slot vehicles from retaining negative/non-finite speed.
+
+        highway-env updates surrounding vehicles during env.step(). A traffic
+        vehicle that acquires a negative scalar speed must be clamped immediately
+        after that update, before slot maintenance or safety-mask evaluation.
+        """
+        base_env = self.env.unwrapped
+        ego = base_env.vehicle
+        for traffic_vehicle in list(base_env.road.vehicles):
+            if traffic_vehicle is ego:
+                continue
+            if getattr(traffic_vehicle, "_arood_traffic_side", None) not in ("front", "rear"):
+                continue
+            try:
+                raw_speed = float(traffic_vehicle.speed)
+            except (AttributeError, TypeError, ValueError):
+                raw_speed = float("nan")
+            if np.isfinite(raw_speed) and raw_speed >= 0.0:
+                continue
+
+            safe_speed = 0.0
+            try:
+                traffic_vehicle.speed = safe_speed
+            except (AttributeError, TypeError, ValueError) as exc:
+                raise RuntimeError(
+                    f"Cannot clamp invalid traffic-slot speed at {where}: "
+                    f"vehicle_id={id(traffic_vehicle)}, speed={raw_speed}"
+                ) from exc
+
+            # Keep the kinematic velocity consistent with the clamped scalar
+            # speed. Zeroing velocity avoids one more backward displacement
+            # from a stale negative velocity vector on the next update.
+            if hasattr(traffic_vehicle, "velocity"):
+                try:
+                    velocity = np.asarray(traffic_vehicle.velocity, dtype=float)
+                    traffic_vehicle.velocity = np.zeros_like(velocity)
+                except (AttributeError, TypeError, ValueError):
+                    pass
+
+            print(
+                "[TRAFFIC SLOT SPEED CLAMP]",
+                f"where={where}",
+                f"lane={getattr(traffic_vehicle, 'lane_index', None)}",
+                f"side={getattr(traffic_vehicle, '_arood_traffic_side', None)}",
+                f"vehicle_id={id(traffic_vehicle)}",
+                f"raw_speed_mps={raw_speed}",
+                f"clamped_speed_mps={safe_speed}",
+            )
+            write_diagnostic_event(
+                "traffic_slot_speed_clamped", self,
+                where=where,
+                vehicle_id=id(traffic_vehicle),
+                lane_index=str(getattr(traffic_vehicle, "lane_index", None)),
+                side=getattr(traffic_vehicle, "_arood_traffic_side", None),
+                raw_speed_mps=raw_speed,
+                clamped_speed_mps=safe_speed,
+            )
+
     def step(self, action, apply_safety_filter=False, sampled_action=None, safety_info=None):
         """Execute the proposed hybrid action with instantaneous lane changes.
 
@@ -2218,10 +2277,14 @@ class HighwaySimulator:
         policy_dt = 1.0 / float(base_env.config["policy_frequency"])
         physical_action = np.asarray([acceleration, 0.0], dtype=np.float32)
 
-        # This is the single and only native simulator advance for this policy
-        # transition. If CHANGE was accepted, the ego is already in the target
-        # lane when Highway-env updates ego and surrounding-vehicle dynamics.
+        # Sanitize managed traffic before the native update, then again
+        # immediately after it. The post-update pass is essential because
+        # highway-env may integrate a slot vehicle into a negative speed during
+        # this very update; slot maintenance and safety evaluation must never see
+        # that invalid value.
+        self._sanitize_traffic_slot_speeds("pre_env_step")
         obs, env_reward, terminated, truncated, env_info = self.env.step(physical_action)
+        self._sanitize_traffic_slot_speeds("post_env_step")
         ego_after = base_env.vehicle
         speed_after = float(ego_after.speed)
         lane_after_env_update = int(ego_after.lane_index[2])
