@@ -942,22 +942,15 @@ class HighwaySimulator:
             for lane_id in range(lanes_count)
         }
 
-        # Find the nearest vehicle on each side of ego in each lane. The
-        # maintenance routine normally guarantees one vehicle per slot; nearest
-        # selection also makes this function robust while diagnosing violations.
-        nearest = {
-            (lane_id, side): None
-            for lane_id in range(lanes_count)
-            for side in ("front", "rear")
-        }
-
-        for other in list(road.vehicles):
-            if other is ego or bool(getattr(other, "crashed", False)):
+        # Read the six explicitly assigned slot objects directly. No nearest-
+        # neighbor search or implicit reassignment is performed here.
+        for (lane_id, side), other in list(self.traffic_slots.items()):
+            if other is ego or other not in road.vehicles or bool(getattr(other, "crashed", False)):
+                continue
+            if lane_id not in lane_ttc:
                 continue
             try:
                 other_lane = int(other.lane_index[2])
-                if other_lane not in lane_ttc:
-                    continue
                 other_s = self._road_longitudinal_position(other)
                 other_speed = float(other.speed)
                 other_length = float(getattr(
@@ -966,50 +959,49 @@ class HighwaySimulator:
             except (AttributeError, TypeError, ValueError, IndexError, KeyError):
                 continue
 
+            if other_lane != lane_id:
+                print("[TRAFFIC SLOT LANE MISMATCH]",
+                      f"slot_lane={lane_id}", f"actual_lane={other_lane}",
+                      f"side={side}", f"vehicle_id={id(other)}")
+                continue
+
             center_gap = other_s - ego_s
             half_length_sum = 0.5 * (ego_length + other_length)
-            if center_gap > 0.0:
-                side = "front"
-                bumper_gap = center_gap - half_length_sum
-                distance = center_gap
-            elif center_gap < 0.0:
-                side = "rear"
-                bumper_gap = -center_gap - half_length_sum
-                distance = -center_gap
-            else:
-                # Exact longitudinal alignment is unsafe in both directions.
-                lane_values = lane_ttc[other_lane]
-                lane_values["front_gap"] = -half_length_sum
-                lane_values["rear_gap"] = -half_length_sum
-                lane_values["front_speed"] = other_speed
-                lane_values["rear_speed"] = other_speed
-                lane_values["front_center_gap"] = 0.0
-                lane_values["rear_center_gap"] = 0.0
-                lane_values["front_vehicle_id"] = id(other)
-                lane_values["rear_vehicle_id"] = id(other)
-                lane_values["front_ttc"] = 0.0
-                lane_values["rear_ttc"] = 0.0
-                lane_values["nearest_front_ttc"] = 0.0
-                continue
-
-            slot_key = (other_lane, side)
-            current = nearest[slot_key]
-            if current is None or distance < current["distance"]:
-                nearest[slot_key] = {
-                    "distance": distance,
-                    "center_gap": center_gap,
-                    "bumper_gap": bumper_gap,
-                    "speed": other_speed,
-                    "vehicle_id": id(other),
-                }
-
-        for (lane_id, side), neighbor in nearest.items():
-            if neighbor is None:
-                continue
-
             values = lane_ttc[lane_id]
-            bumper_gap = float(neighbor["bumper_gap"])
-            neighbor_speed = float(neighbor["speed"])
+            if side == "front":
+                # A front slot should be ahead. If it is not, expose the
+                # inconsistent geometry as an unsafe zero-TTC observation.
+                bumper_gap = center_gap - half_length_sum
+                if center_gap <= 0.0:
+                    front_ttc = 0.0
+                elif bumper_gap <= 0.0:
+                    front_ttc = 0.0
+                elif ego_speed > other_speed:
+                    front_ttc = bumper_gap / (ego_speed - other_speed)
+                else:
+                    front_ttc = float("inf")
+                values["front_gap"] = bumper_gap
+                values["front_speed"] = other_speed
+                values["front_ttc"] = front_ttc
+                values["nearest_front_ttc"] = front_ttc
+                values["front_center_gap"] = center_gap
+                values["front_vehicle_id"] = id(other)
+            else:
+                # A rear slot should be behind. If it is not, fail closed.
+                bumper_gap = -center_gap - half_length_sum
+                if center_gap >= 0.0:
+                    rear_ttc = 0.0
+                elif bumper_gap <= 0.0:
+                    rear_ttc = 0.0
+                elif other_speed > ego_speed:
+                    rear_ttc = bumper_gap / (other_speed - ego_speed)
+                else:
+                    rear_ttc = float("inf")
+                values["rear_gap"] = bumper_gap
+                values["rear_speed"] = other_speed
+                values["rear_ttc"] = rear_ttc
+                values["rear_center_gap"] = -center_gap
+                values["rear_vehicle_id"] = id(other)
 
             if side == "front":
                 # Front TTC: bumper gap / (ego speed - front speed), only
