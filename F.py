@@ -27,9 +27,10 @@ INSTANT_LANE_CHANGE_MODE = True
 steering_scale = 0.5
 offroad_penalty = 0.5
 
-# The policy acts at 5 Hz; the simulator advances physics at 15 Hz (3 substeps/action).
+# Instantaneous lane-transition abstraction: one policy decision advances exactly
+# one simulator update. There are no intermediate lateral-motion substeps.
 policy_frequency = 5
-simulation_frequency = 5
+simulation_frequency = policy_frequency
 
 lane_keeping_weight = 0.20
 
@@ -385,8 +386,10 @@ class HighwaySimulator:
                 "duration": max_steps,
                 "offroad_terminal": False,
 
-                # Add or change these two settings:
-                "simulation_frequency": simulation_frequency,
+                # Instantaneous lane transitions are applied by the adapter before
+                # this single environment update. Keep both frequencies equal so
+                # one policy decision maps to exactly one simulator update.
+                "simulation_frequency": policy_frequency,
                 "policy_frequency": policy_frequency,
 
             },
@@ -395,6 +398,11 @@ class HighwaySimulator:
 
 
         self.state = None
+        if simulation_frequency != policy_frequency:
+            raise ValueError(
+                "Instantaneous lane-change mode requires simulation_frequency "
+                "to equal policy_frequency (one simulator update per policy action)."
+            )
 
 
     def _encode_state(self, obs):
@@ -2149,10 +2157,25 @@ class HighwaySimulator:
                     target_lane = base_env.road.network.get_lane(target_lane_index)
                     # Preserve longitudinal position and snap to the selected
                     # safe target lane centre (instantaneous diagnostic mode).
-                    ego.position = np.asarray(target_lane.position(longitudinal, 0.0), dtype=float)
-                    ego.heading = float(target_lane.heading_at(longitudinal))
-                    ego.lane_index = target_lane_index
-                    self.target_lane_index = target_lane_index
+                    # Apply the lane transition to the actual Highway-env vehicle
+                    # before env.step(), not just to the wrapper's bookkeeping.
+                    # Preserve longitudinal position and speed; lateral position
+                    # and heading are snapped to the target lane centre/tangent.
+                    target_position = np.asarray(
+                        target_lane.position(longitudinal, 0.0), dtype=float
+                    )
+                    target_heading = float(target_lane.heading_at(longitudinal))
+                    ego.position = target_position
+                    ego.heading = target_heading
+                    ego.lane_index = tuple(target_lane_index)
+
+                    # ControlledVehicle implementations may also maintain an
+                    # internal target_lane_index. Synchronize it when present so
+                    # the next native vehicle update cannot follow a stale target.
+                    if hasattr(ego, "target_lane_index"):
+                        ego.target_lane_index = tuple(target_lane_index)
+
+                    self.target_lane_index = tuple(target_lane_index)
                     self.target_lane = target_lane
                     self._lane_change_active = False
                     self._lane_change_source_index = None
@@ -2202,12 +2225,41 @@ class HighwaySimulator:
         # and action bounds determine the resulting motion.
         acceleration = float(np.clip(acceleration, -1.0, 1.0))
         speed_before = float(ego.speed)
+        lane_before_env_update = int(ego.lane_index[2])
+        position_before_env_update = np.asarray(ego.position, dtype=np.float64).copy()
         policy_dt = 1.0 / float(base_env.config["policy_frequency"])
         physical_action = np.asarray([acceleration, 0.0], dtype=np.float32)
+
+        # This is the single and only native simulator advance for this policy
+        # transition. If CHANGE was accepted, the ego is already in the target
+        # lane when Highway-env updates ego and surrounding-vehicle dynamics.
         obs, env_reward, terminated, truncated, env_info = self.env.step(physical_action)
         ego_after = base_env.vehicle
         speed_after = float(ego_after.speed)
+        lane_after_env_update = int(ego_after.lane_index[2])
+        position_after_env_update = np.asarray(ego_after.position, dtype=np.float64).copy()
         collision = bool(getattr(ego_after, "crashed", False))
+
+        if lane_changed and lane_after_env_update != int(requested_target_lane_id):
+            print(
+                "[INSTANT LANE STATE WARNING]",
+                f"expected_target_lane={int(requested_target_lane_id)}",
+                f"lane_after_env_update={lane_after_env_update}",
+                f"position_before_env_update={position_before_env_update.tolist()}",
+                f"position_after_env_update={position_after_env_update.tolist()}",
+                "reason=underlying_env_did_not_preserve_instantaneous_lane_transition",
+            )
+            write_diagnostic_event(
+                "instant_lane_state_mismatch", self,
+                source_lane=int(source_lane_id),
+                requested_target_lane=int(requested_target_lane_id),
+                lane_before_env_update=int(lane_before_env_update),
+                lane_after_env_update=int(lane_after_env_update),
+                position_before_env_update=position_before_env_update.tolist(),
+                position_after_env_update=position_after_env_update.tolist(),
+                speed_before_env_update=float(speed_before),
+                speed_after_env_update=float(speed_after),
+            )
 
         if collision:
             print("[COLLISION EGO][INSTANT MODE]",
@@ -2235,7 +2287,12 @@ class HighwaySimulator:
             "current_lane_id": source_lane_id,
             "requested_target_lane_id": requested_target_lane_id,
             "accepted_target_lane_id": int(ego_after.lane_index[2]),
+            "lane_before_env_update": int(lane_before_env_update),
+            "lane_after_env_update": int(lane_after_env_update),
+            "position_before_env_update": position_before_env_update.copy(),
+            "position_after_env_update": position_after_env_update.copy(),
             "lane_change_completed_instantly": bool(lane_changed),
+            "one_env_update_per_policy_action": True,
             "lane_change_rejection_reason": lane_rejection_reason,
             "sampled_policy_action": (np.asarray(sampled_action, dtype=np.float32).copy()
                                       if sampled_action is not None else incoming_action.copy()),
