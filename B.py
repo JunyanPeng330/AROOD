@@ -2843,10 +2843,19 @@ def build_fixed_reward_function():
     return reward_function
 
 
-def _hybrid_action_log_probability(policy,states,actions,pre_tanh_accels,masks):
-    """Compatibility name; only the categorical lane decision has policy likelihood."""
-    dist=policy.action_distributions(states,valid_action_mask=masks)
-    return dist.log_prob(actions[:,1].round().long().clamp(0,POLICY_ACTION_DIM-1))
+def _hybrid_action_log_probability(policy, states, actions, pre_tanh_accels, masks,
+                                  selected_target_lanes=None, target_lane_masks=None):
+    """Joint likelihood of binary KEEP/CHANGE and conditional target lane."""
+    binary = actions[:, 1].round().long().clamp(0, 1)
+    log_prob = policy.action_distributions(states, valid_action_mask=masks).log_prob(binary)
+    if selected_target_lanes is not None and target_lane_masks is not None:
+        lanes = torch.as_tensor(selected_target_lanes, dtype=torch.long, device=DEVICE).reshape(-1)
+        lane_masks = torch.as_tensor(target_lane_masks, dtype=torch.bool, device=DEVICE)
+        lane_log_prob = policy.lane_distributions(states, lane_masks).log_prob(lanes.clamp(0, NUM_LANES - 1))
+        active = (binary == 1) & (lanes >= 0) & lane_masks.any(dim=-1)
+        log_prob = log_prob + torch.where(active, lane_log_prob, torch.zeros_like(lane_log_prob))
+    return log_prob
+
 
 
 
@@ -2870,6 +2879,7 @@ def collect_reference_rollouts(simulator, policy, reward_function):
         )
         trajectory = {
             "states": [], "actions": [], "pre_tanh_accels": [], "masks": [],
+            "selected_target_lanes": [], "target_lane_masks": [],
             "rewards": [], "next_states": [], "terminated": []
         }
         lane_counters = make_lane_request_counters()
@@ -2949,6 +2959,8 @@ def collect_reference_rollouts(simulator, policy, reward_function):
             trajectory["actions"].append(sampled_action.copy())
             trajectory["pre_tanh_accels"].append(pre_tanh_accel)
             trajectory["masks"].append(valid_mask.copy())
+            trajectory["selected_target_lanes"].append(int(selected_target_lane))
+            trajectory["target_lane_masks"].append(target_lane_mask.copy())
             trajectory["rewards"].append(float(reward))
             trajectory["next_states"].append(next_state.copy())
             is_terminated = (
@@ -2992,8 +3004,9 @@ def collect_reference_rollouts(simulator, policy, reward_function):
     flattened = {
         key: np.concatenate([np.asarray(traj[key]) for traj in trajectories], axis=0)
         for key in (
-            "states", "actions", "pre_tanh_accels", "masks", "rewards",
-            "next_states", "terminated", "returns"
+            "states", "actions", "pre_tanh_accels", "masks",
+            "selected_target_lanes", "target_lane_masks",
+            "rewards", "next_states", "terminated", "returns"
         )
     }
     reference_data_path = os.path.join("data", "binary_lane_ranked_reference_rollouts.npz")
@@ -3017,6 +3030,8 @@ def warm_start_policy_from_reference(policy, reference_data):
     actions = to_tensor(reference_data["actions"])
     pre_tanh = to_tensor(reference_data["pre_tanh_accels"]).reshape(-1)
     masks = torch.as_tensor(reference_data["masks"], dtype=torch.bool, device=DEVICE)
+    selected_target_lanes = torch.as_tensor(reference_data["selected_target_lanes"], dtype=torch.long, device=DEVICE)
+    target_lane_masks = torch.as_tensor(reference_data["target_lane_masks"], dtype=torch.bool, device=DEVICE)
     returns = to_tensor(reference_data["returns"]).reshape(-1)
 
     with torch.no_grad():
@@ -3042,11 +3057,14 @@ def warm_start_policy_from_reference(policy, reference_data):
             batch_actions = actions[idx]
             batch_pre_tanh = pre_tanh[idx]
             batch_masks = masks[idx]
+            batch_target_lanes = selected_target_lanes[idx]
+            batch_target_masks = target_lane_masks[idx]
             batch_returns = returns[idx]
             batch_weights = weights[idx]
 
             log_prob = _hybrid_action_log_probability(
-                policy, batch_states, batch_actions, batch_pre_tanh, batch_masks
+                policy, batch_states, batch_actions, batch_pre_tanh, batch_masks,
+                batch_target_lanes, batch_target_masks
             )
             actor_loss = -(batch_weights.detach() * log_prob).mean()
             predicted_returns = policy.value(batch_states).reshape(-1)
