@@ -2202,7 +2202,7 @@ class HighwaySimulator:
 
         # Also write to the existing JSONL diagnostic stream, regardless of whether
         # the first-incident text file already exists.
-        write_diagnostic_event("negative_managed_traffic_speed_observed", self, **report)
+        report_fields = dict(report)\n        report_fields.pop("event", None)\n        write_diagnostic_event("negative_managed_traffic_speed_observed", self, **report_fields)
 
 
     def _sanitize_traffic_slot_speeds(self, where):
