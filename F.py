@@ -883,43 +883,29 @@ class HighwaySimulator:
         return mask
 
     def _min_ttc_by_lane(self):
+        """Return one dynamic front/rear neighbor per lane and its TTC.
+
+        The traffic abstraction is exactly six dynamic slots: nearest front and
+        nearest rear vehicle in each of the three lanes. Slot identity is based
+        on current lane and longitudinal position, not on a vehicle's original
+        spawn label. Distances use a shared road-longitudinal coordinate and
+        bumper-to-bumper clearance. Speeds are read directly from the simulator.
         """
-        Calculate minimum front TTC and rear TTC for every lane.
-        Returns:
-            {lane_id: {
-                    "front_ttc": float,
-                    "rear_ttc": float,
-                    "min_ttc": float,}}
-
-        TTC is measured in seconds.
-        Assumptions:
-            - The road is a straight, multi-lane highway.
-            - Vehicles are assigned to lanes using lane_index[2].
-            - Longitudinal positions are comparable across lanes.
-            - Vehicle lengths are used to estimate bumper clearance.
-        A TTC of 0.0 indicates an overlapping or non-positive
-        longitudinal bumper gap in the relevant direction.
-        """
-
-
         base_env = self.env.unwrapped
         road = base_env.road
         ego = base_env.vehicle
 
         ego_lane = int(ego.lane_index[2])
         ego_speed = float(ego.speed)
-        ego_s_global = float(ego.position[0])
-
+        ego_s = self._road_longitudinal_position(ego)
         lanes_count = int(base_env.config["lanes_count"])
+        ego_length = float(getattr(ego, "LENGTH", getattr(ego, "length", 5.0)))
 
-        # Initialize all lanes, including lanes with no nearby vehicles.
         lane_ttc = {
             lane_id: {
                 "front_ttc": float("inf"),
                 "rear_ttc": float("inf"),
                 "min_ttc": float("inf"),
-
-                # Data for the nearest front vehicle in this lane
                 "front_gap": float("inf"),
                 "front_speed": None,
                 "nearest_front_ttc": float("inf"),
@@ -933,127 +919,133 @@ class HighwaySimulator:
             for lane_id in range(lanes_count)
         }
 
-        # Vehicle length is usually 5 m in highway-env.
-        # Read the actual attribute when available.
-        ego_length = float(getattr(ego, "LENGTH", getattr(ego, "length", 5.0),))
+        # Find the nearest vehicle on each side of ego in each lane. The
+        # maintenance routine normally guarantees one vehicle per slot; nearest
+        # selection also makes this function robust while diagnosing violations.
+        nearest = {
+            (lane_id, side): None
+            for lane_id in range(lanes_count)
+            for side in ("front", "rear")
+        }
 
         for other in list(road.vehicles):
-
-            # Ignore the ego vehicle itself and crashed traffic.
-            if other is ego:
+            if other is ego or bool(getattr(other, "crashed", False)):
                 continue
-            if bool(getattr(other, "crashed", False)):
-                continue
-
-            # Safely obtain the other vehicle's lane.
             try:
-                other_lane_index = other.lane_index
-                other_lane = int(other_lane_index[2])
-            except (AttributeError, TypeError, ValueError, IndexError):
+                other_lane = int(other.lane_index[2])
+                if other_lane not in lane_ttc:
+                    continue
+                other_s = self._road_longitudinal_position(other)
+                other_speed = float(other.speed)
+                other_length = float(getattr(
+                    other, "LENGTH", getattr(other, "length", 5.0)
+                ))
+            except (AttributeError, TypeError, ValueError, IndexError, KeyError):
                 continue
 
-            if other_lane not in lane_ttc:
-                continue
-
-
-
-            other_speed = float(other.speed)
-            other_s_global = float(other.position[0])
-
-            other_length = float(getattr(other, "LENGTH", getattr(other, "length", 5.0),))
-
-            # Center-to-center longitudinal distance.
-            center_gap = other_s_global - ego_s_global
-
-            # Estimated bumper-to-bumper clearance.
+            center_gap = other_s - ego_s
             half_length_sum = 0.5 * (ego_length + other_length)
-
-            closing_speed = None
-            bumper_gap = None
-            ttc = float("inf")
-            vehicle_direction = "same_position"
-
-            # -----------------------------------------------------
-            # A. Vehicle ahead of the ego vehicle.
-            # -----------------------------------------------------
-            # A. Vehicle ahead of the ego vehicle.
             if center_gap > 0.0:
-                vehicle_direction = "front"
+                side = "front"
                 bumper_gap = center_gap - half_length_sum
-                closing_speed = ego_speed - other_speed
-
-                if bumper_gap <= 0.0:
-                    ttc = 0.0
-                elif closing_speed > 0.1:
-                    ttc = bumper_gap / closing_speed
-
-                # Preserve the minimum TTC among all front vehicles.
-                lane_ttc[other_lane]["front_ttc"] = min(lane_ttc[other_lane]["front_ttc"], ttc,)
-
-                # Select the nearest front vehicle by center distance, even
-                # when its bumper gap is zero/negative. Otherwise an overlapping
-                # same-lane vehicle is accidentally reported as "no front vehicle".
-                if center_gap < lane_ttc[other_lane]["front_center_gap"]:
-                    lane_ttc[other_lane]["front_center_gap"] = center_gap
-                    lane_ttc[other_lane]["front_gap"] = bumper_gap
-                    lane_ttc[other_lane]["front_speed"] = other_speed
-                    lane_ttc[other_lane]["nearest_front_ttc"] = ttc
-                    lane_ttc[other_lane]["front_vehicle_id"] = id(other)
-
-
+                distance = center_gap
             elif center_gap < 0.0:
-                vehicle_direction = "rear"
+                side = "rear"
                 bumper_gap = -center_gap - half_length_sum
-                closing_speed = other_speed - ego_speed
-
-                if bumper_gap <= 0.0:
-                    # Longitudinal projections overlap. TTC=0 is a
-                    # conservative lane-safety signal, not proof of a
-                    # physical collision.
-                    ttc = 0.0
-                elif closing_speed > 0.1:
-                    ttc = bumper_gap / closing_speed
-
-                lane_ttc[other_lane]["rear_ttc"] = min(
-                    lane_ttc[other_lane]["rear_ttc"], ttc
-                )
-                if abs(center_gap) < lane_ttc[other_lane]["rear_center_gap"]:
-                    lane_ttc[other_lane]["rear_center_gap"] = abs(center_gap)
-                    lane_ttc[other_lane]["rear_gap"] = bumper_gap
-                    lane_ttc[other_lane]["rear_speed"] = other_speed
-                    lane_ttc[other_lane]["rear_vehicle_id"] = id(other)
-
+                distance = -center_gap
             else:
-                # Same longitudinal center: direction is ambiguous, but
-                # this lane is unsafe to enter due to longitudinal overlap.
-                vehicle_direction = "same_position"
-                bumper_gap = -half_length_sum
-                closing_speed = None
-                ttc = 0.0
-                lane_ttc[other_lane]["front_ttc"] = 0.0
-                lane_ttc[other_lane]["rear_ttc"] = 0.0
+                # Exact longitudinal alignment is unsafe in both directions.
+                lane_values = lane_ttc[other_lane]
+                lane_values["front_gap"] = -half_length_sum
+                lane_values["rear_gap"] = -half_length_sum
+                lane_values["front_speed"] = other_speed
+                lane_values["rear_speed"] = other_speed
+                lane_values["front_center_gap"] = 0.0
+                lane_values["rear_center_gap"] = 0.0
+                lane_values["front_vehicle_id"] = id(other)
+                lane_values["rear_vehicle_id"] = id(other)
+                lane_values["front_ttc"] = 0.0
+                lane_values["rear_ttc"] = 0.0
+                lane_values["nearest_front_ttc"] = 0.0
+                continue
 
-            longitudinal_overlap = (
-                bumper_gap is not None and bumper_gap <= 0.0
-            )
-            same_lane_as_ego = (other_lane == ego_lane)
+            slot_key = (other_lane, side)
+            current = nearest[slot_key]
+            if current is None or distance < current["distance"]:
+                nearest[slot_key] = {
+                    "distance": distance,
+                    "center_gap": center_gap,
+                    "bumper_gap": bumper_gap,
+                    "speed": other_speed,
+                    "vehicle_id": id(other),
+                }
 
+        for (lane_id, side), neighbor in nearest.items():
+            if neighbor is None:
+                continue
 
+            values = lane_ttc[lane_id]
+            bumper_gap = float(neighbor["bumper_gap"])
+            neighbor_speed = float(neighbor["speed"])
 
+            if side == "front":
+                # Front TTC: bumper gap / (ego speed - front speed), only
+                # when ego is actually closing on the vehicle ahead.
+                if bumper_gap <= 0.0:
+                    front_ttc = 0.0
+                elif ego_speed > neighbor_speed:
+                    front_ttc = bumper_gap / (ego_speed - neighbor_speed)
+                else:
+                    front_ttc = float("inf")
 
+                values["front_gap"] = bumper_gap
+                values["front_speed"] = neighbor_speed
+                values["front_ttc"] = front_ttc
+                values["nearest_front_ttc"] = front_ttc
+                values["front_center_gap"] = float(neighbor["distance"])
+                values["front_vehicle_id"] = neighbor["vehicle_id"]
+            else:
+                # Rear TTC: bumper gap / (rear speed - ego speed), only
+                # when the rear vehicle is actually closing on ego.
+                if bumper_gap <= 0.0:
+                    rear_ttc = 0.0
+                elif neighbor_speed > ego_speed:
+                    rear_ttc = bumper_gap / (neighbor_speed - ego_speed)
+                else:
+                    rear_ttc = float("inf")
 
-        # ---------------------------------------------------------
-        # C. Calculate the minimum of front and rear TTC per lane.
-        # ---------------------------------------------------------
-        for lane_id, values in lane_ttc.items():
+                values["rear_gap"] = bumper_gap
+                values["rear_speed"] = neighbor_speed
+                values["rear_ttc"] = rear_ttc
+                values["rear_center_gap"] = float(neighbor["distance"])
+                values["rear_vehicle_id"] = neighbor["vehicle_id"]
+
+        for values in lane_ttc.values():
             values["min_ttc"] = min(values["front_ttc"], values["rear_ttc"])
 
+        # Diagnostic check: six slots should be occupied exactly once.
+        occupied_slots = sum(
+            nearest[(lane_id, side)] is not None
+            or lane_ttc[lane_id]["front_center_gap"] == 0.0
+            or lane_ttc[lane_id]["rear_center_gap"] == 0.0
+            for lane_id in range(lanes_count)
+            for side in ("front", "rear")
+        )
+        if occupied_slots != NUM_SURROUNDING_VEHICLES:
+            write_diagnostic_event(
+                "traffic_slot_snapshot_incomplete", self,
+                occupied_slots=int(occupied_slots),
+                expected_slots=NUM_SURROUNDING_VEHICLES,
+                lane_slots={
+                    str(lane_id): {
+                        "front_vehicle_id": lane_ttc[lane_id]["front_vehicle_id"],
+                        "rear_vehicle_id": lane_ttc[lane_id]["rear_vehicle_id"],
+                    }
+                    for lane_id in range(lanes_count)
+                },
+            )
+
         return lane_ttc
-
-
-
-
-
 
     def _speed_matching_acceleration(self, front_speed, front_gap):
         """
