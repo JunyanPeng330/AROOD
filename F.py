@@ -2192,7 +2192,7 @@ class HighwaySimulator:
             # Exclusive creation ensures later incidents cannot overwrite the first report.
             with open(path, "x", encoding="utf-8") as log_file:
                 log_file.write(json.dumps(report, ensure_ascii=False, indent=2, default=str, allow_nan=True))
-                log_file.write("\\n")
+                log_file.write("\n")
             print("[FIRST NEGATIVE TRAFFIC SPEED CAPTURED]", f"path={path}",
                   f"incident_count={len(incidents)}")
         except FileExistsError:
@@ -2202,7 +2202,9 @@ class HighwaySimulator:
 
         # Also write to the existing JSONL diagnostic stream, regardless of whether
         # the first-incident text file already exists.
-        report_fields = dict(report)\n        report_fields.pop("event", None)\n        write_diagnostic_event("negative_managed_traffic_speed_observed", self, **report_fields)
+        report_fields = dict(report)
+        report_fields.pop("event", None)
+        write_diagnostic_event("negative_managed_traffic_speed_observed", self, **report_fields)
 
 
     def _sanitize_traffic_slot_speeds(self, where):
