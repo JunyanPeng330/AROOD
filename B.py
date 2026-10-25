@@ -2409,7 +2409,7 @@ def _safety_aware_lane_selector_and_controller(self, sampled_action, selected_ta
         "executed_binary_action": ("KEEP", "CHANGE")[executed],
         "lane_change_blocked": bool(blocked), "lane_change_rejection_reason": reason,
         "lane_request_trace_id": req_id,
-        "lane_request_direction": ("LEFT" if selected is not None and selected < current else "RIGHT" if selected is not None and selected > current else "NONE"),
+        "lane_request_direction": ("LEFT" if selected is not None and selected > current else "RIGHT" if selected is not None and selected < current else "NONE"),
         "lane_request_source_lane": current, "lane_request_target_lane": int(selected if selected is not None else current),
         "lane_request_decision": "TARGET_SELECTED" if requested == 1 and not blocked else ("REJECTED" if blocked else "KEEP"),
         "target_selector_mode": "learned_lane_ranking_head_plus_execution_recheck",
@@ -2576,7 +2576,7 @@ def record_lane_request_decision(counters, sampled_action, valid_action_mask, sa
     if action.size < 2 or int(np.clip(np.rint(float(action[1])), 0, 1)) != 1: return
     current, target = safety_info.get("current_lane_id"), safety_info.get("requested_target_lane_id")
     if current is None or target is None or int(current) == int(target): return
-    direction = "LEFT" if int(target) < int(current) else "RIGHT"
+    direction = "LEFT" if int(target) > int(current) else "RIGHT"
     counters[direction]["requested"] += 1
     mask = np.asarray(valid_action_mask, dtype=bool).reshape(-1)
     if mask.size > 1 and mask[1]: counters[direction]["mask_allowed"] += 1
