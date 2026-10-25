@@ -1,0 +1,805 @@
+[TRAFFIC SCENARIO] front_gap_range=10.0-90.0m rear_gap_range=10.0-90.0m gap_sampling=independent_per_lane_and_side speed_variation=±10.0m/s randomized=True
+[TRAFFIC SPAWN] lane=0 side=front gap=29.3m range=120.0m speed=30.00m/s id=2170858801360
+[TRAFFIC SPAWN] lane=0 side=rear gap=21.4m range=120.0m speed=24.22m/s id=2170051472912
+[TRAFFIC SPAWN] lane=1 side=front gap=30.3m range=120.0m speed=20.11m/s id=2170859127376
+[TRAFFIC SPAWN] lane=1 side=rear gap=10.8m range=120.0m speed=30.00m/s id=2170858571088
+[TRAFFIC SPAWN] lane=2 side=front gap=82.1m range=120.0m speed=28.55m/s id=2170168238096
+[TRAFFIC SPAWN] lane=2 side=rear gap=22.6m range=120.0m speed=23.83m/s id=2170168231504
+[TARGET LANE] ('0', '1', 0) initial_position= [206.888   0.   ]
+[LANE ACTION MASK][GEOMETRY ONLY] current_lane=0 mask=[True, True] adjacent_targets=[1] ttc_veto=False
+[INSTANT STEP] source_lane=0 requested=KEEP target_lane=0 lane_changed=False executed_lane=0 accel=-0.242 collision=False
+[TTC REWARD INPUT] source=post_step physical_lane=0 relevant_lanes=[0] lane_details={0: {'front_vehicle_id': 2170858801360, 'front_ttc_s': inf, 'front_gap_m': 25.26638334850506, 'rear_vehicle_id': 2170051472912, 'rear_ttc_s': inf, 'rear_gap_m': 16.604817956860785}} min_ttc_s=inf finite_ttc_count=0
+[REWARD DEBUG] progress=2.476, speed=24.76m/s, target_speed=40.00m/s, safety_penalty=0.000, lane_change_cost=0.000, lane_change_accepted=False, total=2.476
+[TTC REWARD] disabled; TTC is recorded for episode-level evaluation, not used as a per-step action override.
+[LANE ACTION MASK][GEOMETRY ONLY] current_lane=0 mask=[True, True] adjacent_targets=[1] ttc_veto=False
+[TARGET LANE SELECTOR][NO HARD VETO] source_lane=0 selected_lane=1 utility=0.349 front_ttc=5.233 rear_ttc=0.906 candidates=[{'target_lane': 1, 'utility': 0.34936591562358754, 'front_gap': 24.339493985719997, 'rear_gap': 4.75179451638968, 'front_ttc': 5.233195552967014, 'rear_ttc': 0.9064012238679418, 'front_speed': 20.10653416318308}]
+[INSTANT STEP] source_lane=0 requested=CHANGE target_lane=1 lane_changed=True executed_lane=1 accel=-0.154 collision=False
+[TTC REWARD INPUT] source=post_step physical_lane=1 relevant_lanes=[1] lane_details={1: {'front_vehicle_id': 2170859127376, 'front_ttc_s': 5.205792029988596, 'front_gap_m': 23.409297751340006, 'rear_vehicle_id': 2170858571088, 'rear_ttc_s': 0.6862169122444662, 'rear_gap_m': 3.7032975834062825}} min_ttc_s=0.686 finite_ttc_count=2
+[REWARD DEBUG] progress=2.460, speed=24.60m/s, target_speed=40.00m/s, safety_penalty=0.000, lane_change_cost=0.010, lane_change_accepted=True, total=2.450
+[TTC REWARD] disabled; TTC is recorded for episode-level evaluation, not used as a per-step action override.
+[LANE ACTION MASK][GEOMETRY ONLY] current_lane=1 mask=[True, True] adjacent_targets=[0, 2] ttc_veto=False
+[TARGET LANE SELECTOR][NO HARD VETO] source_lane=1 selected_lane=2 utility=0.899 front_ttc=inf rear_ttc=inf candidates=[{'target_lane': 0, 'utility': 0.5620602786179338, 'front_gap': 26.314880281488456, 'rear_gap': 16.711721370457383, 'front_ttc': inf, 'rear_ttc': inf, 'front_speed': 30.0}, {'target_lane': 2, 'utility': 0.8988227911385787, 'front_gap': 78.56613790648669, 'rear_gap': 18.055714563929058, 'front_ttc': inf, 'rear_ttc': inf, 'front_speed': 28.55221771398159}]
+[INSTANT STEP] source_lane=1 requested=CHANGE target_lane=2 lane_changed=True executed_lane=2 accel=-0.670 collision=False
+[TTC REWARD INPUT] source=post_step physical_lane=2 relevant_lanes=[2] lane_details={2: {'front_vehicle_id': 2170168238096, 'front_ttc_s': inf, 'front_gap_m': 79.35591876007402, 'rear_vehicle_id': 2170168231504, 'rear_ttc_s': inf, 'rear_gap_m': 18.209458118722807}} min_ttc_s=inf finite_ttc_count=0
+[REWARD DEBUG] progress=2.393, speed=23.93m/s, target_speed=40.00m/s, safety_penalty=0.000, lane_change_cost=0.010, lane_change_accepted=True, total=2.383
+[TTC REWARD] disabled; TTC is recorded for episode-level evaluation, not used as a per-step action override.
+[LANE ACTION MASK][GEOMETRY ONLY] current_lane=2 mask=[True, True] adjacent_targets=[1] ttc_veto=False
+[INSTANT STEP] source_lane=2 requested=KEEP target_lane=2 lane_changed=False executed_lane=2 accel=-0.453 collision=False
+[TTC REWARD INPUT] source=post_step physical_lane=2 relevant_lanes=[2] lane_details={2: {'front_vehicle_id': 2170168238096, 'front_ttc_s': inf, 'front_gap_m': 80.2796542340227, 'rear_vehicle_id': 2170168231504, 'rear_ttc_s': 51.483579712244925, 'rear_gap_m': 18.229247053155206}} min_ttc_s=51.484 finite_ttc_count=1
+[REWARD DEBUG] progress=2.348, speed=23.48m/s, target_speed=40.00m/s, safety_penalty=0.000, lane_change_cost=0.000, lane_change_accepted=False, total=2.348
+[TTC REWARD] disabled; TTC is recorded for episode-level evaluation, not used as a per-step action override.
+[LANE ACTION MASK][GEOMETRY ONLY] current_lane=2 mask=[True, True] adjacent_targets=[1] ttc_veto=False
+[TARGET LANE SELECTOR][NO HARD VETO] source_lane=2 selected_lane=1 utility=0.281 front_ttc=6.445 rear_ttc=0.216 candidates=[{'target_lane': 1, 'utility': 0.28078301493625685, 'front_gap': 21.744540658556588, 'rear_gap': 1.410668341462923, 'front_ttc': 6.444769550208317, 'rear_ttc': 0.21637732646488464, 'front_speed': 20.10653416318308}]
+[INSTANT STEP] source_lane=2 requested=CHANGE target_lane=1 lane_changed=True executed_lane=1 accel=0.612 collision=False
+[TTC REWARD INPUT] source=post_step physical_lane=1 relevant_lanes=[1] lane_details={1: {'front_vehicle_id': 2170859127376, 'front_ttc_s': 5.285398995516412, 'front_gap_m': 21.06974412815609, 'rear_vehicle_id': 2170858571088, 'rear_ttc_s': 0.018075269276299058, 'rear_gap_m': 0.10677170450003359}} min_ttc_s=0.018 finite_ttc_count=2
+[REWARD DEBUG] progress=2.409, speed=24.09m/s, target_speed=40.00m/s, safety_penalty=0.000, lane_change_cost=0.010, lane_change_accepted=True, total=2.399
+[TTC REWARD] disabled; TTC is recorded for episode-level evaluation, not used as a per-step action override.
+[LANE ACTION MASK][GEOMETRY ONLY] current_lane=1 mask=[True, True] adjacent_targets=[0, 2] ttc_veto=False
+[TARGET LANE SELECTOR][NO HARD VETO] source_lane=1 selected_lane=2 utility=0.900 front_ttc=inf rear_ttc=inf candidates=[{'target_lane': 0, 'utility': 0.5965730104205311, 'front_gap': 29.911406160394705, 'rear_gap': 16.58139653129112, 'front_ttc': inf, 'rear_ttc': 127.4918241365881, 'front_speed': 30.0}, {'target_lane': 2, 'utility': 0.8995075692575656, 'front_gap': 81.29399441378192, 'rear_gap': 18.15843128177707, 'front_ttc': inf, 'rear_ttc': inf, 'front_speed': 28.55221771398159}]
+[COLLISION EGO][INSTANT MODE] position=[236.59854815007043, 8.0] lane=2 speed=23.884
+[INSTANT STEP] source_lane=1 requested=CHANGE target_lane=2 lane_changed=True executed_lane=2 accel=-0.209 collision=True
+[TTC REWARD INPUT] source=post_step physical_lane=2 relevant_lanes=[2] lane_details={2: {'front_vehicle_id': 2170168238096, 'front_ttc_s': inf, 'front_gap_m': 81.64852983299818, 'rear_vehicle_id': 2170168231504, 'rear_ttc_s': inf, 'rear_gap_m': 18.747420270941888}} min_ttc_s=inf finite_ttc_count=0
+[REWARD DEBUG] progress=2.388, speed=23.88m/s, target_speed=40.00m/s, safety_penalty=5.000, lane_change_cost=0.010, lane_change_accepted=True, total=-2.622
+[TTC REWARD] disabled; TTC is recorded for episode-level evaluation, not used as a per-step action override.
+[REFERENCE COLLECTION] episode=49/50 steps=6 return=+9.327
+[REFERENCE EPISODE LEFT COUNTERS] requested=3 mask_allowed=3 target_selected=3 completed=3
+[REFERENCE EPISODE RIGHT COUNTERS] requested=1 mask_allowed=1 target_selected=1 completed=1
+[REFERENCE EPISODE ACTION OPPORTUNITIES] steps=6 change_valid=6 (100.0%) only_keep=0 (0.0%)
+[TRAFFIC SCENARIO] front_gap_range=10.0-90.0m rear_gap_range=10.0-90.0m gap_sampling=independent_per_lane_and_side speed_variation=±10.0m/s randomized=True
+[TRAFFIC SPAWN] lane=0 side=front gap=61.1m range=120.0m speed=23.49m/s id=2170858802832
+[TRAFFIC SPAWN] lane=0 side=rear gap=30.0m range=120.0m speed=30.00m/s id=2170168323280
+[TRAFFIC SPAWN] lane=1 side=front gap=25.9m range=120.0m speed=22.69m/s id=2170168313552
+[TRAFFIC SPAWN] lane=1 side=rear gap=48.7m range=120.0m speed=19.74m/s id=2170168325776
+[TRAFFIC SPAWN] lane=2 side=front gap=55.8m range=120.0m speed=26.50m/s id=2170168322960
+[TRAFFIC SPAWN] lane=2 side=rear gap=89.4m range=120.0m speed=20.90m/s id=2170168327952
+[TARGET LANE] ('0', '1', 1) initial_position= [203.445   4.   ]
+[LANE ACTION MASK][GEOMETRY ONLY] current_lane=1 mask=[True, True] adjacent_targets=[0, 2] ttc_veto=False
+[INSTANT STEP] source_lane=1 requested=KEEP target_lane=1 lane_changed=False executed_lane=1 accel=-0.860 collision=False
+[TTC REWARD INPUT] source=post_step physical_lane=1 relevant_lanes=[1] lane_details={1: {'front_vehicle_id': 2170168313552, 'front_ttc_s': 14.161071184390963, 'front_gap_m': 20.476132924580753, 'rear_vehicle_id': 2170168325776, 'rear_ttc_s': inf, 'rear_gap_m': 44.707822077027004}} min_ttc_s=14.161 finite_ttc_count=1
+[REWARD DEBUG] progress=2.414, speed=24.14m/s, target_speed=40.00m/s, safety_penalty=0.000, lane_change_cost=0.000, lane_change_accepted=False, total=2.414
+[TTC REWARD] disabled; TTC is recorded for episode-level evaluation, not used as a per-step action override.
+[LANE ACTION MASK][GEOMETRY ONLY] current_lane=1 mask=[True, True] adjacent_targets=[0, 2] ttc_veto=False
+[INSTANT STEP] source_lane=1 requested=KEEP target_lane=1 lane_changed=False executed_lane=1 accel=0.703 collision=False
+[TTC REWARD INPUT] source=post_step physical_lane=1 relevant_lanes=[1] lane_details={1: {'front_vehicle_id': 2170168313552, 'front_ttc_s': 9.395290561513459, 'front_gap_m': 20.186943884317316, 'rear_vehicle_id': 2170168325776, 'rear_ttc_s': inf, 'rear_gap_m': 45.586961305449535}} min_ttc_s=9.395 finite_ttc_count=1
+[REWARD DEBUG] progress=2.484, speed=24.84m/s, target_speed=40.00m/s, safety_penalty=0.000, lane_change_cost=0.000, lane_change_accepted=False, total=2.484
+[TTC REWARD] disabled; TTC is recorded for episode-level evaluation, not used as a per-step action override.
+[LANE ACTION MASK][GEOMETRY ONLY] current_lane=1 mask=[True, True] adjacent_targets=[0, 2] ttc_veto=False
+[INSTANT STEP] source_lane=1 requested=KEEP target_lane=1 lane_changed=False executed_lane=1 accel=0.772 collision=False
+[TTC REWARD INPUT] source=post_step physical_lane=1 relevant_lanes=[1] lane_details={1: {'front_vehicle_id': 2170168313552, 'front_ttc_s': 6.764969189632544, 'front_gap_m': 19.75721914611688, 'rear_vehicle_id': 2170168325776, 'rear_ttc_s': inf, 'rear_gap_m': 46.60663623180906}} min_ttc_s=6.765 finite_ttc_count=1
+[REWARD DEBUG] progress=2.561, speed=25.61m/s, target_speed=40.00m/s, safety_penalty=0.000, lane_change_cost=0.000, lane_change_accepted=False, total=2.561
+[TTC REWARD] disabled; TTC is recorded for episode-level evaluation, not used as a per-step action override.
+[LANE ACTION MASK][GEOMETRY ONLY] current_lane=1 mask=[True, True] adjacent_targets=[0, 2] ttc_veto=False
+[INSTANT STEP] source_lane=1 requested=KEEP target_lane=1 lane_changed=False executed_lane=1 accel=0.600 collision=False
+[TTC REWARD INPUT] source=post_step physical_lane=1 relevant_lanes=[1] lane_details={1: {'front_vehicle_id': 2170168313552, 'front_ttc_s': 5.445578894673173, 'front_gap_m': 19.173115402484314, 'rear_vehicle_id': 2170168325776, 'rear_ttc_s': inf, 'rear_gap_m': 47.780690163600724}} min_ttc_s=5.446 finite_ttc_count=1
+[REWARD DEBUG] progress=2.621, speed=26.21m/s, target_speed=40.00m/s, safety_penalty=0.000, lane_change_cost=0.000, lane_change_accepted=False, total=2.621
+[TTC REWARD] disabled; TTC is recorded for episode-level evaluation, not used as a per-step action override.
+[LANE ACTION MASK][GEOMETRY ONLY] current_lane=1 mask=[True, True] adjacent_targets=[0, 2] ttc_veto=False
+[INSTANT STEP] source_lane=1 requested=KEEP target_lane=1 lane_changed=False executed_lane=1 accel=-0.882 collision=False
+[TTC REWARD INPUT] source=post_step physical_lane=1 relevant_lanes=[1] lane_details={1: {'front_vehicle_id': 2170168313552, 'front_ttc_s': 6.999106687920987, 'front_gap_m': 18.46894360465251, 'rear_vehicle_id': 2170168325776, 'rear_ttc_s': inf, 'rear_gap_m': 49.07481214959162}} min_ttc_s=6.999 finite_ttc_count=1
+[REWARD DEBUG] progress=2.533, speed=25.33m/s, target_speed=40.00m/s, safety_penalty=0.000, lane_change_cost=0.000, lane_change_accepted=False, total=2.533
+[TTC REWARD] disabled; TTC is recorded for episode-level evaluation, not used as a per-step action override.
+[LANE ACTION MASK][GEOMETRY ONLY] current_lane=1 mask=[True, True] adjacent_targets=[0, 2] ttc_veto=False
+[INSTANT STEP] source_lane=1 requested=KEEP target_lane=1 lane_changed=False executed_lane=1 accel=0.921 collision=False
+[TTC REWARD INPUT] source=post_step physical_lane=1 relevant_lanes=[1] lane_details={1: {'front_vehicle_id': 2170168313552, 'front_ttc_s': 5.039438270871464, 'front_gap_m': 17.941192152127115, 'rear_vehicle_id': 2170168325776, 'rear_ttc_s': inf, 'rear_gap_m': 50.19251379027611}} min_ttc_s=5.039 finite_ttc_count=1
+[REWARD DEBUG] progress=2.625, speed=26.25m/s, target_speed=40.00m/s, safety_penalty=0.000, lane_change_cost=0.000, lane_change_accepted=False, total=2.625
+[TTC REWARD] disabled; TTC is recorded for episode-level evaluation, not used as a per-step action override.
+[LANE ACTION MASK][GEOMETRY ONLY] current_lane=1 mask=[True, True] adjacent_targets=[0, 2] ttc_veto=False
+[INSTANT STEP] source_lane=1 requested=KEEP target_lane=1 lane_changed=False executed_lane=1 accel=-0.824 collision=False
+[TTC REWARD INPUT] source=post_step physical_lane=1 relevant_lanes=[1] lane_details={1: {'front_vehicle_id': 2170168313552, 'front_ttc_s': 6.296193508398065, 'front_gap_m': 17.229160723710635, 'rear_vehicle_id': 2170168325776, 'rear_ttc_s': inf, 'rear_gap_m': 51.49449540685171}} min_ttc_s=6.296 finite_ttc_count=1
+[REWARD DEBUG] progress=2.543, speed=25.43m/s, target_speed=40.00m/s, safety_penalty=0.000, lane_change_cost=0.000, lane_change_accepted=False, total=2.543
+[TTC REWARD] disabled; TTC is recorded for episode-level evaluation, not used as a per-step action override.
+[LANE ACTION MASK][GEOMETRY ONLY] current_lane=1 mask=[True, True] adjacent_targets=[0, 2] ttc_veto=False
+[INSTANT STEP] source_lane=1 requested=KEEP target_lane=1 lane_changed=False executed_lane=1 accel=0.783 collision=False
+[TTC REWARD INPUT] source=post_step physical_lane=1 relevant_lanes=[1] lane_details={1: {'front_vehicle_id': 2170168313552, 'front_ttc_s': 4.740488369033302, 'front_gap_m': 16.68187256616818, 'rear_vehicle_id': 2170168325776, 'rear_ttc_s': inf, 'rear_gap_m': 52.63173375255329}} min_ttc_s=4.740 finite_ttc_count=1
+[REWARD DEBUG] progress=2.621, speed=26.21m/s, target_speed=40.00m/s, safety_penalty=0.000, lane_change_cost=0.000, lane_change_accepted=False, total=2.621
+[TTC REWARD] disabled; TTC is recorded for episode-level evaluation, not used as a per-step action override.
+[LANE ACTION MASK][GEOMETRY ONLY] current_lane=1 mask=[True, True] adjacent_targets=[0, 2] ttc_veto=False
+[INSTANT STEP] source_lane=1 requested=KEEP target_lane=1 lane_changed=False executed_lane=1 accel=0.243 collision=False
+[TTC REWARD INPUT] source=post_step physical_lane=1 relevant_lanes=[1] lane_details={1: {'front_vehicle_id': 2170168313552, 'front_ttc_s': 4.247374436304977, 'front_gap_m': 15.97806860052026, 'rear_vehicle_id': 2170168325776, 'rear_ttc_s': inf, 'rear_gap_m': 53.92548790636033}} min_ttc_s=4.247 finite_ttc_count=1
+[REWARD DEBUG] progress=2.646, speed=26.46m/s, target_speed=40.00m/s, safety_penalty=0.000, lane_change_cost=0.000, lane_change_accepted=False, total=2.646
+[TTC REWARD] disabled; TTC is recorded for episode-level evaluation, not used as a per-step action override.
+[LANE ACTION MASK][GEOMETRY ONLY] current_lane=1 mask=[True, True] adjacent_targets=[0, 2] ttc_veto=False
+[TARGET LANE SELECTOR][NO HARD VETO] source_lane=1 selected_lane=2 utility=0.992 front_ttc=inf rear_ttc=inf candidates=[{'target_lane': 0, 'utility': 0.7676507486192085, 'front_gap': 52.58196968237763, 'rear_gap': 16.816106243631708, 'front_ttc': 17.707015378152185, 'rear_ttc': 4.744595580896155, 'front_speed': 23.486178769217954}, {'target_lane': 2, 'utility': 0.9919894571070758, 'front_gap': 52.638796583474516, 'rear_gap': 92.59530464136975, 'front_ttc': inf, 'rear_ttc': inf, 'front_speed': 26.496238603572902}]
+[INSTANT STEP] source_lane=1 requested=CHANGE target_lane=2 lane_changed=True executed_lane=2 accel=-0.484 collision=False
+[TTC REWARD INPUT] source=post_step physical_lane=2 relevant_lanes=[2] lane_details={2: {'front_vehicle_id': 2170168322960, 'front_ttc_s': inf, 'front_gap_m': 52.646897396382684, 'rear_vehicle_id': 2170168327952, 'rear_ttc_s': inf, 'rear_gap_m': 93.70552853364308}} min_ttc_s=inf finite_ttc_count=0
+[REWARD DEBUG] progress=2.597, speed=25.97m/s, target_speed=40.00m/s, safety_penalty=0.000, lane_change_cost=0.010, lane_change_accepted=True, total=2.587
+[TTC REWARD] disabled; TTC is recorded for episode-level evaluation, not used as a per-step action override.
+[LANE ACTION MASK][GEOMETRY ONLY] current_lane=2 mask=[True, True] adjacent_targets=[1] ttc_veto=False
+[INSTANT STEP] source_lane=2 requested=KEEP target_lane=2 lane_changed=False executed_lane=2 accel=-0.622 collision=False
+[TTC REWARD INPUT] source=post_step physical_lane=2 relevant_lanes=[2] lane_details={2: {'front_vehicle_id': 2170168322960, 'front_ttc_s': inf, 'front_gap_m': 52.75183211546454, 'rear_vehicle_id': 2170168327952, 'rear_ttc_s': inf, 'rear_gap_m': 94.71891851974272}} min_ttc_s=inf finite_ttc_count=0
+[REWARD DEBUG] progress=2.535, speed=25.35m/s, target_speed=40.00m/s, safety_penalty=0.000, lane_change_cost=0.000, lane_change_accepted=False, total=2.535
+[TTC REWARD] disabled; TTC is recorded for episode-level evaluation, not used as a per-step action override.
+[LANE ACTION MASK][GEOMETRY ONLY] current_lane=2 mask=[True, True] adjacent_targets=[1] ttc_veto=False
+[INSTANT STEP] source_lane=2 requested=KEEP target_lane=2 lane_changed=False executed_lane=2 accel=0.949 collision=False
+[TTC REWARD INPUT] source=post_step physical_lane=2 relevant_lanes=[2] lane_details={2: {'front_vehicle_id': 2170168322960, 'front_ttc_s': inf, 'front_gap_m': 52.981077747632355, 'rear_vehicle_id': 2170168327952, 'rear_ttc_s': inf, 'rear_gap_m': 95.60799759275639}} min_ttc_s=inf finite_ttc_count=0
+[REWARD DEBUG] progress=2.630, speed=26.30m/s, target_speed=40.00m/s, safety_penalty=0.000, lane_change_cost=0.000, lane_change_accepted=False, total=2.630
+[TTC REWARD] disabled; TTC is recorded for episode-level evaluation, not used as a per-step action override.
+[LANE ACTION MASK][GEOMETRY ONLY] current_lane=2 mask=[True, True] adjacent_targets=[1] ttc_veto=False
+[TARGET LANE SELECTOR][NO HARD VETO] source_lane=2 selected_lane=1 utility=0.567 front_ttc=3.894 rear_ttc=inf candidates=[{'target_lane': 1, 'utility': 0.5669013067751071, 'front_gap': 14.03892559014264, 'rear_gap': 57.63448148121532, 'front_ttc': 3.8940901765492586, 'rear_ttc': inf, 'front_speed': 22.69386497934691}]
+[INSTANT STEP] source_lane=2 requested=CHANGE target_lane=1 lane_changed=True executed_lane=1 accel=0.700 collision=False
+[TTC REWARD INPUT] source=post_step physical_lane=1 relevant_lanes=[1] lane_details={1: {'front_vehicle_id': 2170168313552, 'front_ttc_s': 3.093250651160922, 'front_gap_m': 13.317888071561981, 'rear_vehicle_id': 2170168325776, 'rear_ttc_s': inf, 'rear_gap_m': 58.9454691879551}} min_ttc_s=3.093 finite_ttc_count=1
+[REWARD DEBUG] progress=2.700, speed=27.00m/s, target_speed=40.00m/s, safety_penalty=0.000, lane_change_cost=0.010, lane_change_accepted=True, total=2.690
+[TTC REWARD] disabled; TTC is recorded for episode-level evaluation, not used as a per-step action override.
+[LANE ACTION MASK][GEOMETRY ONLY] current_lane=1 mask=[True, True] adjacent_targets=[0, 2] ttc_veto=False
+[INSTANT STEP] source_lane=1 requested=KEEP target_lane=1 lane_changed=False executed_lane=1 accel=0.926 collision=False
+[TTC REWARD INPUT] source=post_step physical_lane=1 relevant_lanes=[1] lane_details={1: {'front_vehicle_id': 2170168313552, 'front_ttc_s': 2.3812587935490934, 'front_gap_m': 12.456794705813365, 'rear_vehicle_id': 2170168325776, 'rear_ttc_s': inf, 'rear_gap_m': 60.396512741862836}} min_ttc_s=2.381 finite_ttc_count=1
+[REWARD DEBUG] progress=2.793, speed=27.93m/s, target_speed=40.00m/s, safety_penalty=0.000, lane_change_cost=0.000, lane_change_accepted=False, total=2.793
+[TTC REWARD] disabled; TTC is recorded for episode-level evaluation, not used as a per-step action override.
+[LANE ACTION MASK][GEOMETRY ONLY] current_lane=1 mask=[True, True] adjacent_targets=[0, 2] ttc_veto=False
+[TARGET LANE SELECTOR][NO HARD VETO] source_lane=1 selected_lane=2 utility=0.993 front_ttc=37.038 rear_ttc=inf candidates=[{'target_lane': 0, 'utility': 0.7157598961011734, 'front_gap': 49.85300957754163, 'rear_gap': 13.031245117685671, 'front_ttc': 11.231021829429142, 'rear_ttc': 6.280255955498143, 'front_speed': 23.486178769217954}, {'target_lane': 2, 'utility': 0.9928287326559253, 'front_gap': 52.91989631299339, 'rear_gap': 97.90582843775834, 'front_ttc': 37.03782158372272, 'rear_ttc': inf, 'front_speed': 26.496238603572902}]
+[INSTANT STEP] source_lane=1 requested=CHANGE target_lane=2 lane_changed=True executed_lane=2 accel=0.215 collision=False
+[TTC REWARD INPUT] source=post_step physical_lane=2 relevant_lanes=[2] lane_details={2: {'front_vehicle_id': 2170168322960, 'front_ttc_s': 32.01998884363078, 'front_gap_m': 52.634134926118236, 'rear_vehicle_id': 2170168327952, 'rear_ttc_s': inf, 'rear_gap_m': 99.30991452981499}} min_ttc_s=32.020 finite_ttc_count=1
+[REWARD DEBUG] progress=2.814, speed=28.14m/s, target_speed=40.00m/s, safety_penalty=0.000, lane_change_cost=0.010, lane_change_accepted=True, total=2.804
+[TTC REWARD] disabled; TTC is recorded for episode-level evaluation, not used as a per-step action override.
+[LANE ACTION MASK][GEOMETRY ONLY] current_lane=2 mask=[True, True] adjacent_targets=[1] ttc_veto=False
+[INSTANT STEP] source_lane=2 requested=KEEP target_lane=2 lane_changed=False executed_lane=2 accel=0.363 collision=False
+[TTC REWARD INPUT] source=post_step physical_lane=2 relevant_lanes=[2] lane_details={2: {'front_vehicle_id': 2170168322960, 'front_ttc_s': 26.063226622321032, 'front_gap_m': 52.30537694195306, 'rear_vehicle_id': 2170168327952, 'rear_ttc_s': inf, 'rear_gap_m': 100.75699721916166}} min_ttc_s=26.063 finite_ttc_count=1
+[REWARD DEBUG] progress=2.850, speed=28.50m/s, target_speed=40.00m/s, safety_penalty=0.000, lane_change_cost=0.000, lane_change_accepted=False, total=2.850
+[TTC REWARD] disabled; TTC is recorded for episode-level evaluation, not used as a per-step action override.
+[LANE ACTION MASK][GEOMETRY ONLY] current_lane=2 mask=[True, True] adjacent_targets=[1] ttc_veto=False
+[TARGET LANE SELECTOR][NO HARD VETO] source_lane=2 selected_lane=1 utility=0.518 front_ttc=1.777 rear_ttc=inf candidates=[{'target_lane': 1, 'utility': 0.5180395213854134, 'front_gap': 10.321325885082729, 'rear_gap': 63.711881938911716, 'front_ttc': 1.7767088902381587, 'rear_ttc': inf, 'front_speed': 22.69386497934691}]
+[INSTANT STEP] source_lane=2 requested=CHANGE target_lane=1 lane_changed=True executed_lane=1 accel=0.354 collision=False
+[TTC REWARD INPUT] source=post_step physical_lane=1 relevant_lanes=[1] lane_details={1: {'front_vehicle_id': 2170168313552, 'front_ttc_s': 1.4860286064826382, 'front_gap_m': 9.159478162949824, 'rear_vehicle_id': 2170168325776, 'rear_ttc_s': inf, 'rear_gap_m': 65.46367984920374}} min_ttc_s=1.486 finite_ttc_count=1
+[REWARD DEBUG] progress=2.886, speed=28.86m/s, target_speed=40.00m/s, safety_penalty=0.000, lane_change_cost=0.010, lane_change_accepted=True, total=2.876
+[TTC REWARD] disabled; TTC is recorded for episode-level evaluation, not used as a per-step action override.
+[LANE ACTION MASK][GEOMETRY ONLY] current_lane=1 mask=[True, True] adjacent_targets=[0, 2] ttc_veto=False
+[TARGET LANE SELECTOR][NO HARD VETO] source_lane=1 selected_lane=2 utility=0.981 front_ttc=21.981 rear_ttc=inf candidates=[{'target_lane': 0, 'utility': 0.6824973953901874, 'front_gap': 47.03108130860062, 'rear_gap': 11.944880648157437, 'front_ttc': 8.75580759439572, 'rear_ttc': 10.455901208814103, 'front_speed': 23.486178769217954}, {'target_lane': 2, 'utility': 0.9813779076309771, 'front_gap': 51.904003944665305, 'rear_gap': 102.2766949216309, 'front_ttc': 21.980594871881888, 'rear_ttc': inf, 'front_speed': 26.496238603572902}]
+[INSTANT STEP] source_lane=1 requested=CHANGE target_lane=2 lane_changed=True executed_lane=2 accel=-0.367 collision=False
+[TTC REWARD INPUT] source=post_step physical_lane=2 relevant_lanes=[2] lane_details={2: {'front_vehicle_id': 2170168322960, 'front_ttc_s': 25.790141294357344, 'front_gap_m': 51.431732795979826, 'rear_vehicle_id': 2170168327952, 'rear_ttc_s': inf, 'rear_gap_m': 103.86729077549788}} min_ttc_s=25.790 finite_ttc_count=1
+[REWARD DEBUG] progress=2.849, speed=28.49m/s, target_speed=40.00m/s, safety_penalty=0.000, lane_change_cost=0.010, lane_change_accepted=True, total=2.839
+[TTC REWARD] disabled; TTC is recorded for episode-level evaluation, not used as a per-step action override.
+[LANE ACTION MASK][GEOMETRY ONLY] current_lane=2 mask=[True, True] adjacent_targets=[1] ttc_veto=False
+[TARGET LANE SELECTOR][NO HARD VETO] source_lane=2 selected_lane=1 utility=0.489 front_ttc=1.367 rear_ttc=inf candidates=[{'target_lane': 1, 'utility': 0.48942467668317735, 'front_gap': 7.926732289419192, 'rear_gap': 67.2863759108935, 'front_ttc': 1.3674763798191283, 'rear_ttc': inf, 'front_speed': 22.69386497934691}]
+[INSTANT STEP] source_lane=2 requested=CHANGE target_lane=1 lane_changed=True executed_lane=1 accel=-0.728 collision=False
+[TTC REWARD INPUT] source=post_step physical_lane=1 relevant_lanes=[1] lane_details={1: {'front_vehicle_id': 2170168313552, 'front_ttc_s': 1.3351249145380721, 'front_gap_m': 6.767409553553364, 'rear_vehicle_id': 2170168325776, 'rear_ttc_s': inf, 'rear_gap_m': 69.03564883491845}} min_ttc_s=1.335 finite_ttc_count=1
+[REWARD DEBUG] progress=2.776, speed=27.76m/s, target_speed=40.00m/s, safety_penalty=0.000, lane_change_cost=0.010, lane_change_accepted=True, total=2.766
+[TTC REWARD] disabled; TTC is recorded for episode-level evaluation, not used as a per-step action override.
+[LANE ACTION MASK][GEOMETRY ONLY] current_lane=1 mask=[True, True] adjacent_targets=[0, 2] ttc_veto=False
+[TARGET LANE SELECTOR][NO HARD VETO] source_lane=1 selected_lane=2 utility=0.974 front_ttc=40.298 rear_ttc=inf candidates=[{'target_lane': 0, 'utility': 0.6536383207971863, 'front_gap': 44.955938215152514, 'rear_gap': 11.414495249292713, 'front_ttc': 10.512486156518571, 'rear_ttc': 5.101704259475914, 'front_speed': 23.486178769217954}, {'target_lane': 2, 'utility': 0.9741142912497083, 'front_gap': 51.03288478495915, 'rear_gap': 105.38446349170005, 'front_ttc': 40.298470787868574, 'rear_ttc': inf, 'front_speed': 26.496238603572902}]
+[INSTANT STEP] source_lane=1 requested=CHANGE target_lane=2 lane_changed=True executed_lane=2 accel=-0.871 collision=False
+[TTC REWARD INPUT] source=post_step physical_lane=2 relevant_lanes=[2] lane_details={2: {'front_vehicle_id': 2170168322960, 'front_ttc_s': 128.3571922792206, 'front_gap_m': 50.77961023737845, 'rear_vehicle_id': 2170168327952, 'rear_ttc_s': inf, 'rear_gap_m': 106.75606274446224}} min_ttc_s=128.357 finite_ttc_count=1
+[REWARD DEBUG] progress=2.689, speed=26.89m/s, target_speed=40.00m/s, safety_penalty=0.000, lane_change_cost=0.010, lane_change_accepted=True, total=2.679
+[TTC REWARD] disabled; TTC is recorded for episode-level evaluation, not used as a per-step action override.
+[LANE ACTION MASK][GEOMETRY ONLY] current_lane=2 mask=[True, True] adjacent_targets=[1] ttc_veto=False
+[TARGET LANE SELECTOR][NO HARD VETO] source_lane=2 selected_lane=1 utility=0.468 front_ttc=1.371 rear_ttc=inf candidates=[{'target_lane': 1, 'utility': 0.46773538587267616, 'front_gap': 5.753660281127509, 'rear_gap': 70.63934829550342, 'front_ttc': 1.3705765510503847, 'rear_ttc': inf, 'front_speed': 22.69386497934691}]
+[INSTANT STEP] source_lane=2 requested=CHANGE target_lane=1 lane_changed=True executed_lane=1 accel=-0.095 collision=False
+[TTC REWARD INPUT] source=post_step physical_lane=1 relevant_lanes=[1] lane_details={1: {'front_vehicle_id': 2170168313552, 'front_ttc_s': 1.197667120371925, 'front_gap_m': 4.914063211307848, 'rear_vehicle_id': 2170168325776, 'rear_ttc_s': inf, 'rear_gap_m': 72.06889555348221}} min_ttc_s=1.198 finite_ttc_count=1
+[REWARD DEBUG] progress=2.680, speed=26.80m/s, target_speed=40.00m/s, safety_penalty=0.000, lane_change_cost=0.010, lane_change_accepted=True, total=2.670
+[TTC REWARD] disabled; TTC is recorded for episode-level evaluation, not used as a per-step action override.
+[LANE ACTION MASK][GEOMETRY ONLY] current_lane=1 mask=[True, True] adjacent_targets=[0, 2] ttc_veto=False
+[TARGET LANE SELECTOR][NO HARD VETO] source_lane=1 selected_lane=2 utility=0.972 front_ttc=168.633 rear_ttc=inf candidates=[{'target_lane': 0, 'utility': 0.6269081474681948, 'front_gap': 43.419517388855354, 'rear_gap': 10.345387583277045, 'front_ttc': 13.114844232236672, 'rear_ttc': 3.2297989147563544, 'front_speed': 23.486178769217954}, {'target_lane': 2, 'utility': 0.9721642395023795, 'front_gap': 50.70048789240394, 'rear_gap': 107.95350979461824, 'front_ttc': 168.63309948707666, 'rear_ttc': inf, 'front_speed': 26.496238603572902}]
+[INSTANT STEP] source_lane=1 requested=CHANGE target_lane=2 lane_changed=True executed_lane=2 accel=0.793 collision=False
+[TTC REWARD INPUT] source=post_step physical_lane=2 relevant_lanes=[2] lane_details={2: {'front_vehicle_id': 2170168322960, 'front_ttc_s': 46.31067908626674, 'front_gap_m': 50.64035676981098, 'rear_vehicle_id': 2170168327952, 'rear_ttc_s': inf, 'rear_gap_m': 109.1319656223927}} min_ttc_s=46.311 finite_ttc_count=1
+[REWARD DEBUG] progress=2.759, speed=27.59m/s, target_speed=40.00m/s, safety_penalty=0.000, lane_change_cost=0.010, lane_change_accepted=True, total=2.749
+[TTC REWARD] disabled; TTC is recorded for episode-level evaluation, not used as a per-step action override.
+[LANE ACTION MASK][GEOMETRY ONLY] current_lane=2 mask=[True, True] adjacent_targets=[1] ttc_veto=False
+[TARGET LANE SELECTOR][NO HARD VETO] source_lane=2 selected_lane=1 utility=0.442 front_ttc=0.836 rear_ttc=inf candidates=[{'target_lane': 1, 'utility': 0.44192389097079954, 'front_gap': 4.093457363869732, 'rear_gap': 73.47945158907945, 'front_ttc': 0.8361049268780024, 'rear_ttc': inf, 'front_speed': 22.69386497934691}]
+[INSTANT STEP] source_lane=2 requested=CHANGE target_lane=1 lane_changed=True executed_lane=1 accel=0.877 collision=False
+[TTC REWARD INPUT] source=post_step physical_lane=1 relevant_lanes=[1] lane_details={1: {'front_vehicle_id': 2170168313552, 'front_ttc_s': 0.5394565436232631, 'front_gap_m': 3.1142842404306634, 'rear_vehicle_id': 2170168325776, 'rear_ttc_s': inf, 'rear_gap_m': 75.04857490067764}} min_ttc_s=0.539 finite_ttc_count=1
+[REWARD DEBUG] progress=2.847, speed=28.47m/s, target_speed=40.00m/s, safety_penalty=0.000, lane_change_cost=0.010, lane_change_accepted=True, total=2.837
+[TTC REWARD] disabled; TTC is recorded for episode-level evaluation, not used as a per-step action override.
+[LANE ACTION MASK][GEOMETRY ONLY] current_lane=1 mask=[True, True] adjacent_targets=[0, 2] ttc_veto=False
+[TARGET LANE SELECTOR][NO HARD VETO] source_lane=1 selected_lane=2 utility=0.967 front_ttc=25.587 rear_ttc=inf candidates=[{'target_lane': 0, 'utility': 0.6089876403168948, 'front_gap': 41.936663933926525, 'rear_gap': 9.222712545893046, 'front_ttc': 8.419851597120969, 'rear_ttc': 6.015602292541602, 'front_speed': 23.486178769217954}, {'target_lane': 2, 'utility': 0.9669971024909036, 'front_gap': 50.42165837121706, 'rear_gap': 110.4689887261681, 'front_ttc': 25.586576143587553, 'rear_ttc': inf, 'front_speed': 26.496238603572902}]
+[INSTANT STEP] source_lane=1 requested=CHANGE target_lane=2 lane_changed=True executed_lane=2 accel=0.913 collision=False
+[TTC REWARD INPUT] source=post_step physical_lane=2 relevant_lanes=[2] lane_details={2: {'front_vehicle_id': 2170168322960, 'front_ttc_s': 17.347293997870356, 'front_gap_m': 50.02753249764754, 'rear_vehicle_id': 2170168327952, 'rear_ttc_s': inf, 'rear_gap_m': 111.98143930491912}} min_ttc_s=17.347 finite_ttc_count=1
+[REWARD DEBUG] progress=2.938, speed=29.38m/s, target_speed=40.00m/s, safety_penalty=0.000, lane_change_cost=0.010, lane_change_accepted=True, total=2.928
+[TTC REWARD] disabled; TTC is recorded for episode-level evaluation, not used as a per-step action override.
+[LANE ACTION MASK][GEOMETRY ONLY] current_lane=2 mask=[True, True] adjacent_targets=[1] ttc_veto=False
+[INSTANT STEP] source_lane=2 requested=KEEP target_lane=2 lane_changed=False executed_lane=2 accel=0.134 collision=False
+[TTC REWARD INPUT] source=post_step physical_lane=2 relevant_lanes=[2] lane_details={2: {'front_vehicle_id': 2170168322960, 'front_ttc_s': 16.385262436682577, 'front_gap_m': 49.45075628685879, 'rear_vehicle_id': 2170168327952, 'rear_ttc_s': inf, 'rear_gap_m': 113.67654022088936}} min_ttc_s=16.385 finite_ttc_count=1
+[REWARD DEBUG] progress=2.951, speed=29.51m/s, target_speed=40.00m/s, safety_penalty=0.000, lane_change_cost=0.000, lane_change_accepted=False, total=2.951
+[TTC REWARD] disabled; TTC is recorded for episode-level evaluation, not used as a per-step action override.
+[LANE ACTION MASK][GEOMETRY ONLY] current_lane=2 mask=[True, True] adjacent_targets=[1] ttc_veto=False
+[TRAFFIC SPAWN] lane=2 side=rear gap=88.2m range=120.0m speed=30.00m/s id=2170051408720
+[INSTANT STEP] source_lane=2 requested=KEEP target_lane=2 lane_changed=False executed_lane=2 accel=0.006 collision=False
+[TTC REWARD INPUT] source=post_step physical_lane=2 relevant_lanes=[2] lane_details={2: {'front_vehicle_id': 2170168322960, 'front_ttc_s': 16.155723633100457, 'front_gap_m': 48.84715586876416, 'rear_vehicle_id': 2170051408720, 'rear_ttc_s': 173.32030223194613, 'rear_gap_m': 83.23555876614901}} min_ttc_s=16.156 finite_ttc_count=2
+[REWARD DEBUG] progress=2.952, speed=29.52m/s, target_speed=40.00m/s, safety_penalty=0.000, lane_change_cost=0.000, lane_change_accepted=False, total=2.952
+[TTC REWARD] disabled; TTC is recorded for episode-level evaluation, not used as a per-step action override.
+[LANE ACTION MASK][GEOMETRY ONLY] current_lane=2 mask=[True, True] adjacent_targets=[1] ttc_veto=False
+[INSTANT STEP] source_lane=2 requested=KEEP target_lane=2 lane_changed=False executed_lane=2 accel=0.505 collision=False
+[TTC REWARD INPUT] source=post_step physical_lane=2 relevant_lanes=[2] lane_details={2: {'front_vehicle_id': 2170168322960, 'front_ttc_s': 13.673449030276796, 'front_gap_m': 48.242451839677074, 'rear_vehicle_id': 2170051408720, 'rear_ttc_s': inf, 'rear_gap_m': 83.13951051595063}} min_ttc_s=13.673 finite_ttc_count=1
+[REWARD DEBUG] progress=3.002, speed=30.02m/s, target_speed=40.00m/s, safety_penalty=0.000, lane_change_cost=0.000, lane_change_accepted=False, total=3.002
+[TTC REWARD] disabled; TTC is recorded for episode-level evaluation, not used as a per-step action override.
+[LANE ACTION MASK][GEOMETRY ONLY] current_lane=2 mask=[True, True] adjacent_targets=[1] ttc_veto=False
+[INSTANT STEP] source_lane=2 requested=KEEP target_lane=2 lane_changed=False executed_lane=2 accel=0.596 collision=False
+[TTC REWARD INPUT] source=post_step physical_lane=2 relevant_lanes=[2] lane_details={2: {'front_vehicle_id': 2170168322960, 'front_ttc_s': 11.527335273204622, 'front_gap_m': 47.536814926373665, 'rear_vehicle_id': 2170051408720, 'rear_ttc_s': inf, 'rear_gap_m': 83.1443951499686}} min_ttc_s=11.527 finite_ttc_count=1
+[REWARD DEBUG] progress=3.062, speed=30.62m/s, target_speed=40.00m/s, safety_penalty=0.000, lane_change_cost=0.000, lane_change_accepted=False, total=3.062
+[TTC REWARD] disabled; TTC is recorded for episode-level evaluation, not used as a per-step action override.
+[LANE ACTION MASK][GEOMETRY ONLY] current_lane=2 mask=[True, True] adjacent_targets=[1] ttc_veto=False
+[TRAFFIC SPAWN] lane=1 side=front gap=32.0m range=120.0m speed=30.00m/s id=2170858800912
+[INSTANT STEP] source_lane=2 requested=KEEP target_lane=2 lane_changed=False executed_lane=2 accel=-0.902 collision=False
+[TTC REWARD INPUT] source=post_step physical_lane=2 relevant_lanes=[2] lane_details={2: {'front_vehicle_id': 2170168322960, 'front_ttc_s': 14.496409320058179, 'front_gap_m': 46.712048164590044, 'rear_vehicle_id': 2170051408720, 'rear_ttc_s': 295.8625545827614, 'rear_gap_m': 83.26840963246678}} min_ttc_s=14.496 finite_ttc_count=2
+[REWARD DEBUG] progress=2.972, speed=29.72m/s, target_speed=40.00m/s, safety_penalty=0.000, lane_change_cost=0.000, lane_change_accepted=False, total=2.972
+[TTC REWARD] disabled; TTC is recorded for episode-level evaluation, not used as a per-step action override.
+[LANE ACTION MASK][GEOMETRY ONLY] current_lane=2 mask=[True, True] adjacent_targets=[1] ttc_veto=False
+[INSTANT STEP] source_lane=2 requested=KEEP target_lane=2 lane_changed=False executed_lane=2 accel=0.758 collision=False
+[TTC REWARD INPUT] source=post_step physical_lane=2 relevant_lanes=[2] lane_details={2: {'front_vehicle_id': 2170168322960, 'front_ttc_s': 11.573465509580467, 'front_gap_m': 46.06758446143073, 'rear_vehicle_id': 2170051408720, 'rear_ttc_s': inf, 'rear_gap_m': 83.21212105634066}} min_ttc_s=11.573 finite_ttc_count=1
+[REWARD DEBUG] progress=3.048, speed=30.48m/s, target_speed=40.00m/s, safety_penalty=0.000, lane_change_cost=0.000, lane_change_accepted=False, total=3.048
+[TTC REWARD] disabled; TTC is recorded for episode-level evaluation, not used as a per-step action override.
+[LANE ACTION MASK][GEOMETRY ONLY] current_lane=2 mask=[True, True] adjacent_targets=[1] ttc_veto=False
+[TARGET LANE SELECTOR][NO HARD VETO] source_lane=2 selected_lane=1 utility=0.756 front_ttc=56.672 rear_ttc=inf candidates=[{'target_lane': 1, 'utility': 0.7563467275255135, 'front_gap': 27.014718990384324, 'rear_gap': 88.85562320149376, 'front_ttc': 56.67179523972452, 'rear_ttc': inf, 'front_speed': 30.0}]
+[INSTANT STEP] source_lane=2 requested=CHANGE target_lane=1 lane_changed=True executed_lane=1 accel=0.832 collision=False
+[TTC REWARD INPUT] source=post_step physical_lane=1 relevant_lanes=[1] lane_details={1: {'front_vehicle_id': 2170858800912, 'front_ttc_s': 20.563829319710866, 'front_gap_m': 26.91938155180094, 'rear_vehicle_id': 2170168325776, 'rear_ttc_s': inf, 'rear_gap_m': 91.00213783236683}} min_ttc_s=20.564 finite_ttc_count=1
+[REWARD DEBUG] progress=3.131, speed=31.31m/s, target_speed=40.00m/s, safety_penalty=0.000, lane_change_cost=0.010, lane_change_accepted=True, total=3.121
+[TTC REWARD] disabled; TTC is recorded for episode-level evaluation, not used as a per-step action override.
+[LANE ACTION MASK][GEOMETRY ONLY] current_lane=1 mask=[True, True] adjacent_targets=[0, 2] ttc_veto=False
+[TARGET LANE SELECTOR][NO HARD VETO] source_lane=1 selected_lane=2 utility=0.911 front_ttc=9.406 rear_ttc=inf candidates=[{'target_lane': 0, 'utility': 0.5101942779441111, 'front_gap': 31.97040457130356, 'rear_gap': 8.766857939264696, 'front_ttc': 4.086778863167447, 'rear_ttc': inf, 'front_speed': 23.486178769217954}, {'target_lane': 2, 'utility': 0.9111093538117485, 'front_gap': 45.2714947435619, 'rear_gap': 83.30745849492405, 'front_ttc': 9.406426603845123, 'rear_ttc': inf, 'front_speed': 26.496238603572902}]
+[INSTANT STEP] source_lane=1 requested=CHANGE target_lane=2 lane_changed=True executed_lane=2 accel=-0.516 collision=False
+[TTC REWARD INPUT] source=post_step physical_lane=2 relevant_lanes=[2] lane_details={2: {'front_vehicle_id': 2170168322960, 'front_ttc_s': 10.311459300370084, 'front_gap_m': 44.30892953893772, 'rear_vehicle_id': 2170051408720, 'rear_ttc_s': inf, 'rear_gap_m': 83.5692714202628}} min_ttc_s=10.311 finite_ttc_count=1
+[REWARD DEBUG] progress=3.079, speed=30.79m/s, target_speed=40.00m/s, safety_penalty=0.000, lane_change_cost=0.010, lane_change_accepted=True, total=3.069
+[TTC REWARD] disabled; TTC is recorded for episode-level evaluation, not used as a per-step action override.
+[LANE ACTION MASK][GEOMETRY ONLY] current_lane=2 mask=[True, True] adjacent_targets=[1] ttc_veto=False
+[TARGET LANE SELECTOR][NO HARD VETO] source_lane=2 selected_lane=1 utility=0.752 front_ttc=33.604 rear_ttc=inf candidates=[{'target_lane': 1, 'utility': 0.7519082798744985, 'front_gap': 26.657568626462194, 'rear_gap': 93.31512794999526, 'front_ttc': 33.60357058176061, 'rear_ttc': inf, 'front_speed': 30.0}]
+[INSTANT STEP] source_lane=2 requested=CHANGE target_lane=1 lane_changed=True executed_lane=1 accel=0.300 collision=False
+[TTC REWARD INPUT] source=post_step physical_lane=1 relevant_lanes=[1] lane_details={1: {'front_vehicle_id': 2170858800912, 'front_ttc_s': 24.24334266141121, 'front_gap_m': 26.4989094830143, 'rear_vehicle_id': 2170168325776, 'rear_ttc_s': inf, 'rear_gap_m': 95.52496428573284}} min_ttc_s=24.243 finite_ttc_count=1
+[REWARD DEBUG] progress=3.109, speed=31.09m/s, target_speed=40.00m/s, safety_penalty=0.000, lane_change_cost=0.010, lane_change_accepted=True, total=3.099
+[TTC REWARD] disabled; TTC is recorded for episode-level evaluation, not used as a per-step action override.
+[LANE ACTION MASK][GEOMETRY ONLY] current_lane=1 mask=[True, True] adjacent_targets=[0, 2] ttc_veto=False
+[INSTANT STEP] source_lane=1 requested=KEEP target_lane=1 lane_changed=False executed_lane=1 accel=0.101 collision=False
+[TTC REWARD INPUT] source=post_step physical_lane=1 relevant_lanes=[1] lane_details={1: {'front_vehicle_id': 2170858800912, 'front_ttc_s': 22.014894003681192, 'front_gap_m': 26.280301761685564, 'rear_vehicle_id': 2170168325776, 'rear_ttc_s': inf, 'rear_gap_m': 97.79474919935126}} min_ttc_s=22.015 finite_ttc_count=1
+[REWARD DEBUG] progress=3.119, speed=31.19m/s, target_speed=40.00m/s, safety_penalty=0.000, lane_change_cost=0.000, lane_change_accepted=False, total=3.119
+[TTC REWARD] disabled; TTC is recorded for episode-level evaluation, not used as a per-step action override.
+[LANE ACTION MASK][GEOMETRY ONLY] current_lane=1 mask=[True, True] adjacent_targets=[0, 2] ttc_veto=False
+[TARGET LANE SELECTOR][NO HARD VETO] source_lane=1 selected_lane=2 utility=0.883 front_ttc=9.054 rear_ttc=inf candidates=[{'target_lane': 0, 'utility': 0.46727036506320707, 'front_gap': 27.423032042718944, 'rear_gap': 9.40593772938007, 'front_ttc': 3.557933836593401, 'rear_ttc': inf, 'front_speed': 23.486178769217954}, {'target_lane': 2, 'utility': 0.8834431781331268, 'front_gap': 42.53015811559021, 'rear_gap': 83.94653828503942, 'front_ttc': 9.053761760297435, 'rear_ttc': inf, 'front_speed': 26.496238603572902}]
+[INSTANT STEP] source_lane=1 requested=CHANGE target_lane=2 lane_changed=True executed_lane=2 accel=0.704 collision=False
+[TTC REWARD INPUT] source=post_step physical_lane=2 relevant_lanes=[2] lane_details={2: {'front_vehicle_id': 2170168322960, 'front_ttc_s': 7.699749734892486, 'front_gap_m': 41.59065563603315, 'rear_vehicle_id': 2170051408720, 'rear_ttc_s': inf, 'rear_gap_m': 84.18528848531105}} min_ttc_s=7.700 finite_ttc_count=1
+[REWARD DEBUG] progress=3.190, speed=31.90m/s, target_speed=40.00m/s, safety_penalty=0.000, lane_change_cost=0.010, lane_change_accepted=True, total=3.180
+[TTC REWARD] disabled; TTC is recorded for episode-level evaluation, not used as a per-step action override.
+[LANE ACTION MASK][GEOMETRY ONLY] current_lane=2 mask=[True, True] adjacent_targets=[1] ttc_veto=False
+[INSTANT STEP] source_lane=2 requested=KEEP target_lane=2 lane_changed=False executed_lane=2 accel=0.899 collision=False
+[TTC REWARD INPUT] source=post_step physical_lane=2 relevant_lanes=[2] lane_details={2: {'front_vehicle_id': 2170168322960, 'front_ttc_s': 6.4296873586466505, 'front_gap_m': 40.51034375401031, 'rear_vehicle_id': 2170051408720, 'rear_ttc_s': inf, 'rear_gap_m': 84.56484808804845}} min_ttc_s=6.430 finite_ttc_count=1
+[REWARD DEBUG] progress=3.280, speed=32.80m/s, target_speed=40.00m/s, safety_penalty=0.000, lane_change_cost=0.000, lane_change_accepted=False, total=3.280
+[TTC REWARD] disabled; TTC is recorded for episode-level evaluation, not used as a per-step action override.
+[LANE ACTION MASK][GEOMETRY ONLY] current_lane=2 mask=[True, True] adjacent_targets=[1] ttc_veto=False
+[TARGET LANE SELECTOR][NO HARD VETO] source_lane=2 selected_lane=1 utility=0.737 front_ttc=9.176 rear_ttc=inf candidates=[{'target_lane': 1, 'utility': 0.7367493718598478, 'front_gap': 25.661991958676538, 'rear_gap': 102.51541338693966, 'front_ttc': 9.175634536100576, 'rear_ttc': inf, 'front_speed': 30.0}]
+[INSTANT STEP] source_lane=2 requested=CHANGE target_lane=1 lane_changed=True executed_lane=1 accel=-0.660 collision=False
+[TTC REWARD INPUT] source=post_step physical_lane=1 relevant_lanes=[1] lane_details={1: {'front_vehicle_id': 2170858800912, 'front_ttc_s': 11.750756483773472, 'front_gap_m': 25.10264117246743, 'rear_vehicle_id': 2170168325776, 'rear_ttc_s': inf, 'rear_gap_m': 105.12594136543845}} min_ttc_s=11.751 finite_ttc_count=1
+[REWARD DEBUG] progress=3.214, speed=32.14m/s, target_speed=40.00m/s, safety_penalty=0.000, lane_change_cost=0.010, lane_change_accepted=True, total=3.204
+[TTC REWARD] disabled; TTC is recorded for episode-level evaluation, not used as a per-step action override.
+[LANE ACTION MASK][GEOMETRY ONLY] current_lane=1 mask=[True, True] adjacent_targets=[0, 2] ttc_veto=False
+[INSTANT STEP] source_lane=1 requested=KEEP target_lane=1 lane_changed=False executed_lane=1 accel=-0.786 collision=False
+[TTC REWARD INPUT] source=post_step physical_lane=1 relevant_lanes=[1] lane_details={1: {'front_vehicle_id': 2170858800912, 'front_ttc_s': 18.267996676589256, 'front_gap_m': 24.675389680920773, 'rear_vehicle_id': 2170168325776, 'rear_ttc_s': inf, 'rear_gap_m': 107.60437004927479}} min_ttc_s=18.268 finite_ttc_count=1
+[REWARD DEBUG] progress=3.135, speed=31.35m/s, target_speed=40.00m/s, safety_penalty=0.000, lane_change_cost=0.000, lane_change_accepted=False, total=3.135
+[TTC REWARD] disabled; TTC is recorded for episode-level evaluation, not used as a per-step action override.
+[LANE ACTION MASK][GEOMETRY ONLY] current_lane=1 mask=[True, True] adjacent_targets=[0, 2] ttc_veto=False
+[INSTANT STEP] source_lane=1 requested=KEEP target_lane=1 lane_changed=False executed_lane=1 accel=0.916 collision=False
+[TTC REWARD INPUT] source=post_step physical_lane=1 relevant_lanes=[1] lane_details={1: {'front_vehicle_id': 2170858800912, 'front_ttc_s': 10.765092016991032, 'front_gap_m': 24.40524085050697, 'rear_vehicle_id': 2170168325776, 'rear_ttc_s': inf, 'rear_gap_m': 109.92569607197828}} min_ttc_s=10.765 finite_ttc_count=1
+[REWARD DEBUG] progress=3.227, speed=32.27m/s, target_speed=40.00m/s, safety_penalty=0.000, lane_change_cost=0.000, lane_change_accepted=False, total=3.227
+[TTC REWARD] disabled; TTC is recorded for episode-level evaluation, not used as a per-step action override.
+[LANE ACTION MASK][GEOMETRY ONLY] current_lane=1 mask=[True, True] adjacent_targets=[0, 2] ttc_veto=False
+[INSTANT STEP] source_lane=1 requested=KEEP target_lane=1 lane_changed=False executed_lane=1 accel=-0.696 collision=False
+[TTC REWARD INPUT] source=post_step physical_lane=1 relevant_lanes=[1] lane_details={1: {'front_vehicle_id': 2170858800912, 'front_ttc_s': 15.24803713472611, 'front_gap_m': 23.95182641035194, 'rear_vehicle_id': 2170168325776, 'rear_ttc_s': inf, 'rear_gap_m': 112.430287704423}} min_ttc_s=15.248 finite_ttc_count=1
+[REWARD DEBUG] progress=3.157, speed=31.57m/s, target_speed=40.00m/s, safety_penalty=0.000, lane_change_cost=0.000, lane_change_accepted=False, total=3.157
+[TTC REWARD] disabled; TTC is recorded for episode-level evaluation, not used as a per-step action override.
+[LANE ACTION MASK][GEOMETRY ONLY] current_lane=1 mask=[True, True] adjacent_targets=[0, 2] ttc_veto=False
+[INSTANT STEP] source_lane=1 requested=KEEP target_lane=1 lane_changed=False executed_lane=1 accel=-0.992 collision=False
+[TTC REWARD INPUT] source=post_step physical_lane=1 relevant_lanes=[1] lane_details={1: {'front_vehicle_id': 2170858800912, 'front_ttc_s': 40.83600479842637, 'front_gap_m': 23.63766366010782, 'rear_vehicle_id': 2170168325776, 'rear_ttc_s': inf, 'rear_gap_m': 114.7956276469568}} min_ttc_s=40.836 finite_ttc_count=1
+[REWARD DEBUG] progress=3.058, speed=30.58m/s, target_speed=40.00m/s, safety_penalty=0.000, lane_change_cost=0.000, lane_change_accepted=False, total=3.058
+[TTC REWARD] disabled; TTC is recorded for episode-level evaluation, not used as a per-step action override.
+[LANE ACTION MASK][GEOMETRY ONLY] current_lane=1 mask=[True, True] adjacent_targets=[0, 2] ttc_veto=False
+[TARGET LANE SELECTOR][NO HARD VETO] source_lane=1 selected_lane=2 utility=0.808 front_ttc=8.569 rear_ttc=inf candidates=[{'target_lane': 0, 'utility': 0.360344298161942, 'front_gap': 15.6610442180463, 'rear_gap': 12.048575830957816, 'front_ttc': 2.2080620465297756, 'rear_ttc': inf, 'front_speed': 23.486178769217954}, {'target_lane': 2, 'utility': 0.8075859034752066, 'front_gap': 34.982254059014394, 'rear_gap': 86.58917638661717, 'front_ttc': 8.568610807884658, 'rear_ttc': inf, 'front_speed': 26.496238603572902}]
+[TRAFFIC SPAWN] lane=1 side=rear gap=64.9m range=120.0m speed=30.00m/s id=2170858810192
+[INSTANT STEP] source_lane=1 requested=CHANGE target_lane=2 lane_changed=True executed_lane=2 accel=-0.842 collision=False
+[TTC REWARD INPUT] source=post_step physical_lane=2 relevant_lanes=[2] lane_details={2: {'front_vehicle_id': 2170168322960, 'front_ttc_s': 10.544562906678946, 'front_gap_m': 34.165733041935994, 'rear_vehicle_id': 2170051408720, 'rear_ttc_s': 328.88447114788005, 'rear_gap_m': 86.70494512441013}} min_ttc_s=10.545 finite_ttc_count=2
+[REWARD DEBUG] progress=2.974, speed=29.74m/s, target_speed=40.00m/s, safety_penalty=0.000, lane_change_cost=0.010, lane_change_accepted=True, total=2.964
+[TTC REWARD] disabled; TTC is recorded for episode-level evaluation, not used as a per-step action override.
+[LANE ACTION MASK][GEOMETRY ONLY] current_lane=2 mask=[True, True] adjacent_targets=[1] ttc_veto=False
+[INSTANT STEP] source_lane=2 requested=KEEP target_lane=2 lane_changed=False executed_lane=2 accel=0.530 collision=False
+[TTC REWARD INPUT] source=post_step physical_lane=2 relevant_lanes=[2] lane_details={2: {'front_vehicle_id': 2170168322960, 'front_ttc_s': 8.890714171053668, 'front_gap_m': 33.51770745103556, 'rear_vehicle_id': 2170051408720, 'rear_ttc_s': inf, 'rear_gap_m': 86.65221843602512}} min_ttc_s=8.891 finite_ttc_count=1
+[REWARD DEBUG] progress=3.027, speed=30.27m/s, target_speed=40.00m/s, safety_penalty=0.000, lane_change_cost=0.000, lane_change_accepted=False, total=3.027
+[TTC REWARD] disabled; TTC is recorded for episode-level evaluation, not used as a per-step action override.
+[LANE ACTION MASK][GEOMETRY ONLY] current_lane=2 mask=[True, True] adjacent_targets=[1] ttc_veto=False
+[INSTANT STEP] source_lane=2 requested=KEEP target_lane=2 lane_changed=False executed_lane=2 accel=-0.453 collision=False
+[TTC REWARD INPUT] source=post_step physical_lane=2 relevant_lanes=[2] lane_details={2: {'front_vehicle_id': 2170168322960, 'front_ttc_s': 9.87903847464517, 'front_gap_m': 32.76371386163049, 'rear_vehicle_id': 2170051408720, 'rear_ttc_s': 462.9889922673133, 'rear_gap_m': 86.70545974614475}} min_ttc_s=9.879 finite_ttc_count=2
+[REWARD DEBUG] progress=2.981, speed=29.81m/s, target_speed=40.00m/s, safety_penalty=0.000, lane_change_cost=0.000, lane_change_accepted=False, total=2.981
+[TTC REWARD] disabled; TTC is recorded for episode-level evaluation, not used as a per-step action override.
+[LANE ACTION MASK][GEOMETRY ONLY] current_lane=2 mask=[True, True] adjacent_targets=[1] ttc_veto=False
+[TARGET LANE SELECTOR][NO HARD VETO] source_lane=2 selected_lane=1 utility=0.722 front_ttc=inf rear_ttc=319.664 candidates=[{'target_lane': 1, 'utility': 0.722479913145385, 'front_gap': 23.521380300580233, 'rear_gap': 59.864474040455605, 'front_ttc': inf, 'rear_ttc': 319.6637511611333, 'front_speed': 30.0}]
+[INSTANT STEP] source_lane=2 requested=CHANGE target_lane=1 lane_changed=True executed_lane=1 accel=-0.910 collision=False
+[TTC REWARD INPUT] source=post_step physical_lane=1 relevant_lanes=[1] lane_details={1: {'front_vehicle_id': 2170858800912, 'front_ttc_s': inf, 'front_gap_m': 23.5588349533665, 'rear_vehicle_id': 2170858810192, 'rear_ttc_s': 54.543054362834745, 'rear_gap_m': 59.82701938766934}} min_ttc_s=54.543 finite_ttc_count=1
+[REWARD DEBUG] progress=2.890, speed=28.90m/s, target_speed=40.00m/s, safety_penalty=0.000, lane_change_cost=0.010, lane_change_accepted=True, total=2.880
+[TTC REWARD] disabled; TTC is recorded for episode-level evaluation, not used as a per-step action override.
+[LANE ACTION MASK][GEOMETRY ONLY] current_lane=1 mask=[True, True] adjacent_targets=[0, 2] ttc_veto=False
+[INSTANT STEP] source_lane=1 requested=KEEP target_lane=1 lane_changed=False executed_lane=1 accel=0.667 collision=False
+[TTC REWARD INPUT] source=post_step physical_lane=1 relevant_lanes=[1] lane_details={1: {'front_vehicle_id': 2170858800912, 'front_ttc_s': inf, 'front_gap_m': 23.77821034437295, 'rear_vehicle_id': 2170858810192, 'rear_ttc_s': 138.75821401510976, 'rear_gap_m': 59.60764399666289}} min_ttc_s=138.758 finite_ttc_count=1
+[REWARD DEBUG] progress=2.957, speed=29.57m/s, target_speed=40.00m/s, safety_penalty=0.000, lane_change_cost=0.000, lane_change_accepted=False, total=2.957
+[TTC REWARD] disabled; TTC is recorded for episode-level evaluation, not used as a per-step action override.
+[LANE ACTION MASK][GEOMETRY ONLY] current_lane=1 mask=[True, True] adjacent_targets=[0, 2] ttc_veto=False
+[TARGET LANE SELECTOR][NO HARD VETO] source_lane=1 selected_lane=2 utility=0.775 front_ttc=10.285 rear_ttc=201.240 candidates=[{'target_lane': 0, 'utility': 0.28675677517633885, 'front_gap': 9.287769671529361, 'rear_gap': 11.908029146692684, 'front_ttc': 1.5265286358160108, 'rear_ttc': 27.720217509812226, 'front_speed': 23.486178769217954}, {'target_lane': 2, 'utility': 0.7747752544759914, 'front_gap': 31.619039346852333, 'rear_gap': 86.44862970235204, 'front_ttc': 10.285349869421621, 'rear_ttc': 201.2402547267847, 'front_speed': 26.496238603572902}]
+[INSTANT STEP] source_lane=1 requested=CHANGE target_lane=2 lane_changed=True executed_lane=2 accel=0.218 collision=False
+[TTC REWARD INPUT] source=post_step physical_lane=2 relevant_lanes=[2] lane_details={2: {'front_vehicle_id': 2170168322960, 'front_ttc_s': 9.418713481007964, 'front_gap_m': 31.00420290962319, 'rear_vehicle_id': 2170051408720, 'rear_ttc_s': 407.38056834785306, 'rear_gap_m': 86.36271386029574}} min_ttc_s=9.419 finite_ttc_count=2
+[REWARD DEBUG] progress=2.979, speed=29.79m/s, target_speed=40.00m/s, safety_penalty=0.000, lane_change_cost=0.010, lane_change_accepted=True, total=2.969
+[TTC REWARD] disabled; TTC is recorded for episode-level evaluation, not used as a per-step action override.
+[LANE ACTION MASK][GEOMETRY ONLY] current_lane=2 mask=[True, True] adjacent_targets=[1] ttc_veto=False
+[TARGET LANE SELECTOR][NO HARD VETO] source_lane=2 selected_lane=1 utility=0.726 front_ttc=inf rear_ttc=280.769 candidates=[{'target_lane': 1, 'utility': 0.7258750866277268, 'front_gap': 23.864126186429246, 'rear_gap': 59.52172815460659, 'front_ttc': inf, 'rear_ttc': 280.7692621134475, 'front_speed': 30.0}]
+[INSTANT STEP] source_lane=2 requested=CHANGE target_lane=1 lane_changed=True executed_lane=1 accel=0.239 collision=False
+[TTC REWARD INPUT] source=post_step physical_lane=1 relevant_lanes=[1] lane_details={1: {'front_vehicle_id': 2170858800912, 'front_ttc_s': inf, 'front_gap_m': 23.90652522092938, 'rear_vehicle_id': 2170858810192, 'rear_ttc_s': inf, 'rear_gap_m': 59.479329120106456}} min_ttc_s=inf finite_ttc_count=0
+[REWARD DEBUG] progress=3.003, speed=30.03m/s, target_speed=40.00m/s, safety_penalty=0.000, lane_change_cost=0.010, lane_change_accepted=True, total=2.993
+[TTC REWARD] disabled; TTC is recorded for episode-level evaluation, not used as a per-step action override.
+[LANE ACTION MASK][GEOMETRY ONLY] current_lane=1 mask=[True, True] adjacent_targets=[0, 2] ttc_veto=False
+[TARGET LANE SELECTOR][NO HARD VETO] source_lane=1 selected_lane=2 utility=0.761 front_ttc=8.596 rear_ttc=inf candidates=[{'target_lane': 0, 'utility': 0.25668414788290295, 'front_gap': 6.810556055772963, 'rear_gap': 11.779714270136253, 'front_ttc': 1.0412907697182472, 'rear_ttc': inf, 'front_speed': 23.486178769217954}, {'target_lane': 2, 'utility': 0.7612438246925308, 'front_gap': 30.345849664837885, 'rear_gap': 86.3203148257956, 'front_ttc': 8.595500734888725, 'rear_ttc': inf, 'front_speed': 26.496238603572902}]
+[INSTANT STEP] source_lane=1 requested=CHANGE target_lane=2 lane_changed=True executed_lane=2 accel=-0.966 collision=False
+[TTC REWARD INPUT] source=post_step physical_lane=2 relevant_lanes=[2] lane_details={2: {'front_vehicle_id': 2170168322960, 'front_ttc_s': 11.55980653194236, 'front_gap_m': 29.63976282706551, 'rear_vehicle_id': 2170051408720, 'rear_ttc_s': 91.86265623587252, 'rear_gap_m': 86.32564938428254}} min_ttc_s=11.560 finite_ttc_count=2
+[REWARD DEBUG] progress=2.906, speed=29.06m/s, target_speed=40.00m/s, safety_penalty=0.000, lane_change_cost=0.010, lane_change_accepted=True, total=2.896
+[TTC REWARD] disabled; TTC is recorded for episode-level evaluation, not used as a per-step action override.
+[LANE ACTION MASK][GEOMETRY ONLY] current_lane=2 mask=[True, True] adjacent_targets=[1] ttc_veto=False
+[TARGET LANE SELECTOR][NO HARD VETO] source_lane=2 selected_lane=1 utility=0.725 front_ttc=inf rear_ttc=63.300 candidates=[{'target_lane': 1, 'utility': 0.7253455003371806, 'front_gap': 23.901190662442446, 'rear_gap': 59.48466367859339, 'front_ttc': inf, 'rear_ttc': 63.30006492610333, 'front_speed': 30.0}]
+[INSTANT STEP] source_lane=2 requested=CHANGE target_lane=1 lane_changed=True executed_lane=1 accel=-0.812 collision=False
+[TTC REWARD INPUT] source=post_step physical_lane=1 relevant_lanes=[1] lane_details={1: {'front_vehicle_id': 2170858800912, 'front_ttc_s': inf, 'front_gap_m': 24.089135694562174, 'rear_vehicle_id': 2170858810192, 'rear_ttc_s': 33.855512341402175, 'rear_gap_m': 59.296718646473664}} min_ttc_s=33.856 finite_ttc_count=1
+[REWARD DEBUG] progress=2.825, speed=28.25m/s, target_speed=40.00m/s, safety_penalty=0.000, lane_change_cost=0.010, lane_change_accepted=True, total=2.815
+[TTC REWARD] disabled; TTC is recorded for episode-level evaluation, not used as a per-step action override.
+[LANE ACTION MASK][GEOMETRY ONLY] current_lane=1 mask=[True, True] adjacent_targets=[0, 2] ttc_veto=False
+[INSTANT STEP] source_lane=1 requested=KEEP target_lane=1 lane_changed=False executed_lane=1 accel=-0.129 collision=False
+[TTC REWARD INPUT] source=post_step physical_lane=1 relevant_lanes=[1] lane_details={1: {'front_vehicle_id': 2170858800912, 'front_ttc_s': inf, 'front_gap_m': 24.43942853933453, 'rear_vehicle_id': 2170858810192, 'rear_ttc_s': 31.34757772588924, 'rear_gap_m': 58.94642580170131}} min_ttc_s=31.348 finite_ttc_count=1
+[REWARD DEBUG] progress=2.812, speed=28.12m/s, target_speed=40.00m/s, safety_penalty=0.000, lane_change_cost=0.000, lane_change_accepted=False, total=2.812
+[TTC REWARD] disabled; TTC is recorded for episode-level evaluation, not used as a per-step action override.
+[LANE ACTION MASK][GEOMETRY ONLY] current_lane=1 mask=[True, True] adjacent_targets=[0, 2] ttc_veto=False
+[TARGET LANE SELECTOR][NO HARD VETO] source_lane=1 selected_lane=2 utility=0.748 front_ttc=17.727 rear_ttc=45.622 candidates=[{'target_lane': 0, 'utility': 0.20230660499164313, 'front_gap': 3.4351666357088675, 'rear_gap': 11.246810951731106, 'front_ttc': 0.7413910555890693, 'rear_ttc': 5.981028971354488, 'front_speed': 23.486178769217954}, {'target_lane': 2, 'utility': 0.7477527653567215, 'front_gap': 28.776496145386716, 'rear_gap': 85.78741150739046, 'front_ttc': 17.726641392473674, 'rear_ttc': 45.62155403921286, 'front_speed': 26.496238603572902}]
+[INSTANT STEP] source_lane=1 requested=CHANGE target_lane=2 lane_changed=True executed_lane=2 accel=-0.213 collision=False
+[TTC REWARD INPUT] source=post_step physical_lane=2 relevant_lanes=[2] lane_details={2: {'front_vehicle_id': 2170168322960, 'front_ttc_s': 20.17717571975041, 'front_gap_m': 28.451826677456893, 'rear_vehicle_id': 2170051408720, 'rear_ttc_s': 40.79518829524789, 'rear_gap_m': 85.41132869603484}} min_ttc_s=20.177 finite_ttc_count=2
+[REWARD DEBUG] progress=2.791, speed=27.91m/s, target_speed=40.00m/s, safety_penalty=0.000, lane_change_cost=0.010, lane_change_accepted=True, total=2.781
+[TTC REWARD] disabled; TTC is recorded for episode-level evaluation, not used as a per-step action override.
+[LANE ACTION MASK][GEOMETRY ONLY] current_lane=2 mask=[True, True] adjacent_targets=[1] ttc_veto=False
+[INSTANT STEP] source_lane=2 requested=KEEP target_lane=2 lane_changed=False executed_lane=2 accel=-0.689 collision=False
+[TTC REWARD INPUT] source=post_step physical_lane=2 relevant_lanes=[2] lane_details={2: {'front_vehicle_id': 2170168322960, 'front_ttc_s': 39.06694217126919, 'front_gap_m': 28.169806764733323, 'rear_vehicle_id': 2170051408720, 'rear_ttc_s': 30.543252252268573, 'rear_gap_m': 84.99259632947297}} min_ttc_s=30.543 finite_ttc_count=2
+[REWARD DEBUG] progress=2.722, speed=27.22m/s, target_speed=40.00m/s, safety_penalty=0.000, lane_change_cost=0.000, lane_change_accepted=False, total=2.722
+[TTC REWARD] disabled; TTC is recorded for episode-level evaluation, not used as a per-step action override.
+[LANE ACTION MASK][GEOMETRY ONLY] current_lane=2 mask=[True, True] adjacent_targets=[1] ttc_veto=False
+[TARGET LANE SELECTOR][NO HARD VETO] source_lane=2 selected_lane=1 utility=0.736 front_ttc=inf rear_ttc=20.898 candidates=[{'target_lane': 1, 'utility': 0.7364174006688523, 'front_gap': 25.234243717252014, 'rear_gap': 58.151610623783824, 'front_ttc': inf, 'rear_ttc': 20.89757683448972, 'front_speed': 30.0}]
+[INSTANT STEP] source_lane=2 requested=CHANGE target_lane=1 lane_changed=True executed_lane=1 accel=0.934 collision=False
+[TTC REWARD INPUT] source=post_step physical_lane=1 relevant_lanes=[1] lane_details={1: {'front_vehicle_id': 2170858800912, 'front_ttc_s': inf, 'front_gap_m': 25.790782985745636, 'rear_vehicle_id': 2170858810192, 'rear_ttc_s': 31.153743738948585, 'rear_gap_m': 57.5950713552902}} min_ttc_s=31.154 finite_ttc_count=1
+[REWARD DEBUG] progress=2.815, speed=28.15m/s, target_speed=40.00m/s, safety_penalty=0.000, lane_change_cost=0.010, lane_change_accepted=True, total=2.805
+[TTC REWARD] disabled; TTC is recorded for episode-level evaluation, not used as a per-step action override.
+[LANE ACTION MASK][GEOMETRY ONLY] current_lane=1 mask=[True, True] adjacent_targets=[0, 2] ttc_veto=False
+[INSTANT STEP] source_lane=1 requested=KEEP target_lane=1 lane_changed=False executed_lane=1 accel=0.464 collision=False
+[TTC REWARD INPUT] source=post_step physical_lane=1 relevant_lanes=[1] lane_details={1: {'front_vehicle_id': 2170858800912, 'front_ttc_s': inf, 'front_gap_m': 26.16053033834578, 'rear_vehicle_id': 2170858810192, 'rear_ttc_s': 41.3219854500065, 'rear_gap_m': 57.22532400269006}} min_ttc_s=41.322 finite_ttc_count=1
+[REWARD DEBUG] progress=2.862, speed=28.62m/s, target_speed=40.00m/s, safety_penalty=0.000, lane_change_cost=0.000, lane_change_accepted=False, total=2.862
+[TTC REWARD] disabled; TTC is recorded for episode-level evaluation, not used as a per-step action override.
+[LANE ACTION MASK][GEOMETRY ONLY] current_lane=1 mask=[True, True] adjacent_targets=[0, 2] ttc_veto=False
+[TARGET LANE SELECTOR][NO HARD VETO] source_lane=1 selected_lane=2 utility=0.736 front_ttc=13.070 rear_ttc=60.704 candidates=[{'target_lane': 0, 'utility': 0.12522581382943865, 'front_gap': -0.05478854990542459, 'rear_gap': 9.525709152719855, 'front_ttc': 0.0, 'rear_ttc': 6.878444497600053, 'front_speed': 23.486178769217954}, {'target_lane': 2, 'utility': 0.7360015090669355, 'front_gap': 27.69458882725621, 'rear_gap': 84.06630970837921, 'front_ttc': 13.07028219420395, 'rear_ttc': 60.70366375631337, 'front_speed': 26.496238603572902}]
+[INSTANT STEP] source_lane=1 requested=CHANGE target_lane=2 lane_changed=True executed_lane=2 accel=-0.934 collision=False
+[TTC REWARD INPUT] source=post_step physical_lane=2 relevant_lanes=[2] lane_details={2: {'front_vehicle_id': 2170168322960, 'front_ttc_s': 23.01473127216051, 'front_gap_m': 27.27080931866169, 'rear_vehicle_id': 2170051408720, 'rear_ttc_s': 36.134270140972916, 'rear_gap_m': 83.78933693768829}} min_ttc_s=23.015 finite_ttc_count=2
+[REWARD DEBUG] progress=2.768, speed=27.68m/s, target_speed=40.00m/s, safety_penalty=0.000, lane_change_cost=0.010, lane_change_accepted=True, total=2.758
+[TTC REWARD] disabled; TTC is recorded for episode-level evaluation, not used as a per-step action override.
+[LANE ACTION MASK][GEOMETRY ONLY] current_lane=2 mask=[True, True] adjacent_targets=[1] ttc_veto=False
+[INSTANT STEP] source_lane=2 requested=KEEP target_lane=2 lane_changed=False executed_lane=2 accel=-0.368 collision=False
+[TTC REWARD INPUT] source=post_step physical_lane=2 relevant_lanes=[2] lane_details={2: {'front_vehicle_id': 2170168322960, 'front_ttc_s': 33.08656059209028, 'front_gap_m': 27.03382363330934, 'rear_vehicle_id': 2170051408720, 'rear_ttc_s': 31.01412068793378, 'rear_gap_m': 83.3255703437552}} min_ttc_s=31.014 finite_ttc_count=2
+[REWARD DEBUG] progress=2.731, speed=27.31m/s, target_speed=40.00m/s, safety_penalty=0.000, lane_change_cost=0.000, lane_change_accepted=False, total=2.731
+[TTC REWARD] disabled; TTC is recorded for episode-level evaluation, not used as a per-step action override.
+[LANE ACTION MASK][GEOMETRY ONLY] current_lane=2 mask=[True, True] adjacent_targets=[1] ttc_veto=False
+[INSTANT STEP] source_lane=2 requested=KEEP target_lane=2 lane_changed=False executed_lane=2 accel=-0.148 collision=False
+[TTC REWARD INPUT] source=post_step physical_lane=2 relevant_lanes=[2] lane_details={2: {'front_vehicle_id': 2170168322960, 'front_ttc_s': 40.15338957588826, 'front_gap_m': 26.870410917393656, 'rear_vehicle_id': 2170051408720, 'rear_ttc_s': 29.206655468823513, 'rear_gap_m': 82.78823078038545}} min_ttc_s=29.207 finite_ttc_count=2
+[REWARD DEBUG] progress=2.717, speed=27.17m/s, target_speed=40.00m/s, safety_penalty=0.000, lane_change_cost=0.000, lane_change_accepted=False, total=2.717
+[TTC REWARD] disabled; TTC is recorded for episode-level evaluation, not used as a per-step action override.
+[LANE ACTION MASK][GEOMETRY ONLY] current_lane=2 mask=[True, True] adjacent_targets=[1] ttc_veto=False
+[INSTANT STEP] source_lane=2 requested=KEEP target_lane=2 lane_changed=False executed_lane=2 accel=-0.065 collision=False
+[TTC REWARD INPUT] source=post_step physical_lane=2 relevant_lanes=[2] lane_details={2: {'front_vehicle_id': 2170168322960, 'front_ttc_s': 44.23290007828258, 'front_gap_m': 26.73657209979342, 'rear_vehicle_id': 2170051408720, 'rear_ttc_s': 28.358911233026717, 'rear_gap_m': 82.22131731870024}} min_ttc_s=28.359 finite_ttc_count=2
+[REWARD DEBUG] progress=2.710, speed=27.10m/s, target_speed=40.00m/s, safety_penalty=0.000, lane_change_cost=0.000, lane_change_accepted=False, total=2.710
+[TTC REWARD] disabled; TTC is recorded for episode-level evaluation, not used as a per-step action override.
+[LANE ACTION MASK][GEOMETRY ONLY] current_lane=2 mask=[True, True] adjacent_targets=[1] ttc_veto=False
+[INSTANT STEP] source_lane=2 requested=KEEP target_lane=2 lane_changed=False executed_lane=2 accel=-0.988 collision=False
+[TTC REWARD INPUT] source=post_step physical_lane=2 relevant_lanes=[2] lane_details={2: {'front_vehicle_id': 2170168322960, 'front_ttc_s': inf, 'front_gap_m': 26.61568211947349, 'rear_vehicle_id': 2170051408720, 'rear_ttc_s': 21.004389590920546, 'rear_gap_m': 81.64145501973474}} min_ttc_s=21.004 finite_ttc_count=1
+[REWARD DEBUG] progress=2.611, speed=26.11m/s, target_speed=40.00m/s, safety_penalty=0.000, lane_change_cost=0.000, lane_change_accepted=False, total=2.611
+[TTC REWARD] disabled; TTC is recorded for episode-level evaluation, not used as a per-step action override.
+[LANE ACTION MASK][GEOMETRY ONLY] current_lane=2 mask=[True, True] adjacent_targets=[1] ttc_veto=False
+[TARGET LANE SELECTOR][NO HARD VETO] source_lane=2 selected_lane=1 utility=0.768 front_ttc=inf rear_ttc=14.099 candidates=[{'target_lane': 1, 'utility': 0.7683865836609808, 'front_gap': 28.585385026990252, 'rear_gap': 54.800469314045586, 'front_ttc': inf, 'rear_ttc': 14.098847294664981, 'front_speed': 30.0}]
+[TRAFFIC SPAWN] lane=0 side=front gap=13.9m range=120.0m speed=28.53m/s id=2170858222224
+[INSTANT STEP] source_lane=2 requested=CHANGE target_lane=1 lane_changed=True executed_lane=1 accel=0.286 collision=False
+[TTC REWARD INPUT] source=post_step physical_lane=1 relevant_lanes=[1] lane_details={1: {'front_vehicle_id': 2170858800912, 'front_ttc_s': inf, 'front_gap_m': 29.362760200559023, 'rear_vehicle_id': 2170858810192, 'rear_ttc_s': 15.001050046769556, 'rear_gap_m': 54.023094140476815}} min_ttc_s=15.001 finite_ttc_count=1
+[REWARD DEBUG] progress=2.640, speed=26.40m/s, target_speed=40.00m/s, safety_penalty=0.000, lane_change_cost=0.010, lane_change_accepted=True, total=2.630
+[TTC REWARD] disabled; TTC is recorded for episode-level evaluation, not used as a per-step action override.
+[LANE ACTION MASK][GEOMETRY ONLY] current_lane=1 mask=[True, True] adjacent_targets=[0, 2] ttc_veto=False
+[TARGET LANE SELECTOR][NO HARD VETO] source_lane=1 selected_lane=2 utility=0.729 front_ttc=inf rear_ttc=22.454 candidates=[{'target_lane': 0, 'utility': 0.28247029498767395, 'front_gap': 8.923540062079951, 'rear_gap': 6.3234792905066115, 'front_ttc': inf, 'rear_ttc': 1.7558940452381, 'front_speed': 28.52684235351864}, {'target_lane': 2, 'utility': 0.7293268217815895, 'front_gap': 26.692305013756823, 'rear_gap': 80.86407984616596, 'front_ttc': inf, 'rear_ttc': 22.454213851654046, 'front_speed': 26.496238603572902}]
+[INSTANT STEP] source_lane=1 requested=CHANGE target_lane=2 lane_changed=True executed_lane=2 accel=0.085 collision=False
+[TTC REWARD INPUT] source=post_step physical_lane=2 relevant_lanes=[2] lane_details={2: {'front_vehicle_id': 2170168322960, 'front_ttc_s': inf, 'front_gap_m': 26.711810236073575, 'rear_vehicle_id': 2170051408720, 'rear_ttc_s': 22.793647041594603, 'rear_gap_m': 80.14382234456377}} min_ttc_s=22.794 finite_ttc_count=1
+[REWARD DEBUG] progress=2.648, speed=26.48m/s, target_speed=40.00m/s, safety_penalty=0.000, lane_change_cost=0.010, lane_change_accepted=True, total=2.638
+[TTC REWARD] disabled; TTC is recorded for episode-level evaluation, not used as a per-step action override.
+[LANE ACTION MASK][GEOMETRY ONLY] current_lane=2 mask=[True, True] adjacent_targets=[1] ttc_veto=False
+[TARGET LANE SELECTOR][NO HARD VETO] source_lane=2 selected_lane=1 utility=0.784 front_ttc=inf rear_ttc=15.160 candidates=[{'target_lane': 1, 'utility': 0.7836890366604984, 'front_gap': 30.083017702161214, 'rear_gap': 53.30283663887462, 'front_ttc': inf, 'rear_ttc': 15.159821544806782, 'front_speed': 30.0}]
+[INSTANT STEP] source_lane=2 requested=CHANGE target_lane=1 lane_changed=True executed_lane=1 accel=-0.706 collision=False
+[TTC REWARD INPUT] source=post_step physical_lane=1 relevant_lanes=[1] lane_details={1: {'front_vehicle_id': 2170858800912, 'front_ttc_s': inf, 'front_gap_m': 30.786229629575132, 'rear_vehicle_id': 2170858810192, 'rear_ttc_s': 12.457089035044444, 'rear_gap_m': 52.599624711460706}} min_ttc_s=12.457 finite_ttc_count=1
+[REWARD DEBUG] progress=2.578, speed=25.78m/s, target_speed=40.00m/s, safety_penalty=0.000, lane_change_cost=0.010, lane_change_accepted=True, total=2.568
+[TTC REWARD] disabled; TTC is recorded for episode-level evaluation, not used as a per-step action override.
+[LANE ACTION MASK][GEOMETRY ONLY] current_lane=1 mask=[True, True] adjacent_targets=[0, 2] ttc_veto=False
+[TARGET LANE SELECTOR][NO HARD VETO] source_lane=1 selected_lane=2 utility=0.729 front_ttc=inf rear_ttc=18.814 candidates=[{'target_lane': 0, 'utility': 0.2738221623231646, 'front_gap': 9.757746432503609, 'rear_gap': 4.900009861490503, 'front_ttc': inf, 'rear_ttc': 1.160461875004277, 'front_speed': 28.52684235351864}, {'target_lane': 2, 'utility': 0.7289589492977085, 'front_gap': 26.714269884202054, 'rear_gap': 79.44061041714986, 'front_ttc': inf, 'rear_ttc': 18.813798813075856, 'front_speed': 26.496238603572902}]
+[INSTANT STEP] source_lane=1 requested=CHANGE target_lane=2 lane_changed=True executed_lane=2 accel=-0.873 collision=False
+[TTC REWARD INPUT] source=post_step physical_lane=2 relevant_lanes=[2] lane_details={2: {'front_vehicle_id': 2170168322960, 'front_ttc_s': inf, 'front_gap_m': 26.858010641186752, 'rear_vehicle_id': 2170051408720, 'rear_ttc_s': 15.423719804535237, 'rear_gap_m': 78.59611738087972}} min_ttc_s=15.424 finite_ttc_count=1
+[REWARD DEBUG] progress=2.490, speed=24.90m/s, target_speed=40.00m/s, safety_penalty=0.000, lane_change_cost=0.010, lane_change_accepted=True, total=2.480
+[TTC REWARD] disabled; TTC is recorded for episode-level evaluation, not used as a per-step action override.
+[LANE ACTION MASK][GEOMETRY ONLY] current_lane=2 mask=[True, True] adjacent_targets=[1] ttc_veto=False
+[TARGET LANE SELECTOR][NO HARD VETO] source_lane=2 selected_lane=1 utility=0.797 front_ttc=inf rear_ttc=10.156 candidates=[{'target_lane': 1, 'utility': 0.7970846512993383, 'front_gap': 31.63072266584527, 'rear_gap': 51.75513167519057, 'front_ttc': inf, 'rear_ttc': 10.156438714861501, 'front_speed': 30.0}]
+[INSTANT STEP] source_lane=2 requested=CHANGE target_lane=1 lane_changed=True executed_lane=1 accel=-0.697 collision=False
+[TTC REWARD INPUT] source=post_step physical_lane=1 relevant_lanes=[1] lane_details={1: {'front_vehicle_id': 2170858800912, 'front_ttc_s': inf, 'front_gap_m': 32.649881706296355, 'rear_vehicle_id': 2170858810192, 'rear_ttc_s': 8.758922991597634, 'rear_gap_m': 50.73597263473948}} min_ttc_s=8.759 finite_ttc_count=1
+[REWARD DEBUG] progress=2.421, speed=24.21m/s, target_speed=40.00m/s, safety_penalty=0.000, lane_change_cost=0.010, lane_change_accepted=True, total=2.411
+[TTC REWARD] disabled; TTC is recorded for episode-level evaluation, not used as a per-step action override.
+[LANE ACTION MASK][GEOMETRY ONLY] current_lane=1 mask=[True, True] adjacent_targets=[0, 2] ttc_veto=False
+[INSTANT STEP] source_lane=1 requested=KEEP target_lane=1 lane_changed=False executed_lane=1 accel=-0.268 collision=False
+[TTC REWARD INPUT] source=post_step physical_lane=1 relevant_lanes=[1] lane_details={1: {'front_vehicle_id': 2170858800912, 'front_ttc_s': inf, 'front_gap_m': 33.80837967878472, 'rear_vehicle_id': 2170858810192, 'rear_ttc_s': 8.180667328319663, 'rear_gap_m': 49.57747466225112}} min_ttc_s=8.181 finite_ttc_count=1
+[REWARD DEBUG] progress=2.394, speed=23.94m/s, target_speed=40.00m/s, safety_penalty=0.000, lane_change_cost=0.000, lane_change_accepted=False, total=2.394
+[TTC REWARD] disabled; TTC is recorded for episode-level evaluation, not used as a per-step action override.
+[LANE ACTION MASK][GEOMETRY ONLY] current_lane=1 mask=[True, True] adjacent_targets=[0, 2] ttc_veto=False
+[INSTANT STEP] source_lane=1 requested=KEEP target_lane=1 lane_changed=False executed_lane=1 accel=-0.483 collision=False
+[TTC REWARD INPUT] source=post_step physical_lane=1 relevant_lanes=[1] lane_details={1: {'front_vehicle_id': 2170858800912, 'front_ttc_s': inf, 'front_gap_m': 35.02044399267322, 'rear_vehicle_id': 2170858810192, 'rear_ttc_s': 7.391161909386299, 'rear_gap_m': 48.365410348362616}} min_ttc_s=7.391 finite_ttc_count=1
+[REWARD DEBUG] progress=2.346, speed=23.46m/s, target_speed=40.00m/s, safety_penalty=0.000, lane_change_cost=0.000, lane_change_accepted=False, total=2.346
+[TTC REWARD] disabled; TTC is recorded for episode-level evaluation, not used as a per-step action override.
+[LANE ACTION MASK][GEOMETRY ONLY] current_lane=1 mask=[True, True] adjacent_targets=[0, 2] ttc_veto=False
+[INSTANT STEP] source_lane=1 requested=KEEP target_lane=1 lane_changed=False executed_lane=1 accel=0.844 collision=False
+[TTC REWARD INPUT] source=post_step physical_lane=1 relevant_lanes=[1] lane_details={1: {'front_vehicle_id': 2170858800912, 'front_ttc_s': inf, 'front_gap_m': 36.329180316983525, 'rear_vehicle_id': 2170858810192, 'rear_ttc_s': 8.256465945609175, 'rear_gap_m': 47.05667402405231}} min_ttc_s=8.256 finite_ttc_count=1
+[REWARD DEBUG] progress=2.430, speed=24.30m/s, target_speed=40.00m/s, safety_penalty=0.000, lane_change_cost=0.000, lane_change_accepted=False, total=2.430
+[TTC REWARD] disabled; TTC is recorded for episode-level evaluation, not used as a per-step action override.
+[LANE ACTION MASK][GEOMETRY ONLY] current_lane=1 mask=[True, True] adjacent_targets=[0, 2] ttc_veto=False
+[INSTANT STEP] source_lane=1 requested=KEEP target_lane=1 lane_changed=False executed_lane=1 accel=-0.838 collision=False
+[TTC REWARD INPUT] source=post_step physical_lane=1 relevant_lanes=[1] lane_details={1: {'front_vehicle_id': 2170858800912, 'front_ttc_s': inf, 'front_gap_m': 37.46905479436998, 'rear_vehicle_id': 2170858810192, 'rear_ttc_s': 7.023832354600902, 'rear_gap_m': 45.91679954666586}} min_ttc_s=7.024 finite_ttc_count=1
+[REWARD DEBUG] progress=2.346, speed=23.46m/s, target_speed=40.00m/s, safety_penalty=0.000, lane_change_cost=0.000, lane_change_accepted=False, total=2.346
+[TTC REWARD] disabled; TTC is recorded for episode-level evaluation, not used as a per-step action override.
+[LANE ACTION MASK][GEOMETRY ONLY] current_lane=1 mask=[True, True] adjacent_targets=[0, 2] ttc_veto=False
+[TARGET LANE SELECTOR][NO HARD VETO] source_lane=1 selected_lane=2 utility=0.751 front_ttc=inf rear_ttc=11.130 candidates=[{'target_lane': 0, 'utility': 0.23813515356934029, 'front_gap': 14.672782421521106, 'rear_gap': -1.7828153033043463, 'front_ttc': inf, 'rear_ttc': 0.0, 'front_speed': 28.52684235351864}, {'target_lane': 2, 'utility': 0.7513441156994591, 'front_gap': 29.19258137328427, 'rear_gap': 72.757785252355, 'front_ttc': inf, 'rear_ttc': 11.129662588639702, 'front_speed': 26.496238603572902}]
+[INSTANT STEP] source_lane=1 requested=CHANGE target_lane=2 lane_changed=True executed_lane=2 accel=-0.851 collision=False
+[TTC REWARD INPUT] source=post_step physical_lane=2 relevant_lanes=[2] lane_details={2: {'front_vehicle_id': 2170168322960, 'front_ttc_s': inf, 'front_gap_m': 29.799286254948584, 'rear_vehicle_id': 2170051408720, 'rear_ttc_s': 9.670610346450408, 'rear_gap_m': 71.45032809140525}} min_ttc_s=9.671 finite_ttc_count=1
+[REWARD DEBUG] progress=2.261, speed=22.61m/s, target_speed=40.00m/s, safety_penalty=0.000, lane_change_cost=0.010, lane_change_accepted=True, total=2.251
+[TTC REWARD] disabled; TTC is recorded for episode-level evaluation, not used as a per-step action override.
+[LANE ACTION MASK][GEOMETRY ONLY] current_lane=2 mask=[True, True] adjacent_targets=[1] ttc_veto=False
+[TARGET LANE SELECTOR][NO HARD VETO] source_lane=2 selected_lane=1 utility=0.862 front_ttc=inf rear_ttc=6.038 candidates=[{'target_lane': 1, 'utility': 0.8620039278335562, 'front_gap': 38.776511955319734, 'rear_gap': 44.609342385716104, 'front_ttc': inf, 'rear_ttc': 6.0377548927665154, 'front_speed': 30.0}]
+[TRAFFIC SPAWN] lane=0 side=rear gap=49.7m range=120.0m speed=30.00m/s id=2170168046032
+[INSTANT STEP] source_lane=2 requested=CHANGE target_lane=1 lane_changed=True executed_lane=1 accel=0.976 collision=False
+[TTC REWARD INPUT] source=post_step physical_lane=1 relevant_lanes=[1] lane_details={1: {'front_vehicle_id': 2170858800912, 'front_ttc_s': inf, 'front_gap_m': 40.25419176107539, 'rear_vehicle_id': 2170858810192, 'rear_ttc_s': 6.726193300304516, 'rear_gap_m': 43.13166257996045}} min_ttc_s=6.726 finite_ttc_count=1
+[REWARD DEBUG] progress=2.359, speed=23.59m/s, target_speed=40.00m/s, safety_penalty=0.000, lane_change_cost=0.010, lane_change_accepted=True, total=2.349
+[TTC REWARD] disabled; TTC is recorded for episode-level evaluation, not used as a per-step action override.
+[LANE ACTION MASK][GEOMETRY ONLY] current_lane=1 mask=[True, True] adjacent_targets=[0, 2] ttc_veto=False
+[INSTANT STEP] source_lane=1 requested=KEEP target_lane=1 lane_changed=False executed_lane=1 accel=0.856 collision=False
+[TTC REWARD INPUT] source=post_step physical_lane=1 relevant_lanes=[1] lane_details={1: {'front_vehicle_id': 2170858800912, 'front_ttc_s': inf, 'front_gap_m': 41.53669021612302, 'rear_vehicle_id': 2170858810192, 'rear_ttc_s': 7.531498136983463, 'rear_gap_m': 41.84916412491282}} min_ttc_s=7.531 finite_ttc_count=1
+[REWARD DEBUG] progress=2.444, speed=24.44m/s, target_speed=40.00m/s, safety_penalty=0.000, lane_change_cost=0.000, lane_change_accepted=False, total=2.444
+[TTC REWARD] disabled; TTC is recorded for episode-level evaluation, not used as a per-step action override.
+[LANE ACTION MASK][GEOMETRY ONLY] current_lane=1 mask=[True, True] adjacent_targets=[0, 2] ttc_veto=False
+[TARGET LANE SELECTOR][NO HARD VETO] source_lane=1 selected_lane=2 utility=0.772 front_ttc=inf rear_ttc=12.362 candidates=[{'target_lane': 0, 'utility': 0.6380597566411453, 'front_gap': 17.85652325538547, 'rear_gap': 43.45568446686195, 'front_ttc': inf, 'rear_ttc': 7.82061992030752, 'front_speed': 28.52684235351864}, {'target_lane': 2, 'utility': 0.7715681623478927, 'front_gap': 31.157959957180992, 'rear_gap': 68.69014983060197, 'front_ttc': inf, 'rear_ttc': 12.362008807012735, 'front_speed': 26.496238603572902}]
+[INSTANT STEP] source_lane=1 requested=CHANGE target_lane=2 lane_changed=True executed_lane=2 accel=0.357 collision=False
+[TTC REWARD INPUT] source=post_step physical_lane=2 relevant_lanes=[2] lane_details={2: {'front_vehicle_id': 2170168322960, 'front_ttc_s': inf, 'front_gap_m': 31.5685181599207, 'rear_vehicle_id': 2170051408720, 'rear_ttc_s': 12.99795163817999, 'rear_gap_m': 67.57883934857682}} min_ttc_s=12.998 finite_ttc_count=1
+[REWARD DEBUG] progress=2.480, speed=24.80m/s, target_speed=40.00m/s, safety_penalty=0.000, lane_change_cost=0.010, lane_change_accepted=True, total=2.470
+[TTC REWARD] disabled; TTC is recorded for episode-level evaluation, not used as a per-step action override.
+[LANE ACTION MASK][GEOMETRY ONLY] current_lane=2 mask=[True, True] adjacent_targets=[1] ttc_veto=False
+[TARGET LANE SELECTOR][NO HARD VETO] source_lane=2 selected_lane=1 utility=0.877 front_ttc=inf rear_ttc=7.835 candidates=[{'target_lane': 1, 'utility': 0.8770771380012576, 'front_gap': 42.64800069814817, 'rear_gap': 40.73785364288767, 'front_ttc': inf, 'rear_ttc': 7.8354209187030035, 'front_speed': 30.0}]
+[INSTANT STEP] source_lane=2 requested=CHANGE target_lane=1 lane_changed=True executed_lane=1 accel=0.004 collision=False
+[TTC REWARD INPUT] source=post_step physical_lane=1 relevant_lanes=[1] lane_details={1: {'front_vehicle_id': 2170858800912, 'front_ttc_s': inf, 'front_gap_m': 43.687838993131095, 'rear_vehicle_id': 2170858810192, 'rear_ttc_s': 7.641898190072266, 'rear_gap_m': 39.69801534790474}} min_ttc_s=7.642 finite_ttc_count=1
+[REWARD DEBUG] progress=2.481, speed=24.81m/s, target_speed=40.00m/s, safety_penalty=0.000, lane_change_cost=0.010, lane_change_accepted=True, total=2.471
+[TTC REWARD] disabled; TTC is recorded for episode-level evaluation, not used as a per-step action override.
+[LANE ACTION MASK][GEOMETRY ONLY] current_lane=1 mask=[True, True] adjacent_targets=[0, 2] ttc_veto=False
+[INSTANT STEP] source_lane=1 requested=KEEP target_lane=1 lane_changed=False executed_lane=1 accel=-0.846 collision=False
+[TTC REWARD INPUT] source=post_step physical_lane=1 relevant_lanes=[1] lane_details={1: {'front_vehicle_id': 2170858800912, 'front_ttc_s': inf, 'front_gap_m': 44.72679592138422, 'rear_vehicle_id': 2170858810192, 'rear_ttc_s': 6.3994519172759885, 'rear_gap_m': 38.659058419651615}} min_ttc_s=6.399 finite_ttc_count=1
+[REWARD DEBUG] progress=2.396, speed=23.96m/s, target_speed=40.00m/s, safety_penalty=0.000, lane_change_cost=0.000, lane_change_accepted=False, total=2.396
+[TTC REWARD] disabled; TTC is recorded for episode-level evaluation, not used as a per-step action override.
+[LANE ACTION MASK][GEOMETRY ONLY] current_lane=1 mask=[True, True] adjacent_targets=[0, 2] ttc_veto=False
+[INSTANT STEP] source_lane=1 requested=KEEP target_lane=1 lane_changed=False executed_lane=1 accel=0.305 collision=False
+[TTC REWARD INPUT] source=post_step physical_lane=1 relevant_lanes=[1] lane_details={1: {'front_vehicle_id': 2170858800912, 'front_ttc_s': inf, 'front_gap_m': 45.93499496465813, 'rear_vehicle_id': 2170858810192, 'rear_ttc_s': 6.529579826958425, 'rear_gap_m': 37.45085937637771}} min_ttc_s=6.530 finite_ttc_count=1
+[REWARD DEBUG] progress=2.426, speed=24.26m/s, target_speed=40.00m/s, safety_penalty=0.000, lane_change_cost=0.000, lane_change_accepted=False, total=2.426
+[TTC REWARD] disabled; TTC is recorded for episode-level evaluation, not used as a per-step action override.
+[LANE ACTION MASK][GEOMETRY ONLY] current_lane=1 mask=[True, True] adjacent_targets=[0, 2] ttc_veto=False
+[TARGET LANE SELECTOR][NO HARD VETO] source_lane=1 selected_lane=2 utility=0.787 front_ttc=inf rear_ttc=11.209 candidates=[{'target_lane': 0, 'utility': 0.6398348456304866, 'front_gap': 21.076301886735678, 'rear_gap': 39.05737971832684, 'front_ttc': inf, 'rear_ttc': 6.809677613526334, 'front_speed': 28.52684235351864}, {'target_lane': 2, 'utility': 0.786991199816702, 'front_gap': 32.75325558857435, 'rear_gap': 64.29184508206686, 'front_ttc': inf, 'rear_ttc': 11.209321806660327, 'front_speed': 26.496238603572902}]
+[INSTANT STEP] source_lane=1 requested=CHANGE target_lane=2 lane_changed=True executed_lane=2 accel=0.977 collision=False
+[TTC REWARD INPUT] source=post_step physical_lane=2 relevant_lanes=[2] lane_details={2: {'front_vehicle_id': 2170168322960, 'front_ttc_s': inf, 'front_gap_m': 33.19961722377866, 'rear_vehicle_id': 2170051408720, 'rear_ttc_s': 13.269785493227234, 'rear_gap_m': 63.144731167577106}} min_ttc_s=13.270 finite_ttc_count=1
+[REWARD DEBUG] progress=2.524, speed=25.24m/s, target_speed=40.00m/s, safety_penalty=0.000, lane_change_cost=0.010, lane_change_accepted=True, total=2.514
+[TTC REWARD] disabled; TTC is recorded for episode-level evaluation, not used as a per-step action override.
+[LANE ACTION MASK][GEOMETRY ONLY] current_lane=2 mask=[True, True] adjacent_targets=[1] ttc_veto=False
+[INSTANT STEP] source_lane=2 requested=KEEP target_lane=2 lane_changed=False executed_lane=2 accel=-0.204 collision=False
+[TTC REWARD INPUT] source=post_step physical_lane=2 relevant_lanes=[2] lane_details={2: {'front_vehicle_id': 2170168322960, 'front_ttc_s': inf, 'front_gap_m': 33.450571830784725, 'rear_vehicle_id': 2170051408720, 'rear_ttc_s': 12.531257497195776, 'rear_gap_m': 62.1930242812856}} min_ttc_s=12.531 finite_ttc_count=1
+[REWARD DEBUG] progress=2.504, speed=25.04m/s, target_speed=40.00m/s, safety_penalty=0.000, lane_change_cost=0.000, lane_change_accepted=False, total=2.504
+[TTC REWARD] disabled; TTC is recorded for episode-level evaluation, not used as a per-step action override.
+[LANE ACTION MASK][GEOMETRY ONLY] current_lane=2 mask=[True, True] adjacent_targets=[1] ttc_veto=False
+[INSTANT STEP] source_lane=2 requested=KEEP target_lane=2 lane_changed=False executed_lane=2 accel=-0.275 collision=False
+[TTC REWARD INPUT] source=post_step physical_lane=2 relevant_lanes=[2] lane_details={2: {'front_vehicle_id': 2170168322960, 'front_ttc_s': inf, 'front_gap_m': 33.74242582896511, 'rear_vehicle_id': 2170051408720, 'rear_ttc_s': 11.68399962529611, 'rear_gap_m': 61.20041800381978}} min_ttc_s=11.684 finite_ttc_count=1
+[REWARD DEBUG] progress=2.476, speed=24.76m/s, target_speed=40.00m/s, safety_penalty=0.000, lane_change_cost=0.000, lane_change_accepted=False, total=2.476
+[TTC REWARD] disabled; TTC is recorded for episode-level evaluation, not used as a per-step action override.
+[LANE ACTION MASK][GEOMETRY ONLY] current_lane=2 mask=[True, True] adjacent_targets=[1] ttc_veto=False
+[TARGET LANE SELECTOR][NO HARD VETO] source_lane=2 selected_lane=1 utility=0.897 front_ttc=inf rear_ttc=6.560 candidates=[{'target_lane': 1, 'utility': 0.8969060569092662, 'front_gap': 49.02642204290521, 'rear_gap': 34.35943229813063, 'front_ttc': inf, 'rear_ttc': 6.5596871261841505, 'front_speed': 30.0}]
+[INSTANT STEP] source_lane=2 requested=CHANGE target_lane=1 lane_changed=True executed_lane=1 accel=0.474 collision=False
+[TTC REWARD INPUT] source=post_step physical_lane=1 relevant_lanes=[1] lane_details={1: {'front_vehicle_id': 2170858800912, 'front_ttc_s': inf, 'front_gap_m': 50.07401567464956, 'rear_vehicle_id': 2170858810192, 'rear_ttc_s': 6.991911828283894, 'rear_gap_m': 33.31183866638628}} min_ttc_s=6.992 finite_ttc_count=1
+[REWARD DEBUG] progress=2.524, speed=25.24m/s, target_speed=40.00m/s, safety_penalty=0.000, lane_change_cost=0.010, lane_change_accepted=True, total=2.514
+[TTC REWARD] disabled; TTC is recorded for episode-level evaluation, not used as a per-step action override.
+[LANE ACTION MASK][GEOMETRY ONLY] current_lane=1 mask=[True, True] adjacent_targets=[0, 2] ttc_veto=False
+[TARGET LANE SELECTOR][NO HARD VETO] source_lane=1 selected_lane=2 utility=0.801 front_ttc=inf rear_ttc=12.626 candidates=[{'target_lane': 0, 'utility': 0.6424452246679685, 'front_gap': 24.036796479542204, 'rear_gap': 34.918359008335415, 'front_ttc': inf, 'rear_ttc': 7.329108723770401, 'front_speed': 28.52684235351864}, {'target_lane': 2, 'utility': 0.8009898340155742, 'front_gap': 34.08926718142402, 'rear_gap': 60.15282437207543, 'front_ttc': inf, 'rear_ttc': 12.625638844012311, 'front_speed': 26.496238603572902}]
+[INSTANT STEP] source_lane=1 requested=CHANGE target_lane=2 lane_changed=True executed_lane=2 accel=0.934 collision=False
+[TTC REWARD INPUT] source=post_step physical_lane=2 relevant_lanes=[2] lane_details={2: {'front_vehicle_id': 2170168322960, 'front_ttc_s': inf, 'front_gap_m': 34.34138271524898, 'rear_vehicle_id': 2170051408720, 'rear_ttc_s': 15.456562412250484, 'rear_gap_m': 59.19995655896503}} min_ttc_s=15.457 finite_ttc_count=1
+[REWARD DEBUG] progress=2.617, speed=26.17m/s, target_speed=40.00m/s, safety_penalty=0.000, lane_change_cost=0.010, lane_change_accepted=True, total=2.607
+[TTC REWARD] disabled; TTC is recorded for episode-level evaluation, not used as a per-step action override.
+[LANE ACTION MASK][GEOMETRY ONLY] current_lane=2 mask=[True, True] adjacent_targets=[1] ttc_veto=False
+[TARGET LANE SELECTOR][NO HARD VETO] source_lane=2 selected_lane=1 utility=0.906 front_ttc=inf rear_ttc=8.449 candidates=[{'target_lane': 1, 'utility': 0.9055576474616805, 'front_gap': 51.02688348775996, 'rear_gap': 32.35897085327588, 'front_ttc': inf, 'rear_ttc': 8.448628709578179, 'front_speed': 30.0}]
+[INSTANT STEP] source_lane=2 requested=CHANGE target_lane=1 lane_changed=True executed_lane=1 accel=0.762 collision=False
+[TTC REWARD INPUT] source=post_step physical_lane=1 relevant_lanes=[1] lane_details={1: {'front_vehicle_id': 2170858800912, 'front_ttc_s': inf, 'front_gap_m': 51.79290060049186, 'rear_vehicle_id': 2170858810192, 'rear_ttc_s': 10.297180402579691, 'rear_gap_m': 31.592953740543976}} min_ttc_s=10.297 finite_ttc_count=1
+[REWARD DEBUG] progress=2.693, speed=26.93m/s, target_speed=40.00m/s, safety_penalty=0.000, lane_change_cost=0.010, lane_change_accepted=True, total=2.683
+[TTC REWARD] disabled; TTC is recorded for episode-level evaluation, not used as a per-step action override.
+[LANE ACTION MASK][GEOMETRY ONLY] current_lane=1 mask=[True, True] adjacent_targets=[0, 2] ttc_veto=False
+[TARGET LANE SELECTOR][NO HARD VETO] source_lane=1 selected_lane=2 utility=0.805 front_ttc=78.979 rear_ttc=19.046 candidates=[{'target_lane': 0, 'utility': 0.6449420261353428, 'front_gap': 25.166418346792057, 'rear_gap': 33.19947408249311, 'front_ttc': inf, 'rear_ttc': 10.820798102821335, 'front_speed': 28.52684235351864}, {'target_lane': 2, 'utility': 0.8049887365703391, 'front_gap': 34.406647548695446, 'rear_gap': 58.433939446233126, 'front_ttc': 78.97873577631809, 'rear_ttc': 19.04553847838223, 'front_speed': 26.496238603572902}]
+[INSTANT STEP] source_lane=1 requested=CHANGE target_lane=2 lane_changed=True executed_lane=2 accel=-0.188 collision=False
+[TTC REWARD INPUT] source=post_step physical_lane=2 relevant_lanes=[2] lane_details={2: {'front_vehicle_id': 2170168322960, 'front_ttc_s': 138.69617294553206, 'front_gap_m': 34.31951865960775, 'rear_vehicle_id': 2170051408720, 'rear_ttc_s': 17.75635075461599, 'rear_gap_m': 57.82031605603538}} min_ttc_s=17.756 finite_ttc_count=2
+[REWARD DEBUG] progress=2.674, speed=26.74m/s, target_speed=40.00m/s, safety_penalty=0.000, lane_change_cost=0.010, lane_change_accepted=True, total=2.664
+[TTC REWARD] disabled; TTC is recorded for episode-level evaluation, not used as a per-step action override.
+[LANE ACTION MASK][GEOMETRY ONLY] current_lane=2 mask=[True, True] adjacent_targets=[1] ttc_veto=False
+[TARGET LANE SELECTOR][NO HARD VETO] source_lane=2 selected_lane=1 utility=0.911 front_ttc=inf rear_ttc=9.514 candidates=[{'target_lane': 1, 'utility': 0.9109604973317482, 'front_gap': 52.40652399068961, 'rear_gap': 30.97933035034623, 'front_ttc': inf, 'rear_ttc': 9.513608595822438, 'front_speed': 30.0}]
+[INSTANT STEP] source_lane=2 requested=CHANGE target_lane=1 lane_changed=True executed_lane=1 accel=-0.293 collision=False
+[TTC REWARD INPUT] source=post_step physical_lane=1 relevant_lanes=[1] lane_details={1: {'front_vehicle_id': 2170858800912, 'front_ttc_s': inf, 'front_gap_m': 53.0577874947179, 'rear_vehicle_id': 2170858810192, 'rear_ttc_s': 8.544964974767314, 'rear_gap_m': 30.328066846317938}} min_ttc_s=8.545 finite_ttc_count=1
+[REWARD DEBUG] progress=2.645, speed=26.45m/s, target_speed=40.00m/s, safety_penalty=0.000, lane_change_cost=0.010, lane_change_accepted=True, total=2.635
+[TTC REWARD] disabled; TTC is recorded for episode-level evaluation, not used as a per-step action override.
+[LANE ACTION MASK][GEOMETRY ONLY] current_lane=1 mask=[True, True] adjacent_targets=[0, 2] ttc_veto=False
+[INSTANT STEP] source_lane=1 requested=KEEP target_lane=1 lane_changed=False executed_lane=1 accel=0.622 collision=False
+[TTC REWARD INPUT] source=post_step physical_lane=1 relevant_lanes=[1] lane_details={1: {'front_vehicle_id': 2170858800912, 'front_ttc_s': inf, 'front_gap_m': 53.7676339817632, 'rear_vehicle_id': 2170858810192, 'rear_ttc_s': 10.117567342439328, 'rear_gap_m': 29.61822035927264}} min_ttc_s=10.118 finite_ttc_count=1
+[REWARD DEBUG] progress=2.707, speed=27.07m/s, target_speed=40.00m/s, safety_penalty=0.000, lane_change_cost=0.000, lane_change_accepted=False, total=2.707
+[TTC REWARD] disabled; TTC is recorded for episode-level evaluation, not used as a per-step action override.
+[LANE ACTION MASK][GEOMETRY ONLY] current_lane=1 mask=[True, True] adjacent_targets=[0, 2] ttc_veto=False
+[INSTANT STEP] source_lane=1 requested=KEEP target_lane=1 lane_changed=False executed_lane=1 accel=0.802 collision=False
+[TTC REWARD INPUT] source=post_step physical_lane=1 relevant_lanes=[1] lane_details={1: {'front_vehicle_id': 2170858800912, 'front_ttc_s': inf, 'front_gap_m': 54.35311504369861, 'rear_vehicle_id': 2170858810192, 'rear_ttc_s': 13.657379792409598, 'rear_gap_m': 29.03273929733723}} min_ttc_s=13.657 finite_ttc_count=1
+[REWARD DEBUG] progress=2.787, speed=27.87m/s, target_speed=40.00m/s, safety_penalty=0.000, lane_change_cost=0.000, lane_change_accepted=False, total=2.787
+[TTC REWARD] disabled; TTC is recorded for episode-level evaluation, not used as a per-step action override.
+[LANE ACTION MASK][GEOMETRY ONLY] current_lane=1 mask=[True, True] adjacent_targets=[0, 2] ttc_veto=False
+[TARGET LANE SELECTOR][NO HARD VETO] source_lane=1 selected_lane=2 utility=0.802 front_ttc=24.793 rear_ttc=26.284 candidates=[{'target_lane': 0, 'utility': 0.643169574256332, 'front_gap': 26.5481066728139, 'rear_gap': 30.639259639286365, 'front_ttc': inf, 'rear_ttc': 14.413107945703194, 'front_speed': 28.52684235351864}, {'target_lane': 2, 'utility': 0.8015833503033087, 'front_gap': 34.16385287476044, 'rear_gap': 55.87372500302638, 'front_ttc': 24.792884288716213, 'rear_ttc': 26.283730066524274, 'front_speed': 26.496238603572902}]
+[INSTANT STEP] source_lane=1 requested=CHANGE target_lane=2 lane_changed=True executed_lane=2 accel=-0.306 collision=False
+[TTC REWARD INPUT] source=post_step physical_lane=2 relevant_lanes=[2] lane_details={2: {'front_vehicle_id': 2170168322960, 'front_ttc_s': 31.6137880051586, 'front_gap_m': 33.888258857727806, 'rear_vehicle_id': 2170051408720, 'rear_ttc_s': 22.80130152626843, 'rear_gap_m': 55.44856674077357}} min_ttc_s=22.801 finite_ttc_count=2
+[REWARD DEBUG] progress=2.757, speed=27.57m/s, target_speed=40.00m/s, safety_penalty=0.000, lane_change_cost=0.010, lane_change_accepted=True, total=2.747
+[TTC REWARD] disabled; TTC is recorded for episode-level evaluation, not used as a per-step action override.
+[LANE ACTION MASK][GEOMETRY ONLY] current_lane=2 mask=[True, True] adjacent_targets=[1] ttc_veto=False
+[TARGET LANE SELECTOR][NO HARD VETO] source_lane=2 selected_lane=1 utility=0.920 front_ttc=inf rear_ttc=11.764 candidates=[{'target_lane': 1, 'utility': 0.9201239820508417, 'front_gap': 54.778273305951416, 'rear_gap': 28.607581035084422, 'front_ttc': inf, 'rear_ttc': 11.763876317446146, 'front_speed': 30.0}]
+[INSTANT STEP] source_lane=2 requested=CHANGE target_lane=1 lane_changed=True executed_lane=1 accel=0.329 collision=False
+[TTC REWARD INPUT] source=post_step physical_lane=1 relevant_lanes=[1] lane_details={1: {'front_vehicle_id': 2170858800912, 'front_ttc_s': inf, 'front_gap_m': 55.264636478482544, 'rear_vehicle_id': 2170858810192, 'rear_ttc_s': 13.370926653109715, 'rear_gap_m': 28.121217862553294}} min_ttc_s=13.371 finite_ttc_count=1
+[REWARD DEBUG] progress=2.790, speed=27.90m/s, target_speed=40.00m/s, safety_penalty=0.000, lane_change_cost=0.010, lane_change_accepted=True, total=2.780
+[TTC REWARD] disabled; TTC is recorded for episode-level evaluation, not used as a per-step action override.
+[LANE ACTION MASK][GEOMETRY ONLY] current_lane=1 mask=[True, True] adjacent_targets=[0, 2] ttc_veto=False
+[TARGET LANE SELECTOR][NO HARD VETO] source_lane=1 selected_lane=2 utility=0.797 front_ttc=24.042 rear_ttc=26.133 candidates=[{'target_lane': 0, 'utility': 0.6402258652307512, 'front_gap': 26.870365049005386, 'rear_gap': 29.72773820450243, 'front_ttc': inf, 'rear_ttc': 14.134786375114667, 'front_speed': 28.52684235351864}, {'target_lane': 2, 'utility': 0.7965811276008237, 'front_gap': 33.673869750973495, 'rear_gap': 54.962203568242444, 'front_ttc': 24.04246159732317, 'rear_ttc': 26.133135349833285, 'front_speed': 26.496238603572902}]
+[INSTANT STEP] source_lane=1 requested=CHANGE target_lane=2 lane_changed=True executed_lane=2 accel=-0.297 collision=False
+[TTC REWARD INPUT] source=post_step physical_lane=2 relevant_lanes=[2] lane_details={2: {'front_vehicle_id': 2170168322960, 'front_ttc_s': 30.2541907803186, 'front_gap_m': 33.393749767296526, 'rear_vehicle_id': 2170051408720, 'rear_ttc_s': 22.725761707246303, 'rear_gap_m': 54.54157127263397}} min_ttc_s=22.726 finite_ttc_count=2
+[REWARD DEBUG] progress=2.760, speed=27.60m/s, target_speed=40.00m/s, safety_penalty=0.000, lane_change_cost=0.010, lane_change_accepted=True, total=2.750
+[TTC REWARD] disabled; TTC is recorded for episode-level evaluation, not used as a per-step action override.
+[LANE ACTION MASK][GEOMETRY ONLY] current_lane=2 mask=[True, True] adjacent_targets=[1] ttc_veto=False
+[TARGET LANE SELECTOR][NO HARD VETO] source_lane=2 selected_lane=1 utility=0.923 front_ttc=inf rear_ttc=11.542 candidates=[{'target_lane': 1, 'utility': 0.923043333989356, 'front_gap': 55.685268774091014, 'rear_gap': 27.700585566944824, 'front_ttc': inf, 'rear_ttc': 11.54196500131693, 'front_speed': 30.0}]
+[INSTANT STEP] source_lane=2 requested=CHANGE target_lane=1 lane_changed=True executed_lane=1 accel=-0.679 collision=False
+[TTC REWARD INPUT] source=post_step physical_lane=1 relevant_lanes=[1] lane_details={1: {'front_vehicle_id': 2170858800912, 'front_ttc_s': inf, 'front_gap_m': 56.1652665138829, 'rear_vehicle_id': 2170858810192, 'rear_ttc_s': 8.8401273456324, 'rear_gap_m': 27.22058782715294}} min_ttc_s=8.840 finite_ttc_count=1
+[REWARD DEBUG] progress=2.692, speed=26.92m/s, target_speed=40.00m/s, safety_penalty=0.000, lane_change_cost=0.010, lane_change_accepted=True, total=2.682
+[TTC REWARD] disabled; TTC is recorded for episode-level evaluation, not used as a per-step action override.
+[LANE ACTION MASK][GEOMETRY ONLY] current_lane=1 mask=[True, True] adjacent_targets=[0, 2] ttc_veto=False
+[TARGET LANE SELECTOR][NO HARD VETO] source_lane=1 selected_lane=2 utility=0.792 front_ttc=78.136 rear_ttc=17.557 candidates=[{'target_lane': 0, 'utility': 0.6350527227119364, 'front_gap': 27.18173202581329, 'rear_gap': 28.827108169102075, 'front_ttc': inf, 'rear_ttc': 9.361859076642732, 'front_speed': 28.52684235351864}, {'target_lane': 2, 'utility': 0.7923421029423435, 'front_gap': 33.17299522780297, 'rear_gap': 54.06157353284209, 'front_ttc': 78.13615164640287, 'rear_ttc': 17.556975535218626, 'front_speed': 26.496238603572902}]
+[INSTANT STEP] source_lane=1 requested=CHANGE target_lane=2 lane_changed=True executed_lane=2 accel=-0.875 collision=False
+[TTC REWARD INPUT] source=post_step physical_lane=2 relevant_lanes=[2] lane_details={2: {'front_vehicle_id': 2170168322960, 'front_ttc_s': inf, 'front_gap_m': 33.08808448027105, 'rear_vehicle_id': 2170051408720, 'rear_ttc_s': 13.517091133133809, 'rear_gap_m': 53.44573200108857}} min_ttc_s=13.517 finite_ttc_count=1
+[REWARD DEBUG] progress=2.605, speed=26.05m/s, target_speed=40.00m/s, safety_penalty=0.000, lane_change_cost=0.010, lane_change_accepted=True, total=2.595
+[TTC REWARD] disabled; TTC is recorded for episode-level evaluation, not used as a per-step action override.
+[LANE ACTION MASK][GEOMETRY ONLY] current_lane=2 mask=[True, True] adjacent_targets=[1] ttc_veto=False
+[INSTANT STEP] source_lane=2 requested=KEEP target_lane=2 lane_changed=False executed_lane=2 accel=-0.959 collision=False
+[TTC REWARD INPUT] source=post_step physical_lane=2 relevant_lanes=[2] lane_details={2: {'front_vehicle_id': 2170168322960, 'front_ttc_s': inf, 'front_gap_m': 33.17811967847888, 'rear_vehicle_id': 2170051408720, 'rear_ttc_s': 10.718075945103049, 'rear_gap_m': 52.654944523595304}} min_ttc_s=10.718 finite_ttc_count=1
+[REWARD DEBUG] progress=2.509, speed=25.09m/s, target_speed=40.00m/s, safety_penalty=0.000, lane_change_cost=0.000, lane_change_accepted=False, total=2.509
+[TTC REWARD] disabled; TTC is recorded for episode-level evaluation, not used as a per-step action override.
+[LANE ACTION MASK][GEOMETRY ONLY] current_lane=2 mask=[True, True] adjacent_targets=[1] ttc_veto=False
+[TARGET LANE SELECTOR][NO HARD VETO] source_lane=2 selected_lane=1 utility=0.923 front_ttc=inf rear_ttc=5.255 candidates=[{'target_lane': 1, 'utility': 0.9233206683753943, 'front_gap': 57.57189552312968, 'rear_gap': 25.813958817906155, 'front_ttc': inf, 'rear_ttc': 5.254510731278027, 'front_speed': 30.0}]
+[INSTANT STEP] source_lane=2 requested=CHANGE target_lane=1 lane_changed=True executed_lane=1 accel=0.001 collision=False
+[TTC REWARD INPUT] source=post_step physical_lane=1 relevant_lanes=[1] lane_details={1: {'front_vehicle_id': 2170858800912, 'front_ttc_s': inf, 'front_gap_m': 58.554440240918325, 'rear_vehicle_id': 2170858810192, 'rear_ttc_s': 5.0557924033236175, 'rear_gap_m': 24.831414100117513}} min_ttc_s=5.056 finite_ttc_count=1
+[REWARD DEBUG] progress=2.509, speed=25.09m/s, target_speed=40.00m/s, safety_penalty=0.000, lane_change_cost=0.010, lane_change_accepted=True, total=2.499
+[TTC REWARD] disabled; TTC is recorded for episode-level evaluation, not used as a per-step action override.
+[LANE ACTION MASK][GEOMETRY ONLY] current_lane=1 mask=[True, True] adjacent_targets=[0, 2] ttc_veto=False
+[INSTANT STEP] source_lane=1 requested=KEEP target_lane=1 lane_changed=False executed_lane=1 accel=-0.602 collision=False
+[TTC REWARD INPUT] source=post_step physical_lane=1 relevant_lanes=[1] lane_details={1: {'front_vehicle_id': 2170858800912, 'front_ttc_s': inf, 'front_gap_m': 59.53673587804906, 'rear_vehicle_id': 2170858810192, 'rear_ttc_s': 4.325428164458386, 'rear_gap_m': 23.84911846298678}} min_ttc_s=4.325 finite_ttc_count=1
+[REWARD DEBUG] progress=2.449, speed=24.49m/s, target_speed=40.00m/s, safety_penalty=0.000, lane_change_cost=0.000, lane_change_accepted=False, total=2.449
+[TTC REWARD] disabled; TTC is recorded for episode-level evaluation, not used as a per-step action override.
+[LANE ACTION MASK][GEOMETRY ONLY] current_lane=1 mask=[True, True] adjacent_targets=[0, 2] ttc_veto=False
+[TARGET LANE SELECTOR][NO HARD VETO] source_lane=1 selected_lane=2 utility=0.796 front_ttc=inf rear_ttc=9.193 candidates=[{'target_lane': 0, 'utility': 0.62839097010485, 'front_gap': 29.374675272794548, 'rear_gap': 25.455638804935916, 'front_ttc': inf, 'rear_ttc': 4.616796935368162, 'front_speed': 28.52684235351864}, {'target_lane': 2, 'utility': 0.7956584020440048, 'front_gap': 33.741455474827376, 'rear_gap': 50.69010416867593, 'front_ttc': inf, 'rear_ttc': 9.193480445442905, 'front_speed': 26.496238603572902}]
+[INSTANT STEP] source_lane=1 requested=CHANGE target_lane=2 lane_changed=True executed_lane=2 accel=0.964 collision=False
+[TTC REWARD INPUT] source=post_step physical_lane=2 relevant_lanes=[2] lane_details={2: {'front_vehicle_id': 2170168322960, 'front_ttc_s': inf, 'front_gap_m': 34.14344343563903, 'rear_vehicle_id': 2170051408720, 'rear_ttc_s': 10.899248894269618, 'rear_gap_m': 49.58736392857884}} min_ttc_s=10.899 finite_ttc_count=1
+[REWARD DEBUG] progress=2.545, speed=25.45m/s, target_speed=40.00m/s, safety_penalty=0.000, lane_change_cost=0.010, lane_change_accepted=True, total=2.535
+[TTC REWARD] disabled; TTC is recorded for episode-level evaluation, not used as a per-step action override.
+[LANE ACTION MASK][GEOMETRY ONLY] current_lane=2 mask=[True, True] adjacent_targets=[1] ttc_veto=False
+[TARGET LANE SELECTOR][NO HARD VETO] source_lane=2 selected_lane=1 utility=0.927 front_ttc=inf rear_ttc=5.000 candidates=[{'target_lane': 1, 'utility': 0.9266417491502187, 'front_gap': 60.63947611814615, 'rear_gap': 22.74637822288969, 'front_ttc': inf, 'rear_ttc': 4.999629301762205, 'front_speed': 30.0}]
+[INSTANT STEP] source_lane=2 requested=CHANGE target_lane=1 lane_changed=True executed_lane=1 accel=0.048 collision=False
+[TTC REWARD INPUT] source=post_step physical_lane=1 relevant_lanes=[1] lane_details={1: {'front_vehicle_id': 2170858800912, 'front_ttc_s': inf, 'front_gap_m': 61.549398708401895, 'rear_vehicle_id': 2170858810192, 'rear_ttc_s': 4.851152064485297, 'rear_gap_m': 21.836455632633943}} min_ttc_s=4.851 finite_ttc_count=1
+[REWARD DEBUG] progress=2.550, speed=25.50m/s, target_speed=40.00m/s, safety_penalty=0.000, lane_change_cost=0.010, lane_change_accepted=True, total=2.540
+[TTC REWARD] disabled; TTC is recorded for episode-level evaluation, not used as a per-step action override.
+[LANE ACTION MASK][GEOMETRY ONLY] current_lane=1 mask=[True, True] adjacent_targets=[0, 2] ttc_veto=False
+[TARGET LANE SELECTOR][NO HARD VETO] source_lane=1 selected_lane=2 utility=0.803 front_ttc=inf rear_ttc=10.814 candidates=[{'target_lane': 0, 'utility': 0.6304789412783247, 'front_gap': 30.798075044554935, 'rear_gap': 23.442975974583078, 'front_ttc': inf, 'rear_ttc': 5.208054054652467, 'front_speed': 28.52684235351864}, {'target_lane': 2, 'utility': 0.8027792836290741, 'front_gap': 34.352613746609336, 'rear_gap': 48.67744133832309, 'front_ttc': inf, 'rear_ttc': 10.814102527214224, 'front_speed': 26.496238603572902}]
+[INSTANT STEP] source_lane=1 requested=CHANGE target_lane=2 lane_changed=True executed_lane=2 accel=-0.842 collision=False
+[TTC REWARD INPUT] source=post_step physical_lane=2 relevant_lanes=[2] lane_details={2: {'front_vehicle_id': 2170168322960, 'front_ttc_s': inf, 'front_gap_m': 34.55212001796781, 'rear_vehicle_id': 2170051408720, 'rear_ttc_s': 8.941138087561294, 'rear_gap_m': 47.77718278767918}} min_ttc_s=8.941 finite_ttc_count=1
+[REWARD DEBUG] progress=2.466, speed=24.66m/s, target_speed=40.00m/s, safety_penalty=0.000, lane_change_cost=0.010, lane_change_accepted=True, total=2.456
+[TTC REWARD] disabled; TTC is recorded for episode-level evaluation, not used as a per-step action override.
+[LANE ACTION MASK][GEOMETRY ONLY] current_lane=2 mask=[True, True] adjacent_targets=[1] ttc_veto=False
+[TARGET LANE SELECTOR][NO HARD VETO] source_lane=2 selected_lane=1 utility=0.912 front_ttc=inf rear_ttc=3.918 candidates=[{'target_lane': 1, 'utility': 0.9118247030619441, 'front_gap': 62.44965725904581, 'rear_gap': 20.93619708199003, 'front_ttc': inf, 'rear_ttc': 3.918050797811885, 'front_speed': 30.0}]
+[INSTANT STEP] source_lane=2 requested=CHANGE target_lane=1 lane_changed=True executed_lane=1 accel=0.715 collision=False
+[TTC REWARD INPUT] source=post_step physical_lane=1 relevant_lanes=[1] lane_details={1: {'front_vehicle_id': 2170858800912, 'front_ttc_s': inf, 'front_gap_m': 63.518361988126, 'rear_vehicle_id': 2170858810192, 'rear_ttc_s': 4.292576381891598, 'rear_gap_m': 19.867492352909835}} min_ttc_s=4.293 finite_ttc_count=1
+[REWARD DEBUG] progress=2.537, speed=25.37m/s, target_speed=40.00m/s, safety_penalty=0.000, lane_change_cost=0.010, lane_change_accepted=True, total=2.527
+[TTC REWARD] disabled; TTC is recorded for episode-level evaluation, not used as a per-step action override.
+[LANE ACTION MASK][GEOMETRY ONLY] current_lane=1 mask=[True, True] adjacent_targets=[0, 2] ttc_veto=False
+[TARGET LANE SELECTOR][NO HARD VETO] source_lane=1 selected_lane=2 utility=0.808 front_ttc=inf rear_ttc=10.092 candidates=[{'target_lane': 0, 'utility': 0.6299319790191066, 'front_gap': 32.17777526568659, 'rear_gap': 21.47401269485897, 'front_ttc': inf, 'rear_ttc': 4.63968165085974, 'front_speed': 28.52684235351864}, {'target_lane': 2, 'utility': 0.8080404931878599, 'front_gap': 34.920072467762566, 'rear_gap': 46.708478058598985, 'front_ttc': inf, 'rear_ttc': 10.091847838012546, 'front_speed': 26.496238603572902}]
+[INSTANT STEP] source_lane=1 requested=CHANGE target_lane=2 lane_changed=True executed_lane=2 accel=0.211 collision=False
+[TTC REWARD INPUT] source=post_step physical_lane=2 relevant_lanes=[2] lane_details={2: {'front_vehicle_id': 2170168322960, 'front_ttc_s': inf, 'front_gap_m': 35.14498769374143, 'rear_vehicle_id': 2170051408720, 'rear_ttc_s': 10.36349256777681, 'rear_gap_m': 45.782810553334684}} min_ttc_s=10.363 finite_ttc_count=1
+[REWARD DEBUG] progress=2.558, speed=25.58m/s, target_speed=40.00m/s, safety_penalty=0.000, lane_change_cost=0.010, lane_change_accepted=True, total=2.548
+[TTC REWARD] disabled; TTC is recorded for episode-level evaluation, not used as a per-step action override.
+[LANE ACTION MASK][GEOMETRY ONLY] current_lane=2 mask=[True, True] adjacent_targets=[1] ttc_veto=False
+[INSTANT STEP] source_lane=2 requested=KEEP target_lane=2 lane_changed=False executed_lane=2 accel=-0.844 collision=False
+[TTC REWARD INPUT] source=post_step physical_lane=2 relevant_lanes=[2] lane_details={2: {'front_vehicle_id': 2170168322960, 'front_ttc_s': inf, 'front_gap_m': 35.32777559656961, 'rear_vehicle_id': 2170051408720, 'rear_ttc_s': 8.533767341076887, 'rear_gap_m': 44.899270371221064}} min_ttc_s=8.534 finite_ttc_count=1
+[REWARD DEBUG] progress=2.474, speed=24.74m/s, target_speed=40.00m/s, safety_penalty=0.000, lane_change_cost=0.000, lane_change_accepted=False, total=2.474
+[TTC REWARD] disabled; TTC is recorded for episode-level evaluation, not used as a per-step action override.
+[LANE ACTION MASK][GEOMETRY ONLY] current_lane=2 mask=[True, True] adjacent_targets=[1] ttc_veto=False
+[INSTANT STEP] source_lane=2 requested=KEEP target_lane=2 lane_changed=False executed_lane=2 accel=0.875 collision=False
+[TTC REWARD INPUT] source=post_step physical_lane=2 relevant_lanes=[2] lane_details={2: {'front_vehicle_id': 2170168322960, 'front_ttc_s': inf, 'front_gap_m': 35.67929644770106, 'rear_vehicle_id': 2170051408720, 'rear_ttc_s': 9.996991455329539, 'rear_gap_m': 43.84699724080417}} min_ttc_s=9.997 finite_ttc_count=1
+[REWARD DEBUG] progress=2.561, speed=25.61m/s, target_speed=40.00m/s, safety_penalty=0.000, lane_change_cost=0.000, lane_change_accepted=False, total=2.561
+[TTC REWARD] disabled; TTC is recorded for episode-level evaluation, not used as a per-step action override.
+[LANE ACTION MASK][GEOMETRY ONLY] current_lane=2 mask=[True, True] adjacent_targets=[1] ttc_veto=False
+[TARGET LANE SELECTOR][NO HARD VETO] source_lane=2 selected_lane=1 utility=0.885 front_ttc=inf rear_ttc=3.877 candidates=[{'target_lane': 1, 'utility': 0.8854961209669754, 'front_gap': 66.37984280592082, 'rear_gap': 17.00601153511502, 'front_ttc': inf, 'rear_ttc': 3.8773225694818962, 'front_speed': 30.0}]
+[INSTANT STEP] source_lane=2 requested=CHANGE target_lane=1 lane_changed=True executed_lane=1 accel=-0.141 collision=False
+[TTC REWARD INPUT] source=post_step physical_lane=1 relevant_lanes=[1] lane_details={1: {'front_vehicle_id': 2170858800912, 'front_ttc_s': inf, 'front_gap_m': 67.25704666143531, 'rear_vehicle_id': 2170858810192, 'rear_ttc_s': 3.5626682508771617, 'rear_gap_m': 16.128807679600527}} min_ttc_s=3.563 finite_ttc_count=1
+[REWARD DEBUG] progress=2.547, speed=25.47m/s, target_speed=40.00m/s, safety_penalty=0.000, lane_change_cost=0.010, lane_change_accepted=True, total=2.537
+[TTC REWARD] disabled; TTC is recorded for episode-level evaluation, not used as a per-step action override.
+[LANE ACTION MASK][GEOMETRY ONLY] current_lane=1 mask=[True, True] adjacent_targets=[0, 2] ttc_veto=False
+[TARGET LANE SELECTOR][NO HARD VETO] source_lane=1 selected_lane=2 utility=0.803 front_ttc=inf rear_ttc=9.492 candidates=[{'target_lane': 0, 'utility': 0.6286560642596916, 'front_gap': 34.737933821811, 'rear_gap': 17.735328021549662, 'front_ttc': inf, 'rear_ttc': 3.917530130958322, 'front_speed': 28.52684235351864}, {'target_lane': 2, 'utility': 0.8034756394422943, 'front_gap': 35.85574802393012, 'rear_gap': 42.96979338528968, 'front_ttc': inf, 'rear_ttc': 9.491533514541517, 'front_speed': 26.496238603572902}]
+[INSTANT STEP] source_lane=1 requested=CHANGE target_lane=2 lane_changed=True executed_lane=2 accel=-0.471 collision=False
+[TTC REWARD INPUT] source=post_step physical_lane=2 relevant_lanes=[2] lane_details={2: {'front_vehicle_id': 2170168322960, 'front_ttc_s': inf, 'front_gap_m': 36.060429904877196, 'rear_vehicle_id': 2170051408720, 'rear_ttc_s': 8.416013675983598, 'rear_gap_m': 42.06435922505716}} min_ttc_s=8.416 finite_ttc_count=1
+[REWARD DEBUG] progress=2.500, speed=25.00m/s, target_speed=40.00m/s, safety_penalty=0.000, lane_change_cost=0.010, lane_change_accepted=True, total=2.490
+[TTC REWARD] disabled; TTC is recorded for episode-level evaluation, not used as a per-step action override.
+[LANE ACTION MASK][GEOMETRY ONLY] current_lane=2 mask=[True, True] adjacent_targets=[1] ttc_veto=False
+[INSTANT STEP] source_lane=2 requested=KEEP target_lane=2 lane_changed=False executed_lane=2 accel=-0.509 collision=False
+[TTC REWARD INPUT] source=post_step physical_lane=2 relevant_lanes=[2] lane_details={2: {'front_vehicle_id': 2170168322960, 'front_ttc_s': inf, 'front_gap_m': 36.359304309780555, 'rear_vehicle_id': 2170051408720, 'rear_ttc_s': 7.455983012205612, 'rear_gap_m': 41.06473254086836}} min_ttc_s=7.456 finite_ttc_count=1
+[REWARD DEBUG] progress=2.449, speed=24.49m/s, target_speed=40.00m/s, safety_penalty=0.000, lane_change_cost=0.000, lane_change_accepted=False, total=2.449
+[TTC REWARD] disabled; TTC is recorded for episode-level evaluation, not used as a per-step action override.
+[LANE ACTION MASK][GEOMETRY ONLY] current_lane=2 mask=[True, True] adjacent_targets=[1] ttc_veto=False
+[INSTANT STEP] source_lane=2 requested=KEEP target_lane=2 lane_changed=False executed_lane=2 accel=-0.722 collision=False
+[TTC REWARD INPUT] source=post_step physical_lane=2 relevant_lanes=[2] lane_details={2: {'front_vehicle_id': 2170168322960, 'front_ttc_s': inf, 'front_gap_m': 36.76007633583879, 'rear_vehicle_id': 2170051408720, 'rear_ttc_s': 6.414556535594296, 'rear_gap_m': 39.96320823552469}} min_ttc_s=6.415 finite_ttc_count=1
+[REWARD DEBUG] progress=2.377, speed=23.77m/s, target_speed=40.00m/s, safety_penalty=0.000, lane_change_cost=0.000, lane_change_accepted=False, total=2.377
+[TTC REWARD] disabled; TTC is recorded for episode-level evaluation, not used as a per-step action override.
+[LANE ACTION MASK][GEOMETRY ONLY] current_lane=2 mask=[True, True] adjacent_targets=[1] ttc_veto=False
+[TARGET LANE SELECTOR][NO HARD VETO] source_lane=2 selected_lane=1 utility=0.851 front_ttc=inf rear_ttc=2.106 candidates=[{'target_lane': 1, 'utility': 0.8508367564875385, 'front_gap': 70.2636318112003, 'rear_gap': 13.12222252983554, 'front_ttc': inf, 'rear_ttc': 2.1062682904285634, 'front_speed': 30.0}]
+[INSTANT STEP] source_lane=2 requested=CHANGE target_lane=1 lane_changed=True executed_lane=1 accel=0.729 collision=False
+[TTC REWARD INPUT] source=post_step physical_lane=1 relevant_lanes=[1] lane_details={1: {'front_vehicle_id': 2170858800912, 'front_ttc_s': inf, 'front_gap_m': 71.50964805608862, 'rear_vehicle_id': 2170858810192, 'rear_ttc_s': 2.158969925938286, 'rear_gap_m': 11.876206284947216}} min_ttc_s=2.159 finite_ttc_count=1
+[REWARD DEBUG] progress=2.450, speed=24.50m/s, target_speed=40.00m/s, safety_penalty=0.000, lane_change_cost=0.010, lane_change_accepted=True, total=2.440
+[TTC REWARD] disabled; TTC is recorded for episode-level evaluation, not used as a per-step action override.
+[LANE ACTION MASK][GEOMETRY ONLY] current_lane=1 mask=[True, True] adjacent_targets=[0, 2] ttc_veto=False
+[TARGET LANE SELECTOR][NO HARD VETO] source_lane=1 selected_lane=2 utility=0.787 front_ttc=inf rear_ttc=7.038 candidates=[{'target_lane': 0, 'utility': 0.6245649853183425, 'front_gap': 37.81200909927941, 'rear_gap': 13.482726626896351, 'front_ttc': inf, 'rear_ttc': 2.4510184994017172, 'front_speed': 28.52684235351864}, {'target_lane': 2, 'utility': 0.787439269407854, 'front_gap': 37.305340301441674, 'rear_gap': 38.717191990636366, 'front_ttc': inf, 'rear_ttc': 7.038380028015327, 'front_speed': 26.496238603572902}]
+[INSTANT STEP] source_lane=1 requested=CHANGE target_lane=2 lane_changed=True executed_lane=2 accel=0.931 collision=False
+[TTC REWARD INPUT] source=post_step physical_lane=2 relevant_lanes=[2] lane_details={2: {'front_vehicle_id': 2170168322960, 'front_ttc_s': inf, 'front_gap_m': 37.70476140968367, 'rear_vehicle_id': 2170051408720, 'rear_ttc_s': 8.231517154642724, 'rear_gap_m': 37.61701860310893}} min_ttc_s=8.232 finite_ttc_count=1
+[REWARD DEBUG] progress=2.543, speed=25.43m/s, target_speed=40.00m/s, safety_penalty=0.000, lane_change_cost=0.010, lane_change_accepted=True, total=2.533
+[TTC REWARD] disabled; TTC is recorded for episode-level evaluation, not used as a per-step action override.
+[LANE ACTION MASK][GEOMETRY ONLY] current_lane=2 mask=[True, True] adjacent_targets=[1] ttc_veto=False
+[TARGET LANE SELECTOR][NO HARD VETO] source_lane=2 selected_lane=1 utility=0.837 front_ttc=inf rear_ttc=2.358 candidates=[{'target_lane': 1, 'utility': 0.8370058799079906, 'front_gap': 72.60982144361606, 'rear_gap': 10.776032897419782, 'front_ttc': inf, 'rear_ttc': 2.358057681019256, 'front_speed': 30.0}]
+[INSTANT STEP] source_lane=2 requested=CHANGE target_lane=1 lane_changed=True executed_lane=1 accel=-0.607 collision=False
+[TTC REWARD INPUT] source=post_step physical_lane=1 relevant_lanes=[1] lane_details={1: {'front_vehicle_id': 2170858800912, 'front_ttc_s': inf, 'front_gap_m': 73.5237967873203, 'rear_vehicle_id': 2170858810192, 'rear_ttc_s': 1.9051036011015767, 'rear_gap_m': 9.862057553715545}} min_ttc_s=1.905 finite_ttc_count=1
+[REWARD DEBUG] progress=2.482, speed=24.82m/s, target_speed=40.00m/s, safety_penalty=0.000, lane_change_cost=0.010, lane_change_accepted=True, total=2.472
+[TTC REWARD] disabled; TTC is recorded for episode-level evaluation, not used as a per-step action override.
+[LANE ACTION MASK][GEOMETRY ONLY] current_lane=1 mask=[True, True] adjacent_targets=[0, 2] ttc_veto=False
+[INSTANT STEP] source_lane=1 requested=KEEP target_lane=1 lane_changed=False executed_lane=1 accel=-0.981 collision=False
+[TTC REWARD INPUT] source=post_step physical_lane=1 relevant_lanes=[1] lane_details={1: {'front_vehicle_id': 2170858800912, 'front_ttc_s': inf, 'front_gap_m': 74.5591271019565, 'rear_vehicle_id': 2170858810192, 'rear_ttc_s': 1.4335005260836093, 'rear_gap_m': 8.826727239079332}} min_ttc_s=1.434 finite_ttc_count=1
+[REWARD DEBUG] progress=2.384, speed=23.84m/s, target_speed=40.00m/s, safety_penalty=0.000, lane_change_cost=0.000, lane_change_accepted=False, total=2.384
+[TTC REWARD] disabled; TTC is recorded for episode-level evaluation, not used as a per-step action override.
+[LANE ACTION MASK][GEOMETRY ONLY] current_lane=1 mask=[True, True] adjacent_targets=[0, 2] ttc_veto=False
+[TARGET LANE SELECTOR][NO HARD VETO] source_lane=1 selected_lane=2 utility=0.775 front_ttc=inf rear_ttc=5.793 candidates=[{'target_lane': 0, 'utility': 0.6197882428276471, 'front_gap': 39.977593557258615, 'rear_gap': 10.433247581028468, 'front_ttc': inf, 'rear_ttc': 1.6944067139571926, 'front_speed': 28.52684235351864}, {'target_lane': 2, 'utility': 0.7748704391459341, 'front_gap': 38.25256250945324, 'rear_gap': 35.66771294476848, 'front_ttc': inf, 'rear_ttc': 5.79259830802904, 'front_speed': 26.496238603572902}]
+[INSTANT STEP] source_lane=1 requested=CHANGE target_lane=2 lane_changed=True executed_lane=2 accel=0.010 collision=False
+[TTC REWARD INPUT] source=post_step physical_lane=2 relevant_lanes=[2] lane_details={2: {'front_vehicle_id': 2170168322960, 'front_ttc_s': inf, 'front_gap_m': 38.783302940281374, 'rear_vehicle_id': 2170051408720, 'rear_ttc_s': 5.601388225670837, 'rear_gap_m': 34.43622023465491}} min_ttc_s=5.601 finite_ttc_count=1
+[REWARD DEBUG] progress=2.385, speed=23.85m/s, target_speed=40.00m/s, safety_penalty=0.000, lane_change_cost=0.010, lane_change_accepted=True, total=2.375
+[TTC REWARD] disabled; TTC is recorded for episode-level evaluation, not used as a per-step action override.
+[LANE ACTION MASK][GEOMETRY ONLY] current_lane=2 mask=[True, True] adjacent_targets=[1] ttc_veto=False
+[TARGET LANE SELECTOR][NO HARD VETO] source_lane=2 selected_lane=1 utility=0.805 front_ttc=inf rear_ttc=1.235 candidates=[{'target_lane': 1, 'utility': 0.804584443267159, 'front_gap': 75.79061981207008, 'rear_gap': 7.5952345289657615, 'front_ttc': inf, 'rear_ttc': 1.235439225671561, 'front_speed': 30.0}]
+[INSTANT STEP] source_lane=2 requested=CHANGE target_lane=1 lane_changed=True executed_lane=1 accel=0.648 collision=False
+[TTC REWARD INPUT] source=post_step physical_lane=1 relevant_lanes=[1] lane_details={1: {'front_vehicle_id': 2170858800912, 'front_ttc_s': inf, 'front_gap_m': 77.02018001562237, 'rear_vehicle_id': 2170858810192, 'rear_ttc_s': 1.15742258582235, 'rear_gap_m': 6.365674325413465}} min_ttc_s=1.157 finite_ttc_count=1
+[REWARD DEBUG] progress=2.450, speed=24.50m/s, target_speed=40.00m/s, safety_penalty=0.000, lane_change_cost=0.010, lane_change_accepted=True, total=2.440
+[TTC REWARD] disabled; TTC is recorded for episode-level evaluation, not used as a per-step action override.
+[LANE ACTION MASK][GEOMETRY ONLY] current_lane=1 mask=[True, True] adjacent_targets=[0, 2] ttc_veto=False
+[INSTANT STEP] source_lane=1 requested=KEEP target_lane=1 lane_changed=False executed_lane=1 accel=0.803 collision=False
+[TTC REWARD INPUT] source=post_step physical_lane=1 relevant_lanes=[1] lane_details={1: {'front_vehicle_id': 2170858800912, 'front_ttc_s': inf, 'front_gap_m': 78.120154113828, 'rear_vehicle_id': 2170858810192, 'rear_ttc_s': 1.1212193114742048, 'rear_gap_m': 5.265700227207844}} min_ttc_s=1.121 finite_ttc_count=1
+[REWARD DEBUG] progress=2.530, speed=25.30m/s, target_speed=40.00m/s, safety_penalty=0.000, lane_change_cost=0.000, lane_change_accepted=False, total=2.530
+[TTC REWARD] disabled; TTC is recorded for episode-level evaluation, not used as a per-step action override.
+[LANE ACTION MASK][GEOMETRY ONLY] current_lane=1 mask=[True, True] adjacent_targets=[0, 2] ttc_veto=False
+[INSTANT STEP] source_lane=1 requested=KEEP target_lane=1 lane_changed=False executed_lane=1 accel=0.903 collision=False
+[TTC REWARD INPUT] source=post_step physical_lane=1 relevant_lanes=[1] lane_details={1: {'front_vehicle_id': 2170858800912, 'front_ttc_s': inf, 'front_gap_m': 79.05943515783429, 'rear_vehicle_id': 2170858810192, 'rear_ttc_s': 1.1405713798006754, 'rear_gap_m': 4.326419183201551}} min_ttc_s=1.141 finite_ttc_count=1
+[REWARD DEBUG] progress=2.621, speed=26.21m/s, target_speed=40.00m/s, safety_penalty=0.000, lane_change_cost=0.000, lane_change_accepted=False, total=2.621
+[TTC REWARD] disabled; TTC is recorded for episode-level evaluation, not used as a per-step action override.
+[LANE ACTION MASK][GEOMETRY ONLY] current_lane=1 mask=[True, True] adjacent_targets=[0, 2] ttc_veto=False
+[INSTANT STEP] source_lane=1 requested=KEEP target_lane=1 lane_changed=False executed_lane=1 accel=-0.726 collision=False
+[TTC REWARD INPUT] source=post_step physical_lane=1 relevant_lanes=[1] lane_details={1: {'front_vehicle_id': 2170858800912, 'front_ttc_s': inf, 'front_gap_m': 79.81807582861063, 'rear_vehicle_id': 2170858810192, 'rear_ttc_s': 0.7895061061728671, 'rear_gap_m': 3.567778512425207}} min_ttc_s=0.790 finite_ttc_count=1
+[REWARD DEBUG] progress=2.548, speed=25.48m/s, target_speed=40.00m/s, safety_penalty=0.000, lane_change_cost=0.000, lane_change_accepted=False, total=2.548
+[TTC REWARD] disabled; TTC is recorded for episode-level evaluation, not used as a per-step action override.
+[LANE ACTION MASK][GEOMETRY ONLY] current_lane=1 mask=[True, True] adjacent_targets=[0, 2] ttc_veto=False
+[TARGET LANE SELECTOR][NO HARD VETO] source_lane=1 selected_lane=2 utility=0.759 front_ttc=inf rear_ttc=6.729 candidates=[{'target_lane': 0, 'utility': 0.615457057813237, 'front_gap': 43.763384637431614, 'rear_gap': 5.174298854374342, 'front_ttc': inf, 'rear_ttc': 1.1450095700909777, 'front_speed': 28.52684235351864}, {'target_lane': 2, 'utility': 0.7587004849788949, 'front_gap': 40.00774983968017, 'rear_gap': 30.408764218114356, 'front_ttc': inf, 'rear_ttc': 6.729090650600067, 'front_speed': 26.496238603572902}]
+[INSTANT STEP] source_lane=1 requested=CHANGE target_lane=2 lane_changed=True executed_lane=2 accel=0.642 collision=False
+[TTC REWARD INPUT] source=post_step physical_lane=2 relevant_lanes=[2] lane_details={2: {'front_vehicle_id': 2170168322960, 'front_ttc_s': inf, 'front_gap_m': 40.21079766644334, 'rear_vehicle_id': 2170051408720, 'rear_ttc_s': 7.61034936190082, 'rear_gap_m': 29.50496411206575}} min_ttc_s=7.610 finite_ttc_count=1
+[REWARD DEBUG] progress=2.612, speed=26.12m/s, target_speed=40.00m/s, safety_penalty=0.000, lane_change_cost=0.010, lane_change_accepted=True, total=2.602
+[TTC REWARD] disabled; TTC is recorded for episode-level evaluation, not used as a per-step action override.
+[LANE ACTION MASK][GEOMETRY ONLY] current_lane=2 mask=[True, True] adjacent_targets=[1] ttc_veto=False
+[INSTANT STEP] source_lane=2 requested=KEEP target_lane=2 lane_changed=False executed_lane=2 accel=0.032 collision=False
+[TTC REWARD INPUT] source=post_step physical_lane=2 relevant_lanes=[2] lane_details={2: {'front_vehicle_id': 2170168322960, 'front_ttc_s': inf, 'front_gap_m': 40.28543591679045, 'rear_vehicle_id': 2170051408720, 'rear_ttc_s': 7.4715299088647535, 'rear_gap_m': 28.729573582433204}} min_ttc_s=7.472 finite_ttc_count=1
+[REWARD DEBUG] progress=2.615, speed=26.15m/s, target_speed=40.00m/s, safety_penalty=0.000, lane_change_cost=0.000, lane_change_accepted=False, total=2.615
+[TTC REWARD] disabled; TTC is recorded for episode-level evaluation, not used as a per-step action override.
+[LANE ACTION MASK][GEOMETRY ONLY] current_lane=2 mask=[True, True] adjacent_targets=[1] ttc_veto=False
+[INSTANT STEP] source_lane=2 requested=KEEP target_lane=2 lane_changed=False executed_lane=2 accel=0.043 collision=False
+[TTC REWARD INPUT] source=post_step physical_lane=2 relevant_lanes=[2] lane_details={2: {'front_vehicle_id': 2170168322960, 'front_ttc_s': inf, 'front_gap_m': 40.353724889641285, 'rear_vehicle_id': 2170051408720, 'rear_ttc_s': 7.3538859550943885, 'rear_gap_m': 27.960532330296928}} min_ttc_s=7.354 finite_ttc_count=1
+[REWARD DEBUG] progress=2.620, speed=26.20m/s, target_speed=40.00m/s, safety_penalty=0.000, lane_change_cost=0.000, lane_change_accepted=False, total=2.620
+[TTC REWARD] disabled; TTC is recorded for episode-level evaluation, not used as a per-step action override.
+[LANE ACTION MASK][GEOMETRY ONLY] current_lane=2 mask=[True, True] adjacent_targets=[1] ttc_veto=False
+[INSTANT STEP] source_lane=2 requested=KEEP target_lane=2 lane_changed=False executed_lane=2 accel=-0.977 collision=False
+[TTC REWARD INPUT] source=post_step physical_lane=2 relevant_lanes=[2] lane_details={2: {'front_vehicle_id': 2170168322960, 'front_ttc_s': inf, 'front_gap_m': 40.413401382328516, 'rear_vehicle_id': 2170051408720, 'rear_ttc_s': 5.691745349542206, 'rear_gap_m': 27.20010355832426}} min_ttc_s=5.692 finite_ttc_count=1
+[REWARD DEBUG] progress=2.522, speed=25.22m/s, target_speed=40.00m/s, safety_penalty=0.000, lane_change_cost=0.000, lane_change_accepted=False, total=2.522
+[TTC REWARD] disabled; TTC is recorded for episode-level evaluation, not used as a per-step action override.
+[LANE ACTION MASK][GEOMETRY ONLY] current_lane=2 mask=[True, True] adjacent_targets=[1] ttc_veto=False
+[TARGET LANE SELECTOR][NO HARD VETO] source_lane=2 selected_lane=1 utility=0.720 front_ttc=inf rear_ttc=0.075 candidates=[{'target_lane': 1, 'utility': 0.7201362189727837, 'front_gap': 83.02673648840073, 'rear_gap': 0.35911785263510865, 'front_ttc': inf, 'rear_ttc': 0.07514704358718956, 'front_speed': 30.0}]
+[COLLISION EGO][INSTANT MODE] position=[844.1412910146529, 4.0] lane=1 speed=24.399
+[INSTANT STEP] source_lane=2 requested=CHANGE target_lane=1 lane_changed=True executed_lane=1 accel=-0.822 collision=True
+[TTC REWARD INPUT] source=post_step physical_lane=1 relevant_lanes=[1] lane_details={1: {'front_vehicle_id': 2170858800912, 'front_ttc_s': inf, 'front_gap_m': 83.9825102234471, 'rear_vehicle_id': None, 'rear_ttc_s': inf, 'rear_gap_m': inf}} min_ttc_s=inf finite_ttc_count=0
+[REWARD DEBUG] progress=2.440, speed=24.40m/s, target_speed=40.00m/s, safety_penalty=5.000, lane_change_cost=0.010, lane_change_accepted=True, total=-2.570
+[TTC REWARD] disabled; TTC is recorded for episode-level evaluation, not used as a per-step action override.
+[REFERENCE COLLECTION] episode=50/50 steps=119 return=+188.314
+[REFERENCE EPISODE LEFT COUNTERS] requested=30 mask_allowed=30 target_selected=30 completed=30
+[REFERENCE EPISODE RIGHT COUNTERS] requested=30 mask_allowed=30 target_selected=30 completed=30
+[REFERENCE EPISODE ACTION OPPORTUNITIES] steps=119 change_valid=119 (100.0%) only_keep=0 (0.0%)
+[REFERENCE TOTAL LEFT COUNTERS] requested=771 mask_allowed=771 target_selected=771 completed=771
+[REFERENCE TOTAL RIGHT COUNTERS] requested=763 mask_allowed=763 target_selected=763 completed=763
+[REFERENCE TOTAL ACTION OPPORTUNITIES] steps=2912 change_valid=2912 (100.0%) only_keep=0 (0.0%)
+
+
+
+
+
+
+[REFERENCE WARM-START] epoch=1/5 actor_loss=+1.35912 critic_loss=10641.48511
+[REFERENCE WARM-START] epoch=2/5 actor_loss=+1.35371 critic_loss=10492.73429
+[REFERENCE WARM-START] epoch=3/5 actor_loss=+1.35687 critic_loss=10418.34546
+[REFERENCE WARM-START] epoch=4/5 actor_loss=+1.35323 critic_loss=10296.19784
+[REFERENCE WARM-START] epoch=5/5 actor_loss=+1.34733 critic_loss=10129.76636
+[REFERENCE WARM-START COMPLETE] The reference dataset has updated the actor and critic; online Actor-Critic training starts next.
+[TRAFFIC SCENARIO] front_gap_range=10.0-90.0m rear_gap_range=10.0-90.0m gap_sampling=independent_per_lane_and_side speed_variation=±10.0m/s randomized=True
+[TRAFFIC SPAWN] lane=0 side=front gap=58.6m range=120.0m speed=22.05m/s id=2170041820624
+[TRAFFIC SPAWN] lane=0 side=rear gap=60.9m range=120.0m speed=27.42m/s id=2170858250704
+[TRAFFIC SPAWN] lane=1 side=front gap=64.2m range=120.0m speed=29.42m/s id=2170051660368
+[TRAFFIC SPAWN] lane=1 side=rear gap=62.7m range=120.0m speed=30.00m/s id=2170039292944
+[TRAFFIC SPAWN] lane=2 side=front gap=60.3m range=120.0m speed=30.00m/s id=2169762332176
+[TRAFFIC SPAWN] lane=2 side=rear gap=61.7m range=120.0m speed=21.18m/s id=2170051671888
+[TARGET LANE] ('0', '1', 1) initial_position= [203.349   4.   ]
+[LANE ACTION MASK][GEOMETRY ONLY] current_lane=1 mask=[True, True] adjacent_targets=[0, 2] ttc_veto=False
+[LANE POLICY DISTRIBUTION] phase=pure_rl episode=1 step=1 valid_action_mask=[True, True] raw_lane_logits=[-0.3109999895095825, -0.22840000689029694] raw_lane_probs=[0.47940000891685486, 0.5206000208854675] masked_lane_logits=[-0.3109999895095825, -0.22840000689029694] masked_lane_probs=[0.47940000891685486, 0.5206000208854675] sampled_lane_action_index=1 sampled_lane_action_name=CHANGE
+[TARGET LANE SELECTOR][NO HARD VETO] source_lane=1 selected_lane=2 utility=1.040 front_ttc=inf rear_ttc=inf candidates=[{'target_lane': 0, 'utility': 0.9664148499646037, 'front_gap': 53.56519985314131, 'rear_gap': 55.92943024047136, 'front_ttc': 18.13568071086931, 'rear_ttc': 23.132141668695436, 'front_speed': 22.046419116706332}, {'target_lane': 2, 'utility': 1.0400984829495186, 'front_gap': 55.259848294951865, 'rear_gap': 56.70724871124182, 'front_ttc': inf, 'rear_ttc': inf, 'front_speed': 30.0}]
+[INSTANT STEP] source_lane=1 requested=CHANGE target_lane=2 lane_changed=True executed_lane=2 accel=-0.618 collision=False
+[TTC REWARD INPUT] source=post_step physical_lane=2 relevant_lanes=[2] lane_details={2: {'front_vehicle_id': 2169762332176, 'front_ttc_s': inf, 'front_gap_m': 56.259848294951865, 'rear_vehicle_id': 2170051671888, 'rear_ttc_s': inf, 'rear_gap_m': 57.47151717543127}} min_ttc_s=inf finite_ttc_count=0
+[REWARD DEBUG] progress=2.438, speed=24.38m/s, target_speed=40.00m/s, safety_penalty=0.000, lane_change_cost=0.010, lane_change_accepted=True, total=2.428
+[TTC REWARD] disabled; TTC is recorded for episode-level evaluation, not used as a per-step action override.
+[LANE ACTION MASK][GEOMETRY ONLY] current_lane=2 mask=[True, True] adjacent_targets=[1] ttc_veto=False
+[LANE POLICY DISTRIBUTION] phase=pure_rl episode=1 step=2 valid_action_mask=[True, True] raw_lane_logits=[-0.36719998717308044, -0.2425999939441681] raw_lane_probs=[0.46889999508857727, 0.5310999751091003] masked_lane_logits=[-0.36719998717308044, -0.2425999939441681] masked_lane_probs=[0.46889999508857727, 0.5310999751091003] sampled_lane_action_index=1 sampled_lane_action_name=CHANGE
+[TARGET LANE SELECTOR][NO HARD VETO] source_lane=2 selected_lane=1 utility=1.077 front_ttc=inf rear_ttc=10.099 candidates=[{'target_lane': 1, 'utility': 1.077108634521225, 'front_gap': 60.104870196551616, 'rear_gap': 56.7345232253403, 'front_ttc': inf, 'rear_ttc': 10.098922746695377, 'front_speed': 29.41856753341418}]
+[INSTANT STEP] source_lane=2 requested=CHANGE target_lane=1 lane_changed=True executed_lane=1 accel=0.992 collision=False
+[TTC REWARD INPUT] source=post_step physical_lane=1 relevant_lanes=[1] lane_details={1: {'front_vehicle_id': 2170051660368, 'front_ttc_s': inf, 'front_gap_m': 61.11215944786338, 'rear_vehicle_id': 2170039292944, 'rear_ttc_s': 12.022397115879787, 'rear_gap_m': 55.61094748071139}} min_ttc_s=12.022 finite_ttc_count=1
+[REWARD DEBUG] progress=2.537, speed=25.37m/s, target_speed=40.00m/s, safety_penalty=0.000, lane_change_cost=0.010, lane_change_accepted=True, total=2.527
+[TTC REWARD] disabled; TTC is recorded for episode-level evaluation, not used as a per-step action override.
+[LANE ACTION MASK][GEOMETRY ONLY] current_lane=1 mask=[True, True] adjacent_targets=[0, 2] ttc_veto=False
+[LANE POLICY DISTRIBUTION] phase=pure_rl episode=1 step=3 valid_action_mask=[True, True] raw_lane_logits=[-0.3499000072479248, -0.22100000083446503] raw_lane_probs=[0.46779999136924744, 0.5321999788284302] masked_lane_logits=[-0.3499000072479248, -0.22100000083446503] masked_lane_probs=[0.46779999136924744, 0.5321999788284302] sampled_lane_action_index=0 sampled_lane_action_name=KEEP
+[INSTANT STEP] source_lane=1 requested=KEEP target_lane=1 lane_changed=False executed_lane=1 accel=0.786 collision=False
+[TTC REWARD INPUT] source=post_step physical_lane=1 relevant_lanes=[1] lane_details={1: {'front_vehicle_id': 2170051660368, 'front_ttc_s': inf, 'front_gap_m': 61.920995406328444, 'rear_vehicle_id': 2170039292944, 'rear_ttc_s': 14.241207222054603, 'rear_gap_m': 54.68582502892917}} min_ttc_s=14.241 finite_ttc_count=1
+[REWARD DEBUG] progress=2.616, speed=26.16m/s, target_speed=40.00m/s, safety_penalty=0.000, lane_change_cost=0.000, lane_change_accepted=False, total=2.616
+[TTC REWARD] disabled; TTC is recorded for episode-level evaluation, not used as a per-step action override.
+[LANE ACTION MASK][GEOMETRY ONLY] current_lane=1 mask=[True, True] adjacent_targets=[0, 2] ttc_veto=False
+[LANE POLICY DISTRIBUTION] phase=pure_rl episode=1 step=4 valid_action_mask=[True, True] raw_lane_logits=[-0.36149999499320984, -0.2257000058889389] raw_lane_probs=[0.4661000072956085, 0.5339000225067139] masked_lane_logits=[-0.36149999499320984, -0.2257000058889389] masked_lane_probs=[0.4661000072956085, 0.5339000225067139] sampled_lane_action_index=1 sampled_lane_action_name=CHANGE
+[TARGET LANE SELECTOR][NO HARD VETO] source_lane=1 selected_lane=2 utility=1.071 front_ttc=inf rear_ttc=inf candidates=[{'target_lane': 0, 'utility': 0.9489999315546255, 'front_gap': 51.841749519576155, 'rear_gap': 54.43003808649661, 'front_ttc': 12.60249586566691, 'rear_ttc': 43.2741925626159, 'front_speed': 22.046419116706332}, {'target_lane': 2, 'utility': 1.07058546491363, 'front_gap': 58.30854649136299, 'rear_gap': 58.95135590739906, 'front_ttc': inf, 'rear_ttc': inf, 'front_speed': 30.0}]
+[INSTANT STEP] source_lane=1 requested=CHANGE target_lane=2 lane_changed=True executed_lane=2 accel=0.981 collision=False
+[TTC REWARD INPUT] source=post_step physical_lane=2 relevant_lanes=[2] lane_details={2: {'front_vehicle_id': 2169762332176, 'front_ttc_s': inf, 'front_gap_m': 59.07654072354072, 'rear_vehicle_id': 2170051671888, 'rear_ttc_s': inf, 'rear_gap_m': 59.94763013941079}} min_ttc_s=inf finite_ttc_count=0
+[REWARD DEBUG] progress=2.714, speed=27.14m/s, target_speed=40.00m/s, safety_penalty=0.000, lane_change_cost=0.010, lane_change_accepted=True, total=2.704
+[TTC REWARD] disabled; TTC is recorded for episode-level evaluation, not used as a per-step action override.
+[LANE ACTION MASK][GEOMETRY ONLY] current_lane=2 mask=[True, True] adjacent_targets=[1] ttc_veto=False
+[LANE POLICY DISTRIBUTION] phase=pure_rl episode=1 step=5 valid_action_mask=[True, True] raw_lane_logits=[-0.4219000041484833, -0.241799995303154] raw_lane_probs=[0.45509999990463257, 0.5449000000953674] masked_lane_logits=[-0.4219000041484833, -0.241799995303154] masked_lane_probs=[0.45509999990463257, 0.5449000000953674] sampled_lane_action_index=1 sampled_lane_action_name=CHANGE
+[TARGET LANE SELECTOR][NO HARD VETO] source_lane=2 selected_lane=1 utility=1.080 front_ttc=inf rear_ttc=18.857 candidates=[{'target_lane': 1, 'utility': 1.0800890388040814, 'front_gap': 62.572703145189024, 'rear_gap': 53.917830796751446, 'front_ttc': inf, 'rear_ttc': 18.856985858875543, 'front_speed': 29.41856753341418}]
+[INSTANT STEP] source_lane=2 requested=CHANGE target_lane=1 lane_changed=True executed_lane=1 accel=0.298 collision=False
+[TTC REWARD INPUT] source=post_step physical_lane=1 relevant_lanes=[1] lane_details={1: {'front_vehicle_id': 2170051660368, 'front_ttc_s': inf, 'front_gap_m': 63.02827719416925, 'rear_vehicle_id': 2170039292944, 'rear_ttc_s': 20.83063579197241, 'rear_gap_m': 53.34597025445407}} min_ttc_s=20.831 finite_ttc_count=1
+[REWARD DEBUG] progress=2.744, speed=27.44m/s, target_speed=40.00m/s, safety_penalty=0.000, lane_change_cost=0.010, lane_change_accepted=True, total=2.734
+[TTC REWARD] disabled; TTC is recorded for episode-level evaluation, not used as a per-step action override.
+[LANE ACTION MASK][GEOMETRY ONLY] current_lane=1 mask=[True, True] adjacent_targets=[0, 2] ttc_veto=False
+[LANE POLICY DISTRIBUTION] phase=pure_rl episode=1 step=6 valid_action_mask=[True, True] raw_lane_logits=[-0.39739999175071716, -0.22210000455379486] raw_lane_probs=[0.4562999904155731, 0.5436999797821045] masked_lane_logits=[-0.39739999175071716, -0.22210000455379486] masked_lane_probs=[0.4562999904155731, 0.5436999797821045] sampled_lane_action_index=1 sampled_lane_action_name=CHANGE
+[TARGET LANE SELECTOR][NO HARD VETO] source_lane=1 selected_lane=2 utility=1.084 front_ttc=inf rear_ttc=inf candidates=[{'target_lane': 0, 'utility': 0.9304903828010214, 'front_gap': 50.000171940733736, 'rear_gap': 54.12305400697909, 'front_ttc': 9.271923725813295, 'rear_ttc': inf, 'front_speed': 22.046419116706332}, {'target_lane': 2, 'utility': 1.083984012658381, 'front_gap': 59.64840126583809, 'rear_gap': 61.140038061302874, 'front_ttc': inf, 'rear_ttc': inf, 'front_speed': 30.0}]
+[INSTANT STEP] source_lane=1 requested=CHANGE target_lane=2 lane_changed=True executed_lane=2 accel=0.370 collision=False
+[TTC REWARD INPUT] source=post_step physical_lane=2 relevant_lanes=[2] lane_details={2: {'front_vehicle_id': 2169762332176, 'front_ttc_s': inf, 'front_gap_m': 60.16058889935249, 'rear_vehicle_id': 2170051671888, 'rear_ttc_s': inf, 'rear_gap_m': 62.39211889197793}} min_ttc_s=inf finite_ttc_count=0
+[REWARD DEBUG] progress=2.781, speed=27.81m/s, target_speed=40.00m/s, safety_penalty=0.000, lane_change_cost=0.010, lane_change_accepted=True, total=2.771
+[TTC REWARD] disabled; TTC is recorded for episode-level evaluation, not used as a per-step action override.
+[LANE ACTION MASK][GEOMETRY ONLY] current_lane=2 mask=[True, True] adjacent_targets=[1] ttc_veto=False
+[LANE POLICY DISTRIBUTION] phase=pure_rl episode=1 step=7 valid_action_mask=[True, True] raw_lane_logits=[-0.4697999954223633, -0.22920000553131104] raw_lane_probs=[0.4401000142097473, 0.5598999857902527] masked_lane_logits=[-0.4697999954223633, -0.22920000553131104] masked_lane_probs=[0.4401000142097473, 0.5598999857902527] sampled_lane_action_index=0 sampled_lane_action_name=KEEP
+[INSTANT STEP] source_lane=2 requested=KEEP target_lane=2 lane_changed=False executed_lane=2 accel=-0.102 collision=False
+[TTC REWARD INPUT] source=post_step physical_lane=2 relevant_lanes=[2] lane_details={2: {'front_vehicle_id': 2169762332176, 'front_ttc_s': inf, 'front_gap_m': 60.59877304623359, 'rear_vehicle_id': 2170051671888, 'rear_ttc_s': inf, 'rear_gap_m': 63.71820320928629}} min_ttc_s=inf finite_ttc_count=0
+[REWARD DEBUG] progress=2.771, speed=27.71m/s, target_speed=40.00m/s, safety_penalty=0.000, lane_change_cost=0.000, lane_change_accepted=False, total=2.771
+[TTC REWARD] disabled; TTC is recorded for episode-level evaluation, not used as a per-step action override.
+[LANE ACTION MASK][GEOMETRY ONLY] current_lane=2 mask=[True, True] adjacent_targets=[1] ttc_veto=False
+[LANE POLICY DISTRIBUTION] phase=pure_rl episode=1 step=8 valid_action_mask=[True, True] raw_lane_logits=[-0.4869000017642975, -0.22930000722408295] raw_lane_probs=[0.4359999895095825, 0.5640000104904175] masked_lane_logits=[-0.4869000017642975, -0.22930000722408295] masked_lane_probs=[0.4359999895095825, 0.5640000104904175] sampled_lane_action_index=1 sampled_lane_action_name=CHANGE
+[TARGET LANE SELECTOR][NO HARD VETO] source_lane=2 selected_lane=1 utility=1.081 front_ttc=inf rear_ttc=22.851 candidates=[{'target_lane': 1, 'utility': 1.080721588265357, 'front_gap': 63.74607598793045, 'rear_gap': 52.39559847405857, 'front_ttc': inf, 'rear_ttc': 22.851481074955565, 'front_speed': 29.41856753341418}]
+[INSTANT STEP] source_lane=2 requested=CHANGE target_lane=1 lane_changed=True executed_lane=1 accel=0.797 collision=False
+[TTC REWARD INPUT] source=post_step physical_lane=1 relevant_lanes=[1] lane_details={1: {'front_vehicle_id': 2170051660368, 'front_ttc_s': inf, 'front_gap_m': 64.08836457167018, 'rear_vehicle_id': 2170039292944, 'rear_ttc_s': 34.72361006074106, 'rear_gap_m': 51.937023397001695}} min_ttc_s=34.724 finite_ttc_count=1
+[REWARD DEBUG] progress=2.850, speed=28.50m/s, target_speed=40.00m/s, safety_penalty=0.000, lane_change_cost=0.010, lane_change_accepted=True, total=2.840
+[TTC REWARD] disabled; TTC is recorded for episode-level evaluation, not used as a per-step action override.
+[LANE ACTION MASK][GEOMETRY ONLY] current_lane=1 mask=[True, True] adjacent_targets=[0, 2] ttc_veto=False
+[LANE POLICY DISTRIBUTION] phase=pure_rl episode=1 step=9 valid_action_mask=[True, True] raw_lane_logits=[-0.45829999446868896, -0.21050000190734863] raw_lane_probs=[0.438400000333786, 0.5616000294685364] masked_lane_logits=[-0.45829999446868896, -0.21050000190734863] masked_lane_probs=[0.438400000333786, 0.5616000294685364] sampled_lane_action_index=1 sampled_lane_action_name=CHANGE
+[TARGET LANE SELECTOR][NO HARD VETO] source_lane=1 selected_lane=2 utility=1.088 front_ttc=inf rear_ttc=inf candidates=[{'target_lane': 0, 'utility': 0.8950376698127016, 'front_gap': 46.636970268209836, 'rear_gap': 54.26341319196308, 'front_ttc': 7.22174385300343, 'rear_ttc': inf, 'front_speed': 22.046419116706332}, {'target_lane': 2, 'utility': 1.0875000000000001, 'front_gap': 61.05734812329047, 'rear_gap': 65.02389659641887, 'front_ttc': inf, 'rear_ttc': inf, 'front_speed': 30.0}]
+[INSTANT STEP] source_lane=1 requested=CHANGE target_lane=2 lane_changed=True executed_lane=2 accel=-0.893 collision=False
+[TTC REWARD INPUT] source=post_step physical_lane=2 relevant_lanes=[2] lane_details={2: {'front_vehicle_id': 2169762332176, 'front_ttc_s': inf, 'front_gap_m': 61.35649342129463, 'rear_vehicle_id': 2170051671888, 'rear_ttc_s': inf, 'rear_gap_m': 66.48901976260416}} min_ttc_s=inf finite_ttc_count=0
+[REWARD DEBUG] progress=2.761, speed=27.61m/s, target_speed=40.00m/s, safety_penalty=0.000, lane_change_cost=0.010, lane_change_accepted=True, total=2.751
+
+
