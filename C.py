@@ -33,13 +33,11 @@ simulation_frequency = 5
 
 lane_keeping_weight = 0.20
 
-# Stable long-term reward objectives. TTC is reserved for the independent
-# safety shield; it is not a continuous reward term. Speed is the primary
-# positive objective; a small benefit bonus is earned only for a safe lane change
-# whose target lane offers better estimated sustainable speed.
+# Stable long-term reward objective: speed, with collision outcomes penalized.
+# Lane selection is an action mechanism, not a separately rewarded objective.
+# TTC and gap constraints remain in the independent safety shield.
 SPEED_LIMIT = 40.0
 INITIAL_PROGRESS_WEIGHT = 4.0
-INITIAL_LANE_BENEFIT_WEIGHT = 0.5
 INITIAL_COLLISION_PENALTY = 5.0
 INITIAL_OFFROAD_PENALTY = 5.0
 
@@ -2391,23 +2389,6 @@ def _safety_aware_lane_selector_and_controller(self, sampled_action, selected_ta
     front_speed, front_gap = vals.get("front_speed"), float(vals.get("front_gap", 100.0))
     current_vals = metrics.get(current, {})
 
-    def estimated_sustainable_speed(lane_values):
-        """Conservative proxy for speed the lane can sustain under current traffic."""
-        lead_speed = lane_values.get("front_speed")
-        lead_gap = float(lane_values.get("front_gap", float("inf")))
-        if lead_speed is None or not np.isfinite(lead_gap):
-            return float(SPEED_LIMIT)
-        # More headway permits speed closer to the limit; this is a ranking/reward
-        # proxy, not a safety rule. TTC and minimum gaps are checked separately.
-        gap_allowance = max(0.0, lead_gap - MIN_FOLLOWING_GAP) * 0.25
-        return float(np.clip(float(lead_speed) + gap_allowance, 0.0, SPEED_LIMIT))
-
-    current_lane_estimated_speed = estimated_sustainable_speed(current_vals)
-    target_lane_estimated_speed = estimated_sustainable_speed(vals)
-    estimated_lane_speed_benefit = max(
-        0.0, target_lane_estimated_speed - current_lane_estimated_speed
-    ) if requested == 1 and not blocked else 0.0
-
     accel = (float(np.clip(0.5 * (30.0 - float(ego.speed)) / MAX_PHYSICAL_ACCELERATION, -1.0, 1.0)
              ) if front_speed is None else self._speed_matching_acceleration(float(front_speed), front_gap))
     cur = metrics.get(current, {})
@@ -2440,9 +2421,6 @@ def _safety_aware_lane_selector_and_controller(self, sampled_action, selected_ta
         "lane_change_candidate_rear_gap": float(vals.get("rear_gap", float("inf"))),
         "lane_change_candidate_front_ttc": float(vals.get("front_ttc", float("inf"))),
         "lane_change_candidate_rear_ttc": float(vals.get("rear_ttc", float("inf"))),
-        "current_lane_estimated_sustainable_speed_mps": float(current_lane_estimated_speed),
-        "target_lane_estimated_sustainable_speed_mps": float(target_lane_estimated_speed),
-        "estimated_lane_speed_benefit_mps": float(estimated_lane_speed_benefit),
     }
     print("[LEARNED TARGET CHECK]", f"requested={('KEEP','CHANGE')[requested]}",
           f"selected={selected}", f"safe={sorted(safe)}", f"executed={('KEEP','CHANGE')[executed]}",
@@ -2484,8 +2462,8 @@ def build_evaluator_prompt(batch_metrics, reward_specification):
         "principles": [
             "Prioritize reaching and maintaining the road speed limit when traffic permits.",
             "Maintain safe following distance and avoid collisions.",
-            "Use a lane change as a means to improve sustainable speed, not as an objective by itself.",
-            "Do not apply a blanket penalty to lane changes; assess whether a safe target lane offers a real speed benefit.",
+            "Lane changes are actions, not separately rewarded objectives; evaluate them by their effect on achieved speed.",
+            "Do not reward or penalize a lane change merely because it occurred.",
             "Consider both front-vehicle and rear-vehicle conditions.",
             "Treat TTC thresholds as evidence, not universal optimal boundaries.",
             "Distinguish predicted risk from observed collision or near-collision outcomes.",
@@ -2663,11 +2641,10 @@ def calculate_min_ttc(simulator):
 
 
 def construct_reward(reward_specification, embedding_model=None):
-    """Speed-first reward with a small safe lane-benefit bonus and collision penalty.
+    """Speed-only performance reward plus a collision penalty.
 
-    TTC/gap constraints remain in the independent safety shield. Lane changes are
-    not penalized merely for occurring; a benefit bonus is available only when an
-    accepted change offers better estimated sustainable speed than the current lane.
+    Lane changes have no direct reward contribution. TTC and gap constraints
+    remain in the independent safety shield; they are not continuous reward terms.
     """
     def reward_function(
         behavior_description, safety_violation, action, lane_deviation, offroad,
@@ -2687,46 +2664,32 @@ def construct_reward(reward_specification, embedding_model=None):
         progress_ratio = float(np.clip(ego_speed / target_speed, 0.0, 1.0))
         progress_reward = progress_weight * progress_ratio
 
-        # 2. A secondary bonus for a safe, accepted lane change with a positive
-        # estimated sustainable-speed advantage. No penalty is applied merely
-        # because a lane change occurs. The estimate is supplied by the selector.
-        lane_benefit_weight = max(
-            0.0, float(reward_specification.get("lane_benefit_weight", INITIAL_LANE_BENEFIT_WEIGHT))
-        )
-        lane_change_accepted = bool(
-            safety_info.get("lane_change_accepted",
-                            safety_info.get("lane_change_completed_instantly", False))
-        )
-        estimated_speed_benefit = max(
-            0.0, float(safety_info.get("estimated_lane_speed_benefit_mps", 0.0))
-        )
-        lane_benefit_ratio = float(np.clip(estimated_speed_benefit / target_speed, 0.0, 1.0))
-        lane_benefit_reward = (
-            lane_benefit_weight * lane_benefit_ratio if lane_change_accepted else 0.0
-        )
-
-        # 3. Collision penalty. TTC and gap checks remain in the independent shield.
+        # 2. Collision penalty. TTC and gap checks remain in the independent shield.
         safety_penalty = (
             max(0.0, float(reward_specification.get("safety_weight", INITIAL_COLLISION_PENALTY)))
             if bool(safety_violation) else 0.0
         )
 
-        reward = float(progress_reward + lane_benefit_reward - safety_penalty)
+        reward = float(progress_reward - safety_penalty)
+        speed_error = max(0.0, target_speed - ego_speed)
+        speed_target_reached = bool(ego_speed >= 0.90 * target_speed)
         if reward_diagnostics is not None:
             reward_diagnostics.update({
+                "reward_objective": "speed_only_plus_collision_penalty",
                 "progress_reward": float(progress_reward),
-                "lane_benefit_reward": float(lane_benefit_reward),
-                "estimated_lane_speed_benefit_mps": float(estimated_speed_benefit),
-                "lane_change_accepted": lane_change_accepted,
+                "ego_speed_mps": float(ego_speed),
+                "target_speed_mps": float(target_speed),
+                "speed_ratio": float(progress_ratio),
+                "speed_error_mps": float(speed_error),
+                "speed_target_reached_90pct": speed_target_reached,
                 "safety_penalty": float(safety_penalty),
                 "total_reward": reward,
             })
         print(
             f"[REWARD DEBUG] speed_reward={progress_reward:.3f}, "
             f"speed={ego_speed:.2f}m/s, target_speed={target_speed:.2f}m/s, "
-            f"lane_benefit_reward={lane_benefit_reward:.3f}, "
-            f"estimated_lane_speed_benefit={estimated_speed_benefit:.2f}m/s, "
-            f"lane_change_accepted={lane_change_accepted}, "
+            f"speed_ratio={progress_ratio:.3f}, speed_error={speed_error:.2f}m/s, "
+            f"target_reached_90pct={speed_target_reached}, "
             f"safety_penalty={safety_penalty:.3f}, total={reward:.3f}"
         )
         print("[TTC REWARD] disabled; TTC is recorded for episode-level evaluation, not used as a per-step action override.")
@@ -2835,14 +2798,12 @@ def build_fixed_reward_function():
     reward_specification = {
         "name": "pure_rl_episode_adaptive_reward",
         "target_behavior": (
-            "Prioritize reaching and maintaining the 40 m/s speed limit when traffic permits. "
-            "Use a lane change only as a means to improve sustainable speed; never penalize "
-            "a lane change merely for occurring. Avoid collisions and obey the independent "
-            "TTC and minimum-gap safety shield."
+            "Maximize achieved speed toward the 40 m/s target when traffic and safety permit. "
+            "Lane changes are actions rather than reward objectives. Avoid collisions and obey "
+            "the independent TTC and minimum-gap safety shield."
         ),
         "safety_weight": INITIAL_COLLISION_PENALTY,
         "progress_weight": INITIAL_PROGRESS_WEIGHT,
-        "lane_benefit_weight": INITIAL_LANE_BENEFIT_WEIGHT,
         "target_speed": SPEED_LIMIT,
     }
     reward_function = construct_reward(reward_specification)
@@ -3159,6 +3120,9 @@ def train_pure_rl(simulator, policy):
         previous_ego_position = np.asarray(simulator.env.unwrapped.vehicle.position, dtype=np.float64).copy()
         episode_actor_losses = []
         episode_critic_losses = []
+        episode_speed_samples = []
+        no_safe_target_lane_steps = 0
+        valid_target_lane_steps = 0
         lane_counters = make_lane_request_counters()
         seen_completed = {
             "LEFT": int(getattr(simulator, "_lane_change_stats", {}).get("completed_LEFT", 0)),
@@ -3170,6 +3134,10 @@ def train_pure_rl(simulator, policy):
             simulator._trace_valid_action_mask = np.asarray(valid_mask, dtype=bool).tolist()
 
             target_lane_mask = np.asarray(simulator.get_valid_target_lane_mask(), dtype=bool)
+            if target_lane_mask.any():
+                valid_target_lane_steps += 1
+            else:
+                no_safe_target_lane_steps += 1
             sampled_action, policy_aux = policy.act(
                 state, deterministic=False, valid_action_mask=valid_mask,
                 valid_target_lane_mask=target_lane_mask, return_aux=True,
@@ -3238,6 +3206,8 @@ def train_pure_rl(simulator, policy):
 
             ) if isinstance(step_info, dict) else False
 
+            current_speed_mps = float(simulator.env.unwrapped.vehicle.speed)
+            episode_speed_samples.append(current_speed_mps)
             reward = compute_reward(
                 reward_function=reward_function,
                 behavior_description="",
@@ -3247,7 +3217,7 @@ def train_pure_rl(simulator, policy):
                 offroad=offroad,
                 min_ttc=min_ttc,
                 lane_change_allowed=True,
-                ego_speed=float(simulator.env.unwrapped.vehicle.speed),
+                ego_speed=current_speed_mps,
                 safety_info=reward_safety_info,
                 policy_sampled_action=sampled_action,
                 reward_diagnostics=reward_components,
@@ -3296,6 +3266,14 @@ def train_pure_rl(simulator, policy):
 
         elapsed = time.time() - start_time
         mean_step_reward = episode_return / max(episode_steps, 1)
+        speed_array = np.asarray(episode_speed_samples, dtype=np.float64)
+        mean_speed_mps = float(np.mean(speed_array)) if speed_array.size else 0.0
+        max_speed_mps = float(np.max(speed_array)) if speed_array.size else 0.0
+        mean_speed_ratio = mean_speed_mps / max(SPEED_LIMIT, 1e-6)
+        speed_target_fraction = float(np.mean(speed_array >= 0.90 * SPEED_LIMIT)) if speed_array.size else 0.0
+        mean_speed_error_mps = float(np.mean(np.maximum(0.0, SPEED_LIMIT - speed_array))) if speed_array.size else float(SPEED_LIMIT)
+        no_safe_target_lane_fraction = no_safe_target_lane_steps / max(episode_steps, 1)
+        valid_target_lane_fraction = valid_target_lane_steps / max(episode_steps, 1)
         reward_history.append(episode_return)
         mean_step_reward_history.append(mean_step_reward)
         episode_times.append(elapsed)
@@ -3323,6 +3301,9 @@ def train_pure_rl(simulator, policy):
             f"Episode {episode + 1:03d}/{NUM_ONLINE_EPISODES} | "
             f"steps={episode_steps} | return={episode_return:.3f} | "
             f"mean_step_reward={mean_step_reward:+.4f} | collisions={collisions} | "
+            f"mean_speed={mean_speed_mps:.2f}m/s ({mean_speed_ratio:.1%} target) | "
+            f"speed>=90%target={speed_target_fraction:.1%} | "
+            f"no_safe_lane={no_safe_target_lane_fraction:.1%} | "
             f"collision_rate={collision_rate:.0f} | "
             f"lane_change_rate={lane_change_rate:.4f} | "
             f"safe_travel_dis={safe_travel_dis:.2f}m | "
@@ -3337,12 +3318,26 @@ def train_pure_rl(simulator, policy):
             "episode": int(episode + 1),
             "episode_return": float(episode_return),
             "mean_reward_per_step": float(mean_step_reward),
+            "mean_speed_mps": mean_speed_mps,
+            "max_speed_mps": max_speed_mps,
+            "mean_speed_ratio": mean_speed_ratio,
+            "mean_speed_error_mps": mean_speed_error_mps,
+            "speed_target_fraction_90pct": speed_target_fraction,
+            "no_safe_target_lane_fraction": no_safe_target_lane_fraction,
+            "valid_target_lane_fraction": valid_target_lane_fraction,
             "steps": int(episode_steps),
             "collisions": int(collisions),
             "collision_rate": float(collision_rate),
             "lane_change_rate": float(lane_change_rate),
             "safe_travel_dis": float(safe_travel_dis),
             "safe_step_count": int(safe_step_count),
+            "mean_speed_mps": mean_speed_mps,
+            "max_speed_mps": max_speed_mps,
+            "mean_speed_ratio": mean_speed_ratio,
+            "mean_speed_error_mps": mean_speed_error_mps,
+            "speed_target_fraction_90pct": speed_target_fraction,
+            "no_safe_target_lane_fraction": no_safe_target_lane_fraction,
+            "valid_target_lane_fraction": valid_target_lane_fraction,
         }
         episode_metric_history.append(episode_metrics)
 
@@ -3350,6 +3345,13 @@ def train_pure_rl(simulator, policy):
             "episode_summary", simulator,
             episode_return=float(episode_return),
             mean_reward_per_step=float(mean_step_reward),
+            mean_speed_mps=mean_speed_mps,
+            max_speed_mps=max_speed_mps,
+            mean_speed_ratio=mean_speed_ratio,
+            mean_speed_error_mps=mean_speed_error_mps,
+            speed_target_fraction_90pct=speed_target_fraction,
+            no_safe_target_lane_fraction=no_safe_target_lane_fraction,
+            valid_target_lane_fraction=valid_target_lane_fraction,
             steps=int(episode_steps),
             collisions=int(collisions),
             collision_rate=float(collision_rate),
