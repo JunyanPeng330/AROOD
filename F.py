@@ -2241,10 +2241,14 @@ def _hybrid_action_log_probability(
     if active.any():
         active_masks = lane_masks[active]
         active_lanes = lanes[active]
+        if (active_lanes >= active_masks.shape[1]).any():
+            raise ValueError("Reference data contains an out-of-range target lane")
         if not active_masks.gather(1, active_lanes.unsqueeze(1)).all():
             raise ValueError("Reference data contains a CHANGE to a lane excluded by its mask")
         lane_dist = policy.lane_distributions(states[active], active_masks)
-        log_prob[active] = log_prob[active] + lane_dist.log_prob(active_lanes)
+        lane_log_prob = torch.zeros_like(log_prob)
+        lane_log_prob[active] = lane_dist.log_prob(active_lanes)
+        log_prob = log_prob + lane_log_prob
     return log_prob
 
 
