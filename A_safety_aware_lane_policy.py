@@ -2319,10 +2319,12 @@ def _safety_aware_lane_action_mask(self):
 
 
 def _safety_aware_lane_selector_and_controller(self,sampled_action):
-    """Execution-time recheck first; deterministic acceleration follows lane selection."""
+    """Recheck selected lane at execution time; then calculate acceleration."""
     action=np.asarray(sampled_action,dtype=np.float32).reshape(-1)
     if action.size!=2: raise ValueError("Expected [placeholder,lane_action_index]")
-    idx=int(np.clip(np.rint(float(action[1])),0,2)); base=self.env.unwrapped; ego=base.vehicle
+    requested_idx=int(np.clip(np.rint(float(action[1])),0,2))
+    idx=requested_idx
+    base=self.env.unwrapped; ego=base.vehicle
     current=int(ego.lane_index[2]); metrics=self._min_ttc_by_lane(); n=int(base.config["lanes_count"])
     target=current+1 if idx==1 else current-1 if idx==2 else current
     safe={int(c["target_lane"]) for c in self._safe_lane_change_candidates(metrics)}
@@ -2340,14 +2342,20 @@ def _safety_aware_lane_selector_and_controller(self,sampled_action):
                or float(cur.get("front_gap",float("inf")))<=MIN_FOLLOWING_GAP)
     if emergency: accel=min(accel,-0.5)
     req=None
-    if idx:
-        req=int(getattr(self,"_lane_request_trace_sequence",0))+1; self._lane_request_trace_sequence=req
-    direction=("KEEP","LEFT","RIGHT")[idx]
-    info={"current_lane_id":current,"requested_target_lane_id":int(target),"requested_lane_action":direction,
-          "lane_change_blocked":bool(blocked),"lane_change_rejection_reason":reason,"lane_request_trace_id":req,
-          "lane_request_direction":direction,"lane_request_source_lane":current,"lane_request_target_lane":int(target),
-          "lane_request_decision":"TARGET_SELECTED" if idx else "KEEP","target_selector_mode":"safety_aware_mask_and_execution_recheck",
-          "safety_filter_applied":bool(blocked or emergency),"overridden":bool(blocked or emergency),"emergency_braking":bool(emergency),
+    if requested_idx:
+        req=int(getattr(self,"_lane_request_trace_sequence",0))+1
+        self._lane_request_trace_sequence=req
+    requested_name=("KEEP","LEFT","RIGHT")[requested_idx]
+    executed_name=("KEEP","LEFT","RIGHT")[idx]
+    info={"current_lane_id":current,"requested_target_lane_id":int(target),
+          "policy_requested_lane_action":requested_name,"executed_lane_action":executed_name,
+          "lane_change_blocked":bool(blocked),"lane_change_rejection_reason":reason,
+          "lane_request_trace_id":req,"lane_request_direction":requested_name,
+          "lane_request_source_lane":current,"lane_request_target_lane":int(target),
+          "lane_request_decision":"TARGET_SELECTED" if idx else ("REJECTED" if blocked else "KEEP"),
+          "target_selector_mode":"safety_aware_mask_and_execution_recheck",
+          "safety_filter_applied":bool(blocked or emergency),"overridden":bool(blocked or emergency),
+          "emergency_braking":bool(emergency),
           "intervention_reason":"current_lane_emergency" if emergency else ("unsafe_target_rejected" if blocked else "none"),
           "sampled_action":action.copy(),"filtered_action":np.asarray([accel,idx],dtype=np.float32),
           "controller_acceleration":float(accel),"lane_change_candidate_front_gap":float(vals.get("front_gap",float("inf"))),
@@ -2355,6 +2363,7 @@ def _safety_aware_lane_selector_and_controller(self,sampled_action):
           "lane_change_candidate_front_ttc":float(vals.get("front_ttc",float("inf"))),
           "lane_change_candidate_rear_ttc":float(vals.get("rear_ttc",float("inf")))}
     return np.asarray([accel,idx],dtype=np.float32),info
+
 
 
 HighwaySimulator.get_valid_lane_action_mask=_safety_aware_lane_action_mask
@@ -2497,22 +2506,22 @@ def _adaptation_validation_passed(current_metrics, baseline_metrics):
 
 
 def record_lane_request_decision(counters, sampled_action, valid_action_mask, safety_info):
-    """Count CHANGE requests and attribute accepted target direction separately."""
-    lane_index = int(np.clip(np.rint(float(sampled_action[1])), 0, 2))
-    if lane_index == 0:
+    """Count the policy's requested direction separately from safety acceptance."""
+    action = np.asarray(sampled_action, dtype=np.float32).reshape(-1)
+    idx = int(np.clip(np.rint(float(action[1])), 0, 2)) if action.size > 1 else 0
+    direction = {1: "LEFT", 2: "RIGHT"}.get(idx)
+    if direction is None:
         return
-    target_lane = safety_info.get("requested_target_lane_id")
-    current_lane = safety_info.get("current_lane_id")
-    if target_lane is None or current_lane is None or int(target_lane) == int(current_lane):
-        # No target was selected; the rejection remains visible in filter diagnostics.
-        return
-    direction = "LEFT" if int(target_lane) > int(current_lane) else "RIGHT"
     counters[direction]["requested"] += 1
     mask = np.asarray(valid_action_mask, dtype=bool).reshape(-1)
-    if len(mask) > lane_index and bool(mask[lane_index]):
+    if mask.size > idx and bool(mask[idx]):
         counters[direction]["mask_allowed"] += 1
-    if not bool(safety_info.get("lane_change_blocked", False)):
-        counters[direction]["target_selected"] += 1
+    if safety_info and not safety_info.get("lane_change_blocked", False):
+        target = safety_info.get("requested_target_lane_id")
+        current = safety_info.get("current_lane_id")
+        if target is not None and current is not None and int(target) != int(current):
+            counters[direction]["target_selected"] += 1
+
 
 def sync_lane_completion_counters(counters, simulator, seen_completed):
     """Record newly completed lane changes, attributed by their actual direction."""
