@@ -2447,6 +2447,12 @@ def _aggregate_episode_metrics(metrics):
         "lane_change_rate": float(np.mean([m["lane_change_rate"] for m in metrics])),
         "safe_travel_dis": float(np.mean([m["safe_travel_dis"] for m in metrics])),
         "safe_step_count": float(np.mean([m["safe_step_count"] for m in metrics])),
+        "mean_speed_mps": float(np.mean([m.get("mean_speed_mps", 0.0) for m in metrics])),
+        "mean_speed_ratio": float(np.mean([m.get("mean_speed_ratio", 0.0) for m in metrics])),
+        "mean_speed_error_mps": float(np.mean([m.get("mean_speed_error_mps", SPEED_LIMIT) for m in metrics])),
+        "speed_target_fraction_90pct": float(np.mean([m.get("speed_target_fraction_90pct", 0.0) for m in metrics])),
+        "no_safe_target_lane_fraction": float(np.mean([m.get("no_safe_target_lane_fraction", 0.0) for m in metrics])),
+        "valid_target_lane_fraction": float(np.mean([m.get("valid_target_lane_fraction", 0.0) for m in metrics])),
         "mean_return": float(np.mean([m.get("episode_return", 0.0) for m in metrics])),
         "mean_step_reward": float(np.mean([m.get("mean_reward_per_step", 0.0) for m in metrics])),
     }
@@ -3331,13 +3337,6 @@ def train_pure_rl(simulator, policy):
             "lane_change_rate": float(lane_change_rate),
             "safe_travel_dis": float(safe_travel_dis),
             "safe_step_count": int(safe_step_count),
-            "mean_speed_mps": mean_speed_mps,
-            "max_speed_mps": max_speed_mps,
-            "mean_speed_ratio": mean_speed_ratio,
-            "mean_speed_error_mps": mean_speed_error_mps,
-            "speed_target_fraction_90pct": speed_target_fraction,
-            "no_safe_target_lane_fraction": no_safe_target_lane_fraction,
-            "valid_target_lane_fraction": valid_target_lane_fraction,
         }
         episode_metric_history.append(episode_metrics)
 
