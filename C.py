@@ -362,7 +362,6 @@ class HighwaySimulator:
         self.traffic_front_gap = 45.0
         self.traffic_rear_gap = 45.0
         self.randomize_traffic_gaps = False
-        self.traffic_speed_variation = TRAFFIC_SPEED_VARIATION
         self.env = gym.make(
             "highway-v0",
             render_mode=render_mode,
