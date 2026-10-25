@@ -359,6 +359,9 @@ class HighwaySimulator:
         self.step_count = 0
         self.render_mode = render_mode
         self.vehicles_count = NUM_SURROUNDING_VEHICLES
+        # Explicit references to the six surrounding-traffic slot objects.
+        # Keys are (lane_id, "front"|"rear"); ego is never stored here.
+        self.traffic_slots = {}
         self.traffic_front_gap = 45.0
         self.traffic_rear_gap = 45.0
         self.randomize_traffic_gaps = False
@@ -597,7 +600,11 @@ class HighwaySimulator:
             base_env.road, lane_index, longitudinal=longitudinal, speed=speed
         )
         traffic_vehicle._arood_traffic_side = side
+        traffic_vehicle._arood_traffic_lane = int(lane_id)
         base_env.road.vehicles.append(traffic_vehicle)
+        if not hasattr(self, "traffic_slots"):
+            self.traffic_slots = {}
+        self.traffic_slots[(int(lane_id), str(side))] = traffic_vehicle
         paired_speed = (
             float(other_vehicle.speed) if other_vehicle is not None else None
         )
@@ -613,78 +620,94 @@ class HighwaySimulator:
         return traffic_vehicle
 
     def _initialize_six_vehicle_traffic(self):
-        """Start with exactly one front and one rear vehicle in each lane."""
+        """Create six explicit slot vehicles: front/rear in each of three lanes."""
         base_env = self.env.unwrapped
         ego = base_env.vehicle
         base_env.road.vehicles = [vehicle for vehicle in base_env.road.vehicles if vehicle is ego]
+        self.traffic_slots = {}
         for lane_id in range(NUM_LANES):
             self._spawn_slot_vehicle(lane_id, "front")
             self._spawn_slot_vehicle(lane_id, "rear")
         self._assert_traffic_invariant("initialized")
 
     def _maintain_six_vehicle_traffic(self):
-        """Maintain nearest in-range front/rear neighbors in every lane.
+        """Maintain the six explicitly referenced slot vehicles.
 
-        A vehicle qualifies only when its lane is valid, it is within the
-        longitudinal relevance range, and it is strictly on one side of ego.
-        When it crosses ego, leaves range, changes into an invalid lane, or
-        becomes a duplicate in a slot, it is removed/reclassified and the
-        missing slot is immediately replenished.
+        Slot identity is explicit: each (lane, side) key points to one Vehicle
+        object. A vehicle is replaced only when its own slot becomes invalid
+        (crosses ego, leaves the relevant range, changes lane, crashes, or is
+        removed from the road). We do not rediscover slots by sorting all
+        vehicles on every step.
         """
         road = self.env.unwrapped.road
         ego = self.env.unwrapped.vehicle
         ego_s = self._road_longitudinal_position(ego)
-        slots = {(lane, side): [] for lane in range(NUM_LANES) for side in ("front", "rear")}
-        valid_vehicle_ids = set()
+        expected_keys = {
+            (lane_id, side)
+            for lane_id in range(NUM_LANES)
+            for side in ("front", "rear")
+        }
 
-        for vehicle in list(road.vehicles):
-            if vehicle is ego:
-                continue
-            try:
-                lane_id = int(vehicle.lane_index[2])
-                if lane_id not in range(NUM_LANES):
-                    continue
-                longitudinal = self._road_longitudinal_position(vehicle)
-                signed_gap = longitudinal - ego_s
-            except (AttributeError, TypeError, ValueError, IndexError):
-                continue
+        # Discard stale dictionary entries and validate each tracked object
+        # against its assigned lane/side. Do not clamp or rewrite its speed.
+        for key in list(self.traffic_slots):
+            if key not in expected_keys:
+                stale = self.traffic_slots.pop(key)
+                if stale in road.vehicles:
+                    road.vehicles.remove(stale)
 
-            distance = abs(signed_gap)
-            if distance > self.TRAFFIC_RELEVANT_RANGE:
-                continue
-            if abs(signed_gap) <= self.TRAFFIC_CROSSING_EPSILON:
-                # Avoid assigning a nearly overlapping vehicle inconsistently
-                # to front/rear from tiny numerical sign changes.
-                continue
+        for (lane_id, side), vehicle in list(self.traffic_slots.items()):
+            invalid = vehicle not in road.vehicles or bool(getattr(vehicle, "crashed", False))
+            signed_gap = None
+            if not invalid:
+                try:
+                    actual_lane = int(vehicle.lane_index[2])
+                    signed_gap = self._road_longitudinal_position(vehicle) - ego_s
+                    invalid = (
+                        actual_lane != lane_id
+                        or abs(signed_gap) <= self.TRAFFIC_CROSSING_EPSILON
+                        or abs(signed_gap) > self.TRAFFIC_RELEVANT_RANGE
+                        or (side == "front" and signed_gap < 0.0)
+                        or (side == "rear" and signed_gap > 0.0)
+                    )
+                except (AttributeError, TypeError, ValueError, IndexError, KeyError):
+                    invalid = True
 
-            side = "front" if signed_gap > 0 else "rear"
-            slots[(lane_id, side)].append((distance, vehicle))
-            valid_vehicle_ids.add(id(vehicle))
+            if invalid:
+                print(
+                    "[TRAFFIC SLOT REPLACE]",
+                    f"lane={lane_id}", f"side={side}",
+                    f"old_id={id(vehicle)}",
+                    f"old_speed={getattr(vehicle, 'speed', None)}",
+                    f"reason=slot_vehicle_invalid",
+                )
+                if vehicle in road.vehicles:
+                    road.vehicles.remove(vehicle)
+                self.traffic_slots.pop((lane_id, side), None)
 
-        keep_ids = set()
-        for slot_key, candidates in slots.items():
-            candidates.sort(key=lambda item: item[0])
-            if candidates:
-                nearest = candidates[0][1]
-                keep_ids.add(id(nearest))
-                if len(candidates) > 1:
-                    print("[TRAFFIC DUPLICATE SLOT]", f"slot={slot_key}",
-                          f"removed={len(candidates) - 1}")
-
-        # Remove vehicles that crossed ego, left the relevant range, changed
-        # to an unsupported lane, or lost a nearest-neighbor slot.
+        # Only six slot-owned traffic objects are permitted. Remove any
+        # untracked non-ego objects rather than silently reassigning their roles.
+        slot_ids = {id(vehicle) for vehicle in self.traffic_slots.values()}
         road.vehicles = [
             vehicle for vehicle in road.vehicles
-            if vehicle is ego or id(vehicle) in keep_ids
+            if vehicle is ego or id(vehicle) in slot_ids
         ]
 
-        # Replenish each missing slot immediately. Each spawn is placed using
-        # the target lane's longitudinal coordinate, while slot selection uses
-        # the shared road-coordinate frame above.
-        for lane_id in range(NUM_LANES):
-            for side in ("front", "rear"):
-                if not slots[(lane_id, side)]:
-                    self._spawn_slot_vehicle(lane_id, side)
+        # Recreate only missing slots; the other five object identities remain.
+        for lane_id, side in sorted(expected_keys):
+            if (lane_id, side) not in self.traffic_slots:
+                self._spawn_slot_vehicle(lane_id, side)
+
+        # Surface impossible-looking speeds without masking the underlying bug.
+        for (lane_id, side), vehicle in sorted(self.traffic_slots.items()):
+            speed = float(vehicle.speed)
+            if speed < 0.0:
+                print(
+                    "[TRAFFIC SLOT SPEED WARNING]",
+                    f"lane={lane_id}", f"side={side}",
+                    f"vehicle_id={id(vehicle)}", f"speed_mps={speed:.6f}",
+                    f"position={np.asarray(vehicle.position, dtype=float).tolist()}",
+                )
 
         self._assert_traffic_invariant("maintained")
 
