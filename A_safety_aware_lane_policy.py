@@ -1,7 +1,7 @@
-# PURE RL + EPISODE-LEVEL PROMPT-READY EVALUATOR
-# Preserves instant lane changes, binary KEEP/CHANGE intent, and two-stage target-lane selection.
-# The simulator executes the policy's proposed action; no per-step TTC shield overrides actions.
-# A template evaluator diagnoses episode batches and proposes bounded reward changes for validation.
+# SAFETY-AWARE LANE-ONLY POLICY + EPISODE-LEVEL PROMPT-READY EVALUATOR
+# Policy chooses KEEP / LEFT / RIGHT; a deterministic controller calculates acceleration afterward.
+# Candidate-lane safety features and a valid-action mask are computed before policy inference.
+# Execution-time lane safety is rechecked; acceleration is not a learned policy dimension.
 # The initial evaluator is a transparent placeholder, not a real LLM.
 
 # Research baseline; instantaneous lane changes are not physically realistic lateral trajectories.
@@ -144,7 +144,7 @@ DEVICE = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
 # Structured diagnostics: one JSON object per line.
 
-DIAGNOSTIC_LOG_PATH = "training_diagnostics_pure_rl_prompt_eval.jsonl"
+DIAGNOSTIC_LOG_PATH = "training_diagnostics_safety_aware_lane_only.jsonl"
 
 # Episode-level evaluator settings. The placeholder is deterministic and does not
 # call a network or pretend to be a real LLM.
@@ -157,11 +157,11 @@ EVALUATOR_MIN_LANE_CHANGE_COST = 0.0
 EVALUATOR_LANE_CHANGE_RATE_LOW = 0.005
 
 
-reward_path = 'figures/' + 'Re_Arood_1.png'
-reward_per_step_path = 'figures/' + 'Re_Arood_1.png'
+reward_path = 'figures/' + 'Re_Arood_safety_aware_lane_only.png'
+reward_per_step_path = 'figures/' + 'Re_Arood_safety_aware_lane_only_per_step.png'
 
-plot_path = 'figures/' + 'plot_Arood_1.txt'
-MODEL_PATH = 'policy/' + 'Arood_1.pt'
+plot_path = 'figures/' + 'plot_Arood_safety_aware_lane_only.txt'
+MODEL_PATH = 'policy/' + 'Arood_safety_aware_lane_only.pt'
 
 
 
@@ -2903,7 +2903,7 @@ def collect_reference_rollouts(simulator, policy, reward_function):
             "next_states", "terminated", "returns"
         )
     }
-    reference_data_path = os.path.join("data", "pure_rl_reference_rollouts.npz")
+    reference_data_path = os.path.join("data", "safety_aware_lane_only_reference_rollouts.npz")
     np.savez_compressed(reference_data_path, **flattened)
     print(
         f"[REFERENCE COLLECTION COMPLETE] episodes={len(trajectories)} "
@@ -3425,7 +3425,7 @@ def main():
     print("Selected DEVICE:", DEVICE)
     if torch.cuda.is_available():
         print("GPU:", torch.cuda.get_device_name(0))
-    print("PURE RL + episode-level prompt-ready evaluator; no per-step TTC action override and no real LLM call.")
+    print("Safety-aware lane-only RL + episode-level prompt-ready evaluator; no real LLM call.")
     print(f"State dimension: {STATE_DIM}; policy actions: {POLICY_ACTION_DIM}; execution envelope: {ACTION_DIM}")
     print("Architecture: safety-augmented observation, pre-policy mask, KEEP/LEFT/RIGHT policy, deterministic acceleration controller.")
     print(f"Episode evaluator batch size: {EVALUATOR_BATCH_SIZE}; backend: {PromptBasedEvaluator.backend_name}")
