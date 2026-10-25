@@ -84,7 +84,13 @@ RANDOMIZED_FRONT_GAP_MIN = 10.0
 RANDOMIZED_FRONT_GAP_MAX = 60.0
 RANDOMIZED_REAR_GAP_MIN = 10.0
 RANDOMIZED_REAR_GAP_MAX = 40.0
-TRAFFIC_SPEED_VARIATION = 8.0
+# Surrounding-vehicle speed distribution (m/s).
+TRAFFIC_SPEED_MIN = 15.0
+TRAFFIC_SPEED_MAX = 60.0
+# A front vehicle may be at most this much slower than the rear vehicle
+# in the same lane. The reciprocal constraint is enforced when spawning
+# the rear vehicle: rear_speed <= front_speed + tolerance.
+FRONT_REAR_SPEED_TOLERANCE = 5.0
 
 # Lane changes are evaluated through stable task rewards and safety filtering.
 # Do not grant an instantaneous bonus based on TTC.
@@ -546,14 +552,58 @@ class HighwaySimulator:
         else:
             gap = self.traffic_front_gap if side == "front" else self.traffic_rear_gap
         longitudinal = ego_s_target_lane + gap if side == "front" else ego_s_target_lane - gap
-        speed_offset = random.uniform(-self.traffic_speed_variation, self.traffic_speed_variation)
-        speed = float(np.clip(ego.speed + speed_offset, 8.0, 30.0))
-        traffic_vehicle = Vehicle.make_on_lane(base_env.road, lane_index,
-                                                longitudinal=longitudinal, speed=speed)
+        # Sample each surrounding vehicle independently from [15, 60] m/s,
+        # while keeping front/rear speeds in each lane reasonably consistent.
+        # The constraint is asymmetric by design: front_speed must not be
+        # more than FRONT_REAR_SPEED_TOLERANCE below rear_speed.
+        other_side = "rear" if side == "front" else "front"
+        other_vehicle = next(
+            (
+                vehicle for vehicle in base_env.road.vehicles
+                if vehicle is not ego
+                and tuple(getattr(vehicle, "lane_index", ())) == tuple(lane_index)
+                and getattr(vehicle, "_arood_traffic_side", None) == other_side
+            ),
+            None,
+        )
+        if side == "front" and other_vehicle is not None:
+            # Front speed >= rear speed - tolerance.
+            speed_low = max(
+                TRAFFIC_SPEED_MIN,
+                float(other_vehicle.speed) - FRONT_REAR_SPEED_TOLERANCE,
+            )
+            speed_high = TRAFFIC_SPEED_MAX
+        elif side == "rear" and other_vehicle is not None:
+            # Rear speed <= front speed + tolerance.
+            speed_low = TRAFFIC_SPEED_MIN
+            speed_high = min(
+                TRAFFIC_SPEED_MAX,
+                float(other_vehicle.speed) + FRONT_REAR_SPEED_TOLERANCE,
+            )
+        else:
+            speed_low, speed_high = TRAFFIC_SPEED_MIN, TRAFFIC_SPEED_MAX
+
+        # Guard against tiny floating-point edge cases while preserving bounds.
+        speed_low = float(np.clip(speed_low, TRAFFIC_SPEED_MIN, TRAFFIC_SPEED_MAX))
+        speed_high = float(np.clip(max(speed_low, speed_high), speed_low, TRAFFIC_SPEED_MAX))
+        speed = random.uniform(speed_low, speed_high)
+        traffic_vehicle = Vehicle.make_on_lane(
+            base_env.road, lane_index, longitudinal=longitudinal, speed=speed
+        )
+        traffic_vehicle._arood_traffic_side = side
         base_env.road.vehicles.append(traffic_vehicle)
-        print("[TRAFFIC SPAWN]", f"lane={lane_id}", f"side={side}",
-              f"gap={gap:.1f}m", f"range={self.TRAFFIC_RELEVANT_RANGE:.1f}m",
-              f"speed={speed:.2f}m/s", f"id={id(traffic_vehicle)}")
+        paired_speed = (
+            float(other_vehicle.speed) if other_vehicle is not None else None
+        )
+        print(
+            "[TRAFFIC SPAWN]",
+            f"lane={lane_id}", f"side={side}",
+            f"gap={gap:.1f}m", f"range={self.TRAFFIC_RELEVANT_RANGE:.1f}m",
+            f"speed={speed:.2f}m/s",
+            f"sample_range=[{speed_low:.2f},{speed_high:.2f}]",
+            f"paired_{other_side}_speed={paired_speed}",
+            f"id={id(traffic_vehicle)}",
+        )
         return traffic_vehicle
 
     def _initialize_six_vehicle_traffic(self):
