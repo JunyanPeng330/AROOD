@@ -34,14 +34,14 @@ simulation_frequency = 5
 lane_keeping_weight = 0.20
 
 # Stable long-term reward objectives. TTC is reserved for the independent
-# safety shield; it is not a continuous reward term.
-# Semantic/embedding reward is disabled. Progress is the primary positive signal.
-INITIAL_TRACKING_WEIGHT = 0.0
+# safety shield; it is not a continuous reward term. Speed is the primary
+# positive objective; a small benefit bonus is earned only for a safe lane change
+# whose target lane offers better estimated sustainable speed.
+SPEED_LIMIT = 40.0
 INITIAL_PROGRESS_WEIGHT = 4.0
-INITIAL_HEADWAY_WEIGHT = 0.75
+INITIAL_LANE_BENEFIT_WEIGHT = 0.5
 INITIAL_COLLISION_PENALTY = 5.0
 INITIAL_OFFROAD_PENALTY = 5.0
-INITIAL_LANE_CHANGE_COST = -1
 
 # TTC thresholds are used by the safety shield, not reward shaping.
 ttc_critical_threshold = 2.0
@@ -152,9 +152,8 @@ EVALUATOR_BATCH_SIZE = 10
 EVALUATOR_MIN_EPISODES = 10
 EVALUATOR_MAX_SAFETY_WEIGHT = 3.0
 EVALUATOR_MIN_SAFETY_WEIGHT = 0.5
-EVALUATOR_MAX_LANE_CHANGE_COST = 0.05
-EVALUATOR_MIN_LANE_CHANGE_COST = 0.0
-EVALUATOR_LANE_CHANGE_RATE_LOW = 0.005
+# Lane-change frequency is monitored diagnostically, not directly optimized by
+# changing a lane-change penalty. No blanket lane-change cost is used.
 
 
 reward_path = 'figures/' + 'Re_C_1.png'
@@ -2390,6 +2389,25 @@ def _safety_aware_lane_selector_and_controller(self, sampled_action, selected_ta
         else: target = selected
     vals = metrics.get(target, {})
     front_speed, front_gap = vals.get("front_speed"), float(vals.get("front_gap", 100.0))
+    current_vals = metrics.get(current, {})
+
+    def estimated_sustainable_speed(lane_values):
+        """Conservative proxy for speed the lane can sustain under current traffic."""
+        lead_speed = lane_values.get("front_speed")
+        lead_gap = float(lane_values.get("front_gap", float("inf")))
+        if lead_speed is None or not np.isfinite(lead_gap):
+            return float(SPEED_LIMIT)
+        # More headway permits speed closer to the limit; this is a ranking/reward
+        # proxy, not a safety rule. TTC and minimum gaps are checked separately.
+        gap_allowance = max(0.0, lead_gap - MIN_FOLLOWING_GAP) * 0.25
+        return float(np.clip(float(lead_speed) + gap_allowance, 0.0, SPEED_LIMIT))
+
+    current_lane_estimated_speed = estimated_sustainable_speed(current_vals)
+    target_lane_estimated_speed = estimated_sustainable_speed(vals)
+    estimated_lane_speed_benefit = max(
+        0.0, target_lane_estimated_speed - current_lane_estimated_speed
+    ) if requested == 1 and not blocked else 0.0
+
     accel = (float(np.clip(0.5 * (30.0 - float(ego.speed)) / MAX_PHYSICAL_ACCELERATION, -1.0, 1.0)
              ) if front_speed is None else self._speed_matching_acceleration(float(front_speed), front_gap))
     cur = metrics.get(current, {})
@@ -2422,6 +2440,9 @@ def _safety_aware_lane_selector_and_controller(self, sampled_action, selected_ta
         "lane_change_candidate_rear_gap": float(vals.get("rear_gap", float("inf"))),
         "lane_change_candidate_front_ttc": float(vals.get("front_ttc", float("inf"))),
         "lane_change_candidate_rear_ttc": float(vals.get("rear_ttc", float("inf"))),
+        "current_lane_estimated_sustainable_speed_mps": float(current_lane_estimated_speed),
+        "target_lane_estimated_sustainable_speed_mps": float(target_lane_estimated_speed),
+        "estimated_lane_speed_benefit_mps": float(estimated_lane_speed_benefit),
     }
     print("[LEARNED TARGET CHECK]", f"requested={('KEEP','CHANGE')[requested]}",
           f"selected={selected}", f"safe={sorted(safe)}", f"executed={('KEEP','CHANGE')[executed]}",
@@ -2461,10 +2482,10 @@ def build_evaluator_prompt(batch_metrics, reward_specification):
             "override actions, or invent observations."
         ),
         "principles": [
-            "Make useful forward progress when traffic permits.",
-            "Maintain reasonable distance from the vehicle ahead.",
-            "Change lanes when a meaningful benefit justifies the associated risk.",
-            "Avoid unnecessary lane changes and excessive braking.",
+            "Prioritize reaching and maintaining the road speed limit when traffic permits.",
+            "Maintain safe following distance and avoid collisions.",
+            "Use a lane change as a means to improve sustainable speed, not as an objective by itself.",
+            "Do not apply a blanket penalty to lane changes; assess whether a safe target lane offers a real speed benefit.",
             "Consider both front-vehicle and rear-vehicle conditions.",
             "Treat TTC thresholds as evidence, not universal optimal boundaries.",
             "Distinguish predicted risk from observed collision or near-collision outcomes.",
@@ -2506,7 +2527,6 @@ class PromptBasedEvaluator:
         safe_steps = float(metrics.get("safe_step_count", 0.0))
 
         current_safety_weight = float(reward_specification.get("safety_weight", INITIAL_COLLISION_PENALTY))
-        current_lane_cost = float(reward_specification.get("lane_change_cost", INITIAL_LANE_CHANGE_COST))
 
         if int(metrics.get("episode_count", 0)) >= EVALUATOR_MIN_EPISODES and collision_rate >= 0.20:
             new_value = min(
@@ -2521,24 +2541,6 @@ class PromptBasedEvaluator:
                 )
                 recommendation = "Increase the collision penalty modestly."
                 expected_tradeoff = "May reduce risky behavior, but could also make learning more conservative."
-        elif (
-            int(metrics.get("episode_count", 0)) >= EVALUATOR_MIN_EPISODES
-            and collision_rate == 0.0
-            and lane_change_rate < EVALUATOR_LANE_CHANGE_RATE_LOW
-            and safe_steps > 0.0
-            and current_lane_cost > EVALUATOR_MIN_LANE_CHANGE_COST
-        ):
-            new_value = max(EVALUATOR_MIN_LANE_CHANGE_COST, current_lane_cost - 0.002)
-            if new_value < current_lane_cost:
-                updates["lane_change_cost"] = round(float(new_value), 6)
-                diagnosis = (
-                    f"No collisions were observed, while completed lane changes per step "
-                    f"were low ({lane_change_rate:.4f}). This is a signal to inspect possible "
-                    "over-penalization, not proof that more lane changes are always desirable."
-                )
-                recommendation = "Reduce the lane-change cost slightly and test whether useful changes increase."
-                expected_tradeoff = "May encourage beneficial lane changes, but could also increase unnecessary changes."
-
         return {
             "backend": self.backend_name,
             "prompt_payload": prompt_payload,
@@ -2661,8 +2663,11 @@ def calculate_min_ttc(simulator):
 
 
 def construct_reward(reward_specification, embedding_model=None):
-    """Minimal reward: progress minus collision/safety penalty minus accepted lane-change cost.
-    TTC is enforced by the independent shield, not by reward shaping.
+    """Speed-first reward with a small safe lane-benefit bonus and collision penalty.
+
+    TTC/gap constraints remain in the independent safety shield. Lane changes are
+    not penalized merely for occurring; a benefit bonus is available only when an
+    accepted change offers better estimated sustainable speed than the current lane.
     """
     def reward_function(
         behavior_description, safety_violation, action, lane_deviation, offroad,
@@ -2675,52 +2680,54 @@ def construct_reward(reward_specification, embedding_model=None):
             dtype=np.float32,
         ).reshape(-1)
 
-        # 1. Forward progress, capped at the target speed.
-        target_speed = max(1e-6, float(reward_specification.get("target_speed", 25.0)))
+        # 1. Primary objective: reach and maintain the road speed limit.
+        target_speed = max(1e-6, float(reward_specification.get("target_speed", SPEED_LIMIT)))
         progress_weight = max(0.0, float(reward_specification.get("progress_weight", INITIAL_PROGRESS_WEIGHT)))
         ego_speed = max(0.0, float(ego_speed))
         progress_ratio = float(np.clip(ego_speed / target_speed, 0.0, 1.0))
         progress_reward = progress_weight * progress_ratio
 
-        # 2. Collision/safety penalty only. Routine shield interventions do not
-        # receive a reward penalty.
-        safety_penalty = (
-            max(0.0, float(reward_specification.get("safety_weight", INITIAL_COLLISION_PENALTY)))
-            if bool(safety_violation) else 0.0
-        )
-
-        # 3. Charge a small cost only when a lane change was accepted/executed.
-        lane_change_cost_weight = max(
-            0.0, float(reward_specification.get("lane_change_cost", INITIAL_LANE_CHANGE_COST))
+        # 2. A secondary bonus for a safe, accepted lane change with a positive
+        # estimated sustainable-speed advantage. No penalty is applied merely
+        # because a lane change occurs. The estimate is supplied by the selector.
+        lane_benefit_weight = max(
+            0.0, float(reward_specification.get("lane_benefit_weight", INITIAL_LANE_BENEFIT_WEIGHT))
         )
         lane_change_accepted = bool(
             safety_info.get("lane_change_accepted",
                             safety_info.get("lane_change_completed_instantly", False))
         )
-        sampled_lane_action = (
-            int(np.clip(np.rint(sampled_action[1]), 0, 2))
-            if sampled_action.size > 1 else 0
+        estimated_speed_benefit = max(
+            0.0, float(safety_info.get("estimated_lane_speed_benefit_mps", 0.0))
         )
-        lane_change_cost = (
-            lane_change_cost_weight
-            if lane_change_accepted and sampled_lane_action in (1, 2) else 0.0
+        lane_benefit_ratio = float(np.clip(estimated_speed_benefit / target_speed, 0.0, 1.0))
+        lane_benefit_reward = (
+            lane_benefit_weight * lane_benefit_ratio if lane_change_accepted else 0.0
         )
 
-        reward = float(progress_reward - safety_penalty - lane_change_cost)
+        # 3. Collision penalty. TTC and gap checks remain in the independent shield.
+        safety_penalty = (
+            max(0.0, float(reward_specification.get("safety_weight", INITIAL_COLLISION_PENALTY)))
+            if bool(safety_violation) else 0.0
+        )
+
+        reward = float(progress_reward + lane_benefit_reward - safety_penalty)
         if reward_diagnostics is not None:
             reward_diagnostics.update({
                 "progress_reward": float(progress_reward),
-                "safety_penalty": float(safety_penalty),
-                "lane_change_cost": float(lane_change_cost),
+                "lane_benefit_reward": float(lane_benefit_reward),
+                "estimated_lane_speed_benefit_mps": float(estimated_speed_benefit),
                 "lane_change_accepted": lane_change_accepted,
+                "safety_penalty": float(safety_penalty),
                 "total_reward": reward,
             })
         print(
-            f"[REWARD DEBUG] progress={progress_reward:.3f}, "
+            f"[REWARD DEBUG] speed_reward={progress_reward:.3f}, "
             f"speed={ego_speed:.2f}m/s, target_speed={target_speed:.2f}m/s, "
-            f"safety_penalty={safety_penalty:.3f}, "
-            f"lane_change_cost={lane_change_cost:.3f}, "
-            f"lane_change_accepted={lane_change_accepted}, total={reward:.3f}"
+            f"lane_benefit_reward={lane_benefit_reward:.3f}, "
+            f"estimated_lane_speed_benefit={estimated_speed_benefit:.2f}m/s, "
+            f"lane_change_accepted={lane_change_accepted}, "
+            f"safety_penalty={safety_penalty:.3f}, total={reward:.3f}"
         )
         print("[TTC REWARD] disabled; TTC is recorded for episode-level evaluation, not used as a per-step action override.")
         return reward
@@ -2828,13 +2835,15 @@ def build_fixed_reward_function():
     reward_specification = {
         "name": "pure_rl_episode_adaptive_reward",
         "target_behavior": (
-            "Make useful forward progress, avoid collisions, and change lanes "
-            "when beneficial without unnecessary lane changes or excessive braking."
+            "Prioritize reaching and maintaining the 40 m/s speed limit when traffic permits. "
+            "Use a lane change only as a means to improve sustainable speed; never penalize "
+            "a lane change merely for occurring. Avoid collisions and obey the independent "
+            "TTC and minimum-gap safety shield."
         ),
         "safety_weight": INITIAL_COLLISION_PENALTY,
         "progress_weight": INITIAL_PROGRESS_WEIGHT,
-        "target_speed": 40.0,
-        "lane_change_cost": INITIAL_LANE_CHANGE_COST,
+        "lane_benefit_weight": INITIAL_LANE_BENEFIT_WEIGHT,
+        "target_speed": SPEED_LIMIT,
     }
     reward_function = construct_reward(reward_specification)
     # The closure and evaluator share this mutable specification. Only the
@@ -3408,11 +3417,6 @@ def train_pure_rl(simulator, policy):
                         value = float(np.clip(
                             value, EVALUATOR_MIN_SAFETY_WEIGHT,
                             EVALUATOR_MAX_SAFETY_WEIGHT
-                        ))
-                    elif key == "lane_change_cost":
-                        value = float(np.clip(
-                            value, EVALUATOR_MIN_LANE_CHANGE_COST,
-                            EVALUATOR_MAX_LANE_CHANGE_COST
                         ))
                     else:
                         continue
