@@ -98,11 +98,9 @@ FRONT_REAR_SPEED_TOLERANCE = 5.0
 # Do not grant an instantaneous bonus based on TTC.
 #LANE_CHANGE_COST = 0.0
 
-# Diagnostic mode: a LEFT/RIGHT policy decision sets a persistent lane target;
-# the steering controller continues tracking it over subsequent physics steps.
-# Disable the post-completion cooldown so the next policy decision is available
-# as soon as the previous maneuver physically finishes. This does NOT teleport
-# the vehicle or make lane changes instantaneous.
+# Instantaneous lane changes complete within the current policy transition.
+# This cooldown constant is retained for legacy helper paths only; the active
+# instantaneous step path clears maneuver state immediately after relocation.
 LANE_CHANGE_COOLDOWN_STEPS = 1
 
 
@@ -2155,8 +2153,6 @@ class HighwaySimulator:
                         source_lane_index[0], source_lane_index[1], int(requested_target_lane_id)
                     )
                     target_lane = base_env.road.network.get_lane(target_lane_index)
-                    # Preserve longitudinal position and snap to the selected
-                    # safe target lane centre (instantaneous diagnostic mode).
                     # Apply the lane transition to the actual Highway-env vehicle
                     # before env.step(), not just to the wrapper's bookkeeping.
                     # Preserve longitudinal position and speed; lateral position
