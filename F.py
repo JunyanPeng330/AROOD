@@ -150,6 +150,10 @@ DEVICE = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
 DIAGNOSTIC_LOG_PATH = "training_diagnostics_binary_lane_ranked.jsonl"
 
+# Created only when a managed traffic-slot vehicle first has negative speed.
+# Keep this distinct from any tracked README/placeholder so exclusive creation works.
+NEGATIVE_SPEED_FIRST_TRANSITION_PATH = os.path.join("figures", "negative_speed_first_transition.txt")
+
 # Episode-level evaluator settings. The placeholder is deterministic and does not
 # call a network or pretend to be a real LLM.
 EVALUATOR_BATCH_SIZE = 10
@@ -196,6 +200,14 @@ def write_diagnostic_event(event, simulator=None, **fields):
             log_file.write(json.dumps(record, ensure_ascii=False, default=str, allow_nan=True) + "\n")
     except (OSError, TypeError, ValueError) as exc:
         print("[DIAGNOSTIC LOG WARNING]", f"event={event}", f"error={exc}")
+
+
+def _safe_float_for_diagnostic(value):
+    try:
+        value = float(value)
+        return value if np.isfinite(value) else repr(value)
+    except (TypeError, ValueError):
+        return repr(value)
 
 
 def lane_action_index_to_delta(lane_action_index):
@@ -2095,6 +2107,104 @@ class HighwaySimulator:
 
 
 
+    def _snapshot_managed_traffic_slots(self):
+        """Capture managed-slot vehicle state immediately around one native env.step()."""
+        base_env = self.env.unwrapped
+        ego = getattr(base_env, "vehicle", None)
+        snapshot = {}
+        for vehicle in list(getattr(getattr(base_env, "road", None), "vehicles", [])):
+            side = getattr(vehicle, "_arood_traffic_side", None)
+            if vehicle is ego or side not in ("front", "rear"):
+                continue
+            try:
+                speed = float(vehicle.speed)
+            except (AttributeError, TypeError, ValueError):
+                speed = float("nan")
+            try:
+                position = np.asarray(vehicle.position, dtype=float).tolist()
+            except (AttributeError, TypeError, ValueError):
+                position = None
+            try:
+                velocity = np.asarray(vehicle.velocity, dtype=float).tolist()
+            except (AttributeError, TypeError, ValueError):
+                velocity = None
+            action = getattr(vehicle, "action", None)
+            if isinstance(action, dict):
+                action = {str(k): (float(v) if isinstance(v, (int, float, np.number)) else repr(v))
+                          for k, v in action.items()}
+            else:
+                action = repr(action)
+            key = id(vehicle)
+            snapshot[key] = {
+                "vehicle_id": key,
+                "lane_index": repr(getattr(vehicle, "lane_index", None)),
+                "slot_side": side,
+                "speed_mps": speed,
+                "position": position,
+                "velocity": velocity,
+                "heading_rad": _safe_float_for_diagnostic(getattr(vehicle, "heading", None)),
+                "action": action,
+                "crashed": bool(getattr(vehicle, "crashed", False)),
+            }
+        return snapshot
+
+    def _record_first_negative_speed_transition(self, before_snapshot, after_snapshot,
+                                                physical_action, env_info=None):
+        """Persist the first observed negative-speed transition without hiding it via clamping."""
+        incidents = []
+        for vehicle_id, after in after_snapshot.items():
+            after_speed = after.get("speed_mps", float("nan"))
+            before = before_snapshot.get(vehicle_id)
+            before_speed = before.get("speed_mps", float("nan")) if before else None
+            became_negative = (
+                np.isfinite(after_speed) and after_speed < 0.0
+                and before is not None and np.isfinite(before_speed) and before_speed >= 0.0
+            )
+            already_negative = (
+                np.isfinite(after_speed) and after_speed < 0.0
+                and (before is None or not np.isfinite(before_speed) or before_speed < 0.0)
+            )
+            if became_negative or already_negative:
+                incidents.append({
+                    "transition_type": "nonnegative_to_negative" if became_negative else "negative_first_observed",
+                    "before": before,
+                    "after": after,
+                })
+
+        if not incidents:
+            return
+
+        report = {
+            "event": "FIRST_NEGATIVE_MANAGED_TRAFFIC_SPEED",
+            "phase": getattr(self, "_trace_phase", None),
+            "episode": getattr(self, "_trace_episode", None),
+            "simulator_step": int(getattr(self, "step_count", 0)),
+            "native_call": "self.env.step(physical_action)",
+            "physical_action_applied_to_ego": np.asarray(physical_action, dtype=float).tolist(),
+            "env_info": repr(env_info),
+            "incident_count_in_first_observed_step": len(incidents),
+            "incidents": incidents,
+            "note": "Captured immediately after env.step and before post-step sanitization or slot maintenance.",
+        }
+        path = NEGATIVE_SPEED_FIRST_TRANSITION_PATH
+        try:
+            os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+            # Exclusive creation ensures later incidents cannot overwrite the first report.
+            with open(path, "x", encoding="utf-8") as log_file:
+                log_file.write(json.dumps(report, ensure_ascii=False, indent=2, default=str, allow_nan=True))
+                log_file.write("\\n")
+            print("[FIRST NEGATIVE TRAFFIC SPEED CAPTURED]", f"path={path}",
+                  f"incident_count={len(incidents)}")
+        except FileExistsError:
+            pass
+        except (OSError, TypeError, ValueError) as exc:
+            print("[NEGATIVE SPEED DIAGNOSTIC WRITE FAILED]", f"path={path}", f"error={exc}")
+
+        # Also write to the existing JSONL diagnostic stream, regardless of whether
+        # the first-incident text file already exists.
+        write_diagnostic_event("negative_managed_traffic_speed_observed", self, **report)
+
+
     def _sanitize_traffic_slot_speeds(self, where):
         """Prevent managed traffic-slot vehicles from retaining negative/non-finite speed.
 
@@ -2283,7 +2393,15 @@ class HighwaySimulator:
         # this very update; slot maintenance and safety evaluation must never see
         # that invalid value.
         self._sanitize_traffic_slot_speeds("pre_env_step")
+        traffic_speeds_before = self._snapshot_managed_traffic_slots()
         obs, env_reward, terminated, truncated, env_info = self.env.step(physical_action)
+        # This check must run BEFORE post-step sanitization: it records the first
+        # negative value and the vehicle's action/kinematics before any clamp or
+        # slot replacement can obscure the cause.
+        traffic_speeds_after = self._snapshot_managed_traffic_slots()
+        self._record_first_negative_speed_transition(
+            traffic_speeds_before, traffic_speeds_after, physical_action, env_info
+        )
         self._sanitize_traffic_slot_speeds("post_env_step")
         ego_after = base_env.vehicle
         speed_after = float(ego_after.speed)
