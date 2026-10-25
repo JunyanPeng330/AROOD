@@ -1003,48 +1003,14 @@ class HighwaySimulator:
                 values["rear_center_gap"] = -center_gap
                 values["rear_vehicle_id"] = id(other)
 
-            if side == "front":
-                # Front TTC: bumper gap / (ego speed - front speed), only
-                # when ego is actually closing on the vehicle ahead.
-                if bumper_gap <= 0.0:
-                    front_ttc = 0.0
-                elif ego_speed > neighbor_speed:
-                    front_ttc = bumper_gap / (ego_speed - neighbor_speed)
-                else:
-                    front_ttc = float("inf")
-
-                values["front_gap"] = bumper_gap
-                values["front_speed"] = neighbor_speed
-                values["front_ttc"] = front_ttc
-                values["nearest_front_ttc"] = front_ttc
-                values["front_center_gap"] = float(neighbor["distance"])
-                values["front_vehicle_id"] = neighbor["vehicle_id"]
-            else:
-                # Rear TTC: bumper gap / (rear speed - ego speed), only
-                # when the rear vehicle is actually closing on ego.
-                if bumper_gap <= 0.0:
-                    rear_ttc = 0.0
-                elif neighbor_speed > ego_speed:
-                    rear_ttc = bumper_gap / (neighbor_speed - ego_speed)
-                else:
-                    rear_ttc = float("inf")
-
-                values["rear_gap"] = bumper_gap
-                values["rear_speed"] = neighbor_speed
-                values["rear_ttc"] = rear_ttc
-                values["rear_center_gap"] = float(neighbor["distance"])
-                values["rear_vehicle_id"] = neighbor["vehicle_id"]
-
         for values in lane_ttc.values():
             values["min_ttc"] = min(values["front_ttc"], values["rear_ttc"])
 
         # Diagnostic check: six slots should be occupied exactly once.
         occupied_slots = sum(
-            nearest[(lane_id, side)] is not None
-            or lane_ttc[lane_id]["front_center_gap"] == 0.0
-            or lane_ttc[lane_id]["rear_center_gap"] == 0.0
+            lane_ttc[lane_id][vehicle_key] is not None
             for lane_id in range(lanes_count)
-            for side in ("front", "rear")
+            for vehicle_key in ("front_vehicle_id", "rear_vehicle_id")
         )
         if occupied_slots != NUM_SURROUNDING_VEHICLES:
             write_diagnostic_event(
