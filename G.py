@@ -3045,7 +3045,7 @@ def update_policy(policy, state, action, reward, next_state, done,
                   valid_action_mask=None, terminated=None, pre_tanh_accel=None,
                   selected_target_lane=-1, valid_target_lane_mask=None,
                   current_lane_id=None):
-    """Update the binary policy and conditional target-lane ranking head."""
+    """Update the lane-ranking policy; KEEP/CHANGE follows the selected lane."""
     st, nst = to_tensor(state).reshape(1, -1), to_tensor(next_state).reshape(1, -1)
     act, rew = to_tensor(action).reshape(1, -1), to_tensor([reward])
     value = policy.value(st)
@@ -3450,7 +3450,9 @@ def train_pure_rl(simulator, policy):
             simulator._trace_valid_action_mask = np.asarray(valid_mask, dtype=bool).tolist()
 
             target_lane_mask = np.asarray(simulator.get_valid_target_lane_mask(), dtype=bool)
-            if target_lane_mask.any():
+            # The target mask always includes KEEP/current lane; count a
+            # lane-change opportunity only when at least one safe side lane exists.
+            if int(target_lane_mask.sum()) > 1:
                 valid_target_lane_steps += 1
             else:
                 no_safe_target_lane_steps += 1
