@@ -2736,12 +2736,26 @@ def _safety_aware_lane_selector_and_controller(self, sampled_action, selected_ta
     safe = {int(c["target_lane"]) for c in self._safe_lane_change_candidates(metrics)}
     selected = None if selected_target_lane is None else int(selected_target_lane)
     target, executed, blocked, reason = current, requested, False, "none"
+
+    # Keep the episode-level statistics aligned with the active selector.
+    # The old counters lived in a legacy filter path and therefore stayed zero
+    # after this selector was installed as HighwaySimulator.filter_ttc_action.
+    stats = getattr(self, "_lane_change_stats", None)
+    if requested == 1 and isinstance(stats, dict):
+        stats["requested"] = int(stats.get("requested", 0)) + 1
+
     if requested == 1:
         if selected is None or selected < 0 or selected >= min(int(base.config["lanes_count"]), NUM_LANES):
             blocked, reason, executed = True, "no_valid_target_lane_selected", 0
         elif selected not in safe:
             blocked, reason, executed = True, "target_lane_failed_execution_time_safety_recheck", 0
-        else: target = selected
+        else:
+            target = selected
+
+        if isinstance(stats, dict):
+            counter = "rejected" if blocked else "accepted"
+            stats[counter] = int(stats.get(counter, 0)) + 1
+
     vals = metrics.get(target, {})
     front_speed, front_gap = vals.get("front_speed"), float(vals.get("front_gap", 100.0))
     current_vals = metrics.get(current, {})
@@ -4348,6 +4362,19 @@ def evaluate_and_record_video(
                 sampled_action = np.asarray(sampled_action, dtype=np.float32).reshape(-1)
                 selected_target_lane = int(policy_aux.get("selected_target_lane", -1))
 
+                # Legacy checkpoints have a KEEP/CHANGE head but no learned
+                # target-lane ranking head. If CHANGE is requested, choose the
+                # best currently safe adjacent lane rather than passing -1 to
+                # the execution filter (which would reject every such request).
+                if is_legacy_checkpoint and int(np.clip(np.rint(float(sampled_action[1])), 0, 1)) == 1:
+                    legacy_candidate = simulator._select_best_safe_lane_candidate(
+                        simulator._min_ttc_by_lane()
+                    )
+                    if legacy_candidate is not None:
+                        selected_target_lane = int(legacy_candidate["target_lane"])
+                    else:
+                        selected_target_lane = -1
+
                 executed_action, safety_info = simulator.filter_ttc_action(
                     sampled_action,
                     selected_target_lane=selected_target_lane,
@@ -4399,6 +4426,15 @@ def evaluate_and_record_video(
 
         lane_stats = dict(getattr(simulator, "_lane_change_stats", {}))
         completed_lane_changes = int(lane_stats.get("completed", 0)) - lane_changes_before
+        print(
+            "[LANE-CHANGE COUNTERS]",
+            f"requested={int(lane_stats.get('requested', 0))}",
+            f"accepted={int(lane_stats.get('accepted', 0))}",
+            f"rejected={int(lane_stats.get('rejected', 0))}",
+            f"completed={completed_lane_changes}",
+            f"completed_LEFT={int(lane_stats.get('completed_LEFT', 0))}",
+            f"completed_RIGHT={int(lane_stats.get('completed_RIGHT', 0))}",
+        )
         print(
             "[VIDEO EVALUATION SUMMARY]",
             f"checkpoint={model_path}",
