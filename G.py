@@ -2930,9 +2930,10 @@ def calculate_min_ttc(simulator):
 def construct_reward(reward_specification, embedding_model=None):
     """Reward normalized positive measured acceleration below the speed limit.
 
-    Zero acceleration/deceleration yields zero speed reward. Positive acceleration
-    is normalized by MAX_PHYSICAL_ACCELERATION below target speed; at/above target speed, speed reward is 1.0.
-    Collision penalty remains separate; lane changes and TTC have no direct reward.
+    Zero acceleration or deceleration yields zero speed reward below target speed;
+    at/above target speed, speed reward is 1.0 regardless of acceleration.
+    Deceleration has no direct negative reward. Collision penalty remains separate;
+    lane changes and TTC have no direct reward.
     """
     def reward_function(
         behavior_description, safety_violation, action, lane_deviation, offroad,
@@ -2954,13 +2955,7 @@ def construct_reward(reward_specification, embedding_model=None):
         normalized_positive_acceleration = float(np.clip(
             max(0.0, ego_acceleration) / acceleration_scale, 0.0, 1.0
         ))
-        normalized_negative_acceleration = float(np.clip(
-            min(0.0, ego_acceleration) / acceleration_scale, -1.0, 0.0
-        ))
         speed_reward = normalized_positive_acceleration if speed_limit_gate else 1.0
-        # Deceleration contributes a negative term instead of being ignored.
-        # This is separate from the speed-target reward, including at/above 60 m/s.
-        acceleration_penalty = normalized_negative_acceleration
 
         # 2. Collision penalty. TTC and gap checks remain in the independent shield.
         safety_penalty = (
@@ -2968,20 +2963,18 @@ def construct_reward(reward_specification, embedding_model=None):
             if bool(safety_violation) else 0.0
         )
 
-        reward = float(speed_reward + acceleration_penalty - safety_penalty)
+        reward = float(speed_reward - safety_penalty)
         speed_error = max(0.0, target_speed - ego_speed)
         speed_target_reached = bool(ego_speed >= target_speed)
         if reward_diagnostics is not None:
             reward_diagnostics.update({
-                "reward_objective": "positive_acceleration_below_target_speed_full_speed_reward_at_or_above_target_signed_deceleration_penalty_and_collision_penalty",
+                "reward_objective": "positive_acceleration_below_target_speed_full_speed_reward_at_or_above_target_no_deceleration_penalty_and_collision_penalty",
                 "speed_reward": float(speed_reward),
                 "ego_speed_mps": float(ego_speed),
                 "target_speed_mps": float(target_speed),
                 "ego_acceleration_mps2": float(ego_acceleration),
                 "max_physical_acceleration_mps2": float(acceleration_scale),
                 "normalized_positive_acceleration": float(normalized_positive_acceleration),
-                "normalized_negative_acceleration": float(normalized_negative_acceleration),
-                "acceleration_penalty": float(acceleration_penalty),
                 "speed_limit_gate_open": speed_limit_gate,
                 "speed_error_mps": float(speed_error),
                 "speed_limit_reached": speed_target_reached,
@@ -3109,8 +3102,9 @@ def build_fixed_reward_function():
         "target_behavior": (
             "Reward positive measured longitudinal acceleration, normalized by maximum physical "
             "acceleration, only while ego speed is below the 60 m/s speed limit. Zero acceleration "
-            "or deceleration gives zero speed reward. Avoid collisions using the separate penalty "
-            "and independent TTC/minimum-gap safety shield; lane changes are not directly rewarded."
+            "or deceleration gives zero speed reward below the target; deceleration is not directly "
+            "penalized. At or above the target speed, speed reward is 1.0. Avoid collisions using the "
+            "separate penalty and independent TTC/minimum-gap safety shield; lane changes are not directly rewarded."
         ),
         "safety_weight": INITIAL_COLLISION_PENALTY,
         "target_speed": SPEED_LIMIT,
