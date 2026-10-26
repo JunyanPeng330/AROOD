@@ -325,6 +325,78 @@ class ActorCriticPolicy(nn.Module):
         return self.critic(self.features(state)).squeeze(-1)
 
 
+
+class LegacyPureRLPolicy(nn.Module):
+    """Compatibility policy for checkpoints saved by the older y_pure_rl.py.
+
+    Preserves that checkpoint's Gaussian acceleration head and binary
+    KEEP/CHANGE head. The newer simulator's extra safety-state features are
+    excluded from the policy input; the original 53-feature state is the
+    prefix of the current state encoding.
+    """
+    def __init__(self, state_dim, action_dim, hidden_dim, steering_scale=None):
+        super().__init__()
+        if action_dim != 2:
+            raise ValueError("Legacy policy expects [acceleration, KEEP/CHANGE]")
+        self.shared = nn.Sequential(
+            nn.Linear(state_dim, hidden_dim), nn.ReLU(),
+            nn.Linear(hidden_dim, hidden_dim), nn.ReLU(),
+        )
+        self.accel_mean = nn.Linear(hidden_dim, 1)
+        self.accel_log_std = nn.Parameter(torch.zeros(1))
+        self.lane_logits = nn.Linear(hidden_dim, 2)
+        self.critic = nn.Sequential(
+            nn.Linear(hidden_dim, hidden_dim // 2), nn.ReLU(),
+            nn.Linear(hidden_dim // 2, 1),
+        )
+
+    def action_distributions(self, state, valid_action_mask=None):
+        x = to_tensor(state)
+        if x.ndim == 1:
+            x = x.unsqueeze(0)
+        features = self.shared(x)
+        accel_mean = self.accel_mean(features)
+        accel_std = torch.exp(self.accel_log_std).expand_as(accel_mean)
+        accel_dist = torch.distributions.Normal(accel_mean, accel_std)
+        logits = self.lane_logits(features)
+        if valid_action_mask is not None:
+            mask = torch.as_tensor(valid_action_mask, dtype=torch.bool, device=logits.device)
+            if mask.ndim == 1:
+                mask = mask.unsqueeze(0)
+            if mask.shape[0] == 1 and logits.shape[0] > 1:
+                mask = mask.expand(logits.shape[0], -1)
+            if mask.shape != logits.shape:
+                raise ValueError(f"Legacy action mask shape {mask.shape} != logits {logits.shape}")
+            if not mask.any(dim=-1).all():
+                raise ValueError("Every state needs at least one valid legacy action")
+            logits = logits.masked_fill(~mask, -1e9)
+        return accel_dist, torch.distributions.Categorical(logits=logits)
+
+    def act(self, state, deterministic=False, valid_action_mask=None,
+            valid_target_lane_mask=None, current_lane_id=None, return_aux=False):
+        accel_dist, lane_dist = self.action_distributions(state, valid_action_mask)
+        raw_accel = accel_dist.mean if deterministic else accel_dist.sample()
+        lane_action = (
+            torch.argmax(lane_dist.logits, dim=-1)
+            if deterministic else lane_dist.sample()
+        )
+        acceleration = torch.tanh(raw_accel)
+        action = torch.cat([acceleration, lane_action.float().unsqueeze(-1)], dim=-1)
+        action_np = action.squeeze(0).detach().cpu().numpy().astype(np.float32)
+        if not return_aux:
+            return action_np
+        pre_tanh = raw_accel.squeeze(0).detach().cpu().numpy().astype(np.float32)
+        return action_np, {
+            "pre_tanh_accel": pre_tanh,
+            "selected_target_lane": -1,
+        }
+
+    def value(self, state):
+        x = to_tensor(state)
+        if x.ndim == 1:
+            x = x.unsqueeze(0)
+        return self.critic(self.shared(x)).squeeze(-1)
+
 def lane_policy_diagnostic(policy, state, valid_action_mask, sampled_action, phase, episode, step,
                            selected_target_lane=-1, valid_target_lane_mask=None, current_lane_id=None):
     with torch.no_grad():
@@ -3952,13 +4024,40 @@ def evaluate_and_record_video(
     if torch.cuda.is_available():
         torch.cuda.manual_seed_all(seed)
 
-    policy = create_initial_policy(
-        state_dim=STATE_DIM,
-        action_dim=POLICY_ACTION_DIM,
-        hidden_dim=HIDDEN_DIM,
-        scale_of_steering=steering_scale,
-    )
     checkpoint = torch.load(model_path, map_location=DEVICE)
+    if not isinstance(checkpoint, dict):
+        raise TypeError(
+            "Expected a state_dict checkpoint. This evaluator currently supports "
+            "plain torch.save(policy.state_dict(), path) checkpoints."
+        )
+
+    # Detect the policy family from its saved parameter names. This allows the
+    # current G.py simulator to evaluate an older y_pure_rl.py checkpoint without
+    # silently changing that checkpoint's network architecture or action meaning.
+    is_legacy_checkpoint = "accel_mean.weight" in checkpoint and "lane_logits.weight" in checkpoint
+    if is_legacy_checkpoint:
+        legacy_state_dim = VEHICLE_STATE_DIM + CONTEXT_DIM
+        policy = LegacyPureRLPolicy(
+            state_dim=legacy_state_dim,
+            action_dim=ACTION_DIM,
+            hidden_dim=HIDDEN_DIM,
+            steering_scale=steering_scale,
+        )
+        policy_input_dim = legacy_state_dim
+        print(
+            "[VIDEO EVALUATION] Detected legacy y_pure_rl.py checkpoint; "
+            f"using original {legacy_state_dim}-feature input and Gaussian-acceleration/KEEP-CHANGE policy."
+        )
+    else:
+        policy = create_initial_policy(
+            state_dim=STATE_DIM,
+            action_dim=POLICY_ACTION_DIM,
+            hidden_dim=HIDDEN_DIM,
+            scale_of_steering=steering_scale,
+        )
+        policy_input_dim = STATE_DIM
+        print("[VIDEO EVALUATION] Detected current G.py policy checkpoint.")
+
     policy.load_state_dict(checkpoint)
     policy.to(DEVICE)
     policy.eval()
@@ -3994,14 +4093,25 @@ def evaluate_and_record_video(
                 )
                 current_lane_id = int(simulator.env.unwrapped.vehicle.lane_index[2])
 
-                sampled_action, policy_aux = policy.act(
-                    state,
-                    deterministic=deterministic,
-                    valid_action_mask=valid_action_mask,
-                    valid_target_lane_mask=valid_target_lane_mask,
-                    current_lane_id=current_lane_id,
-                    return_aux=True,
-                )
+                # Older y_pure_rl.py checkpoints were trained on the base
+                # observation only; G.py appends safety features after that prefix.
+                policy_state = state[:policy_input_dim] if is_legacy_checkpoint else state
+                if is_legacy_checkpoint:
+                    sampled_action, policy_aux = policy.act(
+                        policy_state,
+                        deterministic=deterministic,
+                        valid_action_mask=valid_action_mask,
+                        return_aux=True,
+                    )
+                else:
+                    sampled_action, policy_aux = policy.act(
+                        policy_state,
+                        deterministic=deterministic,
+                        valid_action_mask=valid_action_mask,
+                        valid_target_lane_mask=valid_target_lane_mask,
+                        current_lane_id=current_lane_id,
+                        return_aux=True,
+                    )
                 sampled_action = np.asarray(sampled_action, dtype=np.float32).reshape(-1)
                 selected_target_lane = int(policy_aux.get("selected_target_lane", -1))
 
