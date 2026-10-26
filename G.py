@@ -15,6 +15,7 @@ import numpy as np
 import torch
 import json
 import os
+import argparse
 
 import gymnasium as gym
 import highway_env
@@ -3925,6 +3926,136 @@ def train_pure_rl(simulator, policy):
     }
 
 
+def evaluate_and_record_video(
+    model_path=MODEL_PATH,
+    video_dir=os.path.join("figures", "videos"),
+    seed=SEED,
+    deterministic=True,
+    max_steps=MAX_STEPS,
+):
+    """Run one evaluation episode from a saved checkpoint and write an MP4.
+
+    This path does not train or update the policy. Gymnasium's RecordVideo
+    wrapper captures the RGB frames produced by highway-env.
+    """
+    if not os.path.isfile(model_path):
+        raise FileNotFoundError(
+            f"Policy checkpoint not found: {model_path}. Train first or pass --model-path."
+        )
+
+    os.makedirs(video_dir, exist_ok=True)
+
+    # Seed Python, NumPy, PyTorch and the Gymnasium environment for repeatability.
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
+
+    policy = create_initial_policy(
+        state_dim=STATE_DIM,
+        action_dim=POLICY_ACTION_DIM,
+        hidden_dim=HIDDEN_DIM,
+        scale_of_steering=steering_scale,
+    )
+    checkpoint = torch.load(model_path, map_location=DEVICE)
+    policy.load_state_dict(checkpoint)
+    policy.to(DEVICE)
+    policy.eval()
+
+    simulator = create_highway_simulator(render_mode="rgb_array")
+    video_recorder = None
+    try:
+        # Attach the recorder to the underlying Gymnasium environment. The
+        # simulator adapter continues to access it through simulator.env.
+        simulator.env = gym.wrappers.RecordVideo(
+            simulator.env,
+            video_folder=video_dir,
+            episode_trigger=lambda episode_id: True,
+            name_prefix=f"evaluation_seed_{seed}",
+        )
+        video_recorder = simulator.env
+
+        state = simulator.reset(seed=seed, randomize_traffic_gaps=True)
+        episode_return = 0.0
+        episode_steps = 0
+        collision = False
+        lane_changes_before = int(
+            getattr(simulator, "_lane_change_stats", {}).get("completed", 0)
+        )
+
+        with torch.no_grad():
+            for step_index in range(int(max_steps)):
+                valid_action_mask = np.asarray(
+                    simulator.get_valid_lane_action_mask(), dtype=bool
+                )
+                valid_target_lane_mask = np.asarray(
+                    simulator.get_valid_target_lane_mask(), dtype=bool
+                )
+                current_lane_id = int(simulator.env.unwrapped.vehicle.lane_index[2])
+
+                sampled_action, policy_aux = policy.act(
+                    state,
+                    deterministic=deterministic,
+                    valid_action_mask=valid_action_mask,
+                    valid_target_lane_mask=valid_target_lane_mask,
+                    current_lane_id=current_lane_id,
+                    return_aux=True,
+                )
+                sampled_action = np.asarray(sampled_action, dtype=np.float32).reshape(-1)
+                selected_target_lane = int(policy_aux.get("selected_target_lane", -1))
+
+                executed_action, safety_info = simulator.filter_ttc_action(
+                    sampled_action,
+                    selected_target_lane=selected_target_lane,
+                )
+                next_state, reward, done, step_info = simulator.step(
+                    executed_action,
+                    apply_safety_filter=False,
+                    sampled_action=sampled_action,
+                    safety_info=safety_info,
+                )
+
+                state = np.asarray(next_state, dtype=np.float32)
+                episode_return += float(reward)
+                episode_steps += 1
+                collision = collision or bool(
+                    getattr(simulator.env.unwrapped.vehicle, "crashed", False)
+                )
+
+                if done:
+                    break
+
+        lane_stats = dict(getattr(simulator, "_lane_change_stats", {}))
+        completed_lane_changes = int(lane_stats.get("completed", 0)) - lane_changes_before
+        print(
+            "[VIDEO EVALUATION SUMMARY]",
+            f"checkpoint={model_path}",
+            f"seed={seed}",
+            f"deterministic={deterministic}",
+            f"steps={episode_steps}",
+            f"return={episode_return:.3f}",
+            f"collision={collision}",
+            f"completed_lane_changes={completed_lane_changes}",
+            f"video_directory={os.path.abspath(video_dir)}",
+        )
+        return {
+            "model_path": model_path,
+            "video_dir": os.path.abspath(video_dir),
+            "seed": int(seed),
+            "steps": int(episode_steps),
+            "episode_return": float(episode_return),
+            "collision": bool(collision),
+            "completed_lane_changes": completed_lane_changes,
+        }
+    finally:
+        # Closing RecordVideo finalizes the MP4 file and its metadata.
+        if video_recorder is not None:
+            video_recorder.close()
+        else:
+            simulator.env.close()
+
+
 def check_model_device(model, name):
     devices = {
         str(parameter.device)
@@ -3940,14 +4071,49 @@ def check_model_device(model, name):
 
 
 def main():
+    parser = argparse.ArgumentParser(
+        description="Train the AROOD policy or evaluate a saved policy and record an MP4."
+    )
+    parser.add_argument(
+        "--record-video", action="store_true",
+        help="Evaluate a saved checkpoint and record one MP4 episode without training."
+    )
+    parser.add_argument(
+        "--model-path", default=MODEL_PATH,
+        help=f"Checkpoint path (default: {MODEL_PATH})."
+    )
+    parser.add_argument(
+        "--video-dir", default=os.path.join("figures", "videos"),
+        help="Directory for the recorded MP4 (default: figures/videos)."
+    )
+    parser.add_argument(
+        "--seed", type=int, default=SEED,
+        help=f"Evaluation seed (default: {SEED})."
+    )
+    parser.add_argument(
+        "--stochastic", action="store_true",
+        help="Sample policy actions instead of using deterministic choices during recording."
+    )
+    args = parser.parse_args()
+
     print("PyTorch version:", torch.__version__)
     print("CUDA available:", torch.cuda.is_available())
     print("Selected DEVICE:", DEVICE)
     if torch.cuda.is_available():
         print("GPU:", torch.cuda.get_device_name(0))
+
+    if args.record_video:
+        evaluate_and_record_video(
+            model_path=args.model_path,
+            video_dir=args.video_dir,
+            seed=args.seed,
+            deterministic=not args.stochastic,
+        )
+        return
+
     print("Safety-aware lane-only RL + episode-level prompt-ready evaluator; no real LLM call.")
     print(f"State dimension: {STATE_DIM}; policy actions: {POLICY_ACTION_DIM}; execution envelope: {ACTION_DIM}")
-    print("Architecture: safety-augmented observation, pre-policy mask, KEEP/LEFT/RIGHT policy, deterministic acceleration controller.")
+    print("Architecture: safety-augmented observation, binary KEEP/CHANGE policy, learned target-lane ranking, deterministic acceleration controller.")
     print(f"Episode evaluator batch size: {EVALUATOR_BATCH_SIZE}; backend: {PromptBasedEvaluator.backend_name}")
     simulator = create_highway_simulator()
     simulator.reset(seed=SEED)
@@ -3958,7 +4124,7 @@ def main():
         scale_of_steering=steering_scale,
     )
     check_model_device(policy, "Policy")
-    results = train_pure_rl(simulator, policy)
+    train_pure_rl(simulator, policy)
     print("Pure RL training finished. Policy:", MODEL_PATH)
 
 
