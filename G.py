@@ -325,31 +325,26 @@ class ActorCriticPolicy(nn.Module):
 
 
 def lane_policy_diagnostic(policy, state, valid_action_mask, sampled_action, phase, episode, step,
-                           selected_target_lane=-1, valid_target_lane_mask=None):
+                           selected_target_lane=-1, valid_target_lane_mask=None, current_lane_id=None):
     with torch.no_grad():
         x = to_tensor(state)
         if x.ndim == 1: x = x.unsqueeze(0)
         h = policy.shared(x)
-        logits = policy.action_logits(h)
-        raw = torch.softmax(logits, dim=-1)
-        mask = torch.as_tensor(valid_action_mask, dtype=torch.bool, device=logits.device)
-        if mask.ndim == 1: mask = mask.unsqueeze(0)
-        masked = torch.softmax(logits.masked_fill(~mask, -1e9), dim=-1)
         lane_logits = policy.lane_rank_logits(h)
         if valid_target_lane_mask is not None:
             lm = torch.as_tensor(valid_target_lane_mask, dtype=torch.bool, device=lane_logits.device)
             if lm.ndim == 1: lm = lm.unsqueeze(0)
             if lm.shape[0] == 1 and lane_logits.shape[0] > 1: lm = lm.expand(lane_logits.shape[0], -1)
             lane_probs = torch.softmax(lane_logits.masked_fill(~lm, -1e9), dim=-1) if lm.any(dim=-1).all() else torch.zeros_like(lane_logits)
-        else: lane_probs = torch.softmax(lane_logits, dim=-1)
+        else:
+            lane_probs = torch.softmax(lane_logits, dim=-1)
     i = int(np.clip(np.rint(float(sampled_action[1])), 0, 1))
-    print("[BINARY POLICY]", f"phase={phase}", f"episode={episode}", f"step={step}",
-          f"raw_prob_KEEP_CHANGE={np.round(raw.squeeze(0).cpu().numpy(),4).tolist()}",
-          f"masked_prob_KEEP_CHANGE={np.round(masked.squeeze(0).cpu().numpy(),4).tolist()}",
-          f"sampled_action={('KEEP','CHANGE')[i]}",
+    print("[LANE RANKING DECISION]", f"phase={phase}", f"episode={episode}", f"step={step}",
+          f"current_lane={current_lane_id}",
           f"valid_target_lane_mask={None if valid_target_lane_mask is None else np.asarray(valid_target_lane_mask,dtype=bool).tolist()}",
           f"target_lane_probs={np.round(lane_probs.squeeze(0).cpu().numpy(),4).tolist()}",
-          f"selected_target_lane={selected_target_lane}")
+          f"selected_target_lane={selected_target_lane}",
+          f"derived_action={('KEEP','CHANGE')[i]}")
 
 # ============================================================
 # 6. Highway-env Simulator Adapter
@@ -3469,6 +3464,7 @@ def train_pure_rl(simulator, policy):
                 policy, state, valid_mask, sampled_action, phase="pure_rl",
                 episode=episode + 1, step=t + 1, selected_target_lane=selected_target_lane,
                 valid_target_lane_mask=target_lane_mask,
+                current_lane_id=current_lane_id,
             )
             filtered_action, safety_info = simulator.filter_ttc_action(
                 sampled_action, selected_target_lane=selected_target_lane
