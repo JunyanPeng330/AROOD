@@ -34,8 +34,8 @@ simulation_frequency = policy_frequency
 
 lane_keeping_weight = 0.20
 
-# Reward positive measured longitudinal acceleration only while below SPEED_LIMIT.
-# MAX_PHYSICAL_ACCELERATION normalizes acceleration reward to [0, 1].
+# Below SPEED_LIMIT, reward positive measured longitudinal acceleration; at/above it, give full speed reward.
+# MAX_PHYSICAL_ACCELERATION normalizes below-limit acceleration reward to [0, 1].
 # Lane selection is judged separately; TTC/gap stay in the independent safety shield.
 SPEED_LIMIT = 60.0
 INITIAL_PROGRESS_WEIGHT = 4.0
@@ -2922,7 +2922,7 @@ def construct_reward(reward_specification, embedding_model=None):
     """Reward normalized positive measured acceleration below the speed limit.
 
     Zero acceleration/deceleration yields zero speed reward. Positive acceleration
-    is normalized by MAX_PHYSICAL_ACCELERATION and gated off at/above target speed.
+    is normalized by MAX_PHYSICAL_ACCELERATION below target speed; at/above target speed, speed reward is 1.0.
     Collision penalty remains separate; lane changes and TTC have no direct reward.
     """
     def reward_function(
@@ -2945,7 +2945,7 @@ def construct_reward(reward_specification, embedding_model=None):
         normalized_positive_acceleration = float(np.clip(
             max(0.0, ego_acceleration) / acceleration_scale, 0.0, 1.0
         ))
-        speed_reward = normalized_positive_acceleration if speed_limit_gate else 0.0
+        speed_reward = normalized_positive_acceleration if speed_limit_gate else 1.0
 
         # 2. Collision penalty. TTC and gap checks remain in the independent shield.
         safety_penalty = (
@@ -2958,7 +2958,7 @@ def construct_reward(reward_specification, embedding_model=None):
         speed_target_reached = bool(ego_speed >= target_speed)
         if reward_diagnostics is not None:
             reward_diagnostics.update({
-                "reward_objective": "positive_acceleration_below_speed_limit_plus_collision_penalty",
+                "reward_objective": "positive_acceleration_below_target_speed_full_speed_reward_at_or_above_target_plus_collision_penalty",
                 "speed_reward": float(speed_reward),
                 "ego_speed_mps": float(ego_speed),
                 "target_speed_mps": float(target_speed),
