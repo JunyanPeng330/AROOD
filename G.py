@@ -4075,6 +4075,7 @@ def evaluate_and_record_video(
     video_dir=os.path.join("figures", "videos"),
     seed=SEED,
     episode_index=1,
+    scenario_seed=None,
     deterministic=True,
     max_steps=MAX_STEPS,
 ):
@@ -4086,7 +4087,13 @@ def evaluate_and_record_video(
     if int(episode_index) < 1:
         raise ValueError("--episode-index must be a 1-based positive integer.")
     base_seed = int(seed)
-    seed = base_seed + int(episode_index) - 1
+    # episode_index is only a video/rollout label. Use scenario_seed to choose
+    # an explicit environment seed; otherwise retain the indexed-seed behavior.
+    seed = (
+        int(scenario_seed)
+        if scenario_seed is not None
+        else base_seed + int(episode_index) - 1
+    )
 
     if not os.path.isfile(model_path):
         raise FileNotFoundError(
@@ -4095,8 +4102,9 @@ def evaluate_and_record_video(
 
     os.makedirs(video_dir, exist_ok=True)
     print(
-        f"[VIDEO EVALUATION] episode_index={episode_index} | "
-        f"base_seed={base_seed} | scenario_seed={seed} | checkpoint={model_path}"
+        f"[VIDEO EVALUATION] rollout_label={episode_index} | "
+        f"base_seed={base_seed} | explicit_scenario_seed={scenario_seed} | "
+        f"actual_scenario_seed={seed} | max_steps={int(max_steps)} | checkpoint={model_path}"
     )
 
     # Seed Python, NumPy, PyTorch and the Gymnasium environment for repeatability.
@@ -4219,6 +4227,14 @@ def evaluate_and_record_video(
                 )
 
                 if done:
+                    print(
+                        "[VIDEO EPISODE STOP]",
+                        f"step={episode_steps}/{int(max_steps)}",
+                        f"terminated={step_info.get('terminated', 'not reported') if isinstance(step_info, dict) else 'not reported'}",
+                        f"truncated={step_info.get('truncated', 'not reported') if isinstance(step_info, dict) else 'not reported'}",
+                        f"collision={collision}",
+                        f"info={step_info!r}",
+                    )
                     break
 
         lane_stats = dict(getattr(simulator, "_lane_change_stats", {}))
@@ -4226,9 +4242,11 @@ def evaluate_and_record_video(
         print(
             "[VIDEO EVALUATION SUMMARY]",
             f"checkpoint={model_path}",
-            f"episode_index={episode_index}",
+            f"rollout_label={episode_index}",
             f"base_seed={base_seed}",
-            f"scenario_seed={seed}",
+            f"explicit_scenario_seed={scenario_seed}",
+            f"actual_scenario_seed={seed}",
+            f"max_steps_requested={int(max_steps)}",
             f"deterministic={deterministic}",
             f"steps={episode_steps}",
             f"return={episode_return:.3f}",
@@ -4241,7 +4259,9 @@ def evaluate_and_record_video(
             "video_dir": os.path.abspath(video_dir),
             "episode_index": int(episode_index),
             "base_seed": int(base_seed),
+            "explicit_scenario_seed": None if scenario_seed is None else int(scenario_seed),
             "seed": int(seed),
+            "max_steps_requested": int(max_steps),
             "steps": int(episode_steps),
             "episode_return": float(episode_return),
             "collision": bool(collision),
@@ -4291,7 +4311,15 @@ def main():
     )
     parser.add_argument(
         "--episode-index", type=int, default=1,
-        help="1-based evaluation episode identifier; also selects scenario seed as --seed + index - 1."
+        help="1-based video/rollout label only; does not retrieve a training episode."
+    )
+    parser.add_argument(
+        "--scenario-seed", type=int, default=None,
+        help="Explicit environment seed for reproducible evaluation. If omitted, uses --seed + --episode-index - 1."
+    )
+    parser.add_argument(
+        "--max-steps", type=int, default=MAX_STEPS,
+        help=f"Maximum evaluation steps (default: {MAX_STEPS}); a terminal/truncated episode may end earlier."
     )
     parser.add_argument(
         "--stochastic", action="store_true",
@@ -4311,6 +4339,8 @@ def main():
             video_dir=args.video_dir,
             seed=args.seed,
             episode_index=args.episode_index,
+            scenario_seed=args.scenario_seed,
+            max_steps=args.max_steps,
             deterministic=not args.stochastic,
         )
         return
