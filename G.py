@@ -3998,10 +3998,83 @@ def train_pure_rl(simulator, policy):
     }
 
 
+class EgoVisualWrapper(gym.Wrapper):
+    """Highlight the controlled vehicle and annotate it in RGB video frames."""
+    EGO_COLOR = (0, 150, 255)  # bright blue in RGB
+
+    def _style_ego(self):
+        base = self.env.unwrapped
+        ego = getattr(base, "vehicle", None)
+        if ego is not None:
+            # highway-env's renderer uses the vehicle's color attribute.
+            ego.color = self.EGO_COLOR
+
+    def reset(self, **kwargs):
+        result = self.env.reset(**kwargs)
+        self._style_ego()
+        return result
+
+    def step(self, action):
+        result = self.env.step(action)
+        self._style_ego()
+        return result
+
+    def render(self):
+        frame = self.env.render()
+        if frame is None:
+            return frame
+
+        # RecordVideo expects an RGB ndarray in rgb_array mode.
+        try:
+            from PIL import Image, ImageDraw, ImageFont
+            image = Image.fromarray(np.asarray(frame).astype(np.uint8)).convert("RGB")
+            draw = ImageDraw.Draw(image)
+            try:
+                font = ImageFont.truetype("arial.ttf", 18)
+            except OSError:
+                font = ImageFont.load_default()
+
+            base = self.env.unwrapped
+            ego = getattr(base, "vehicle", None)
+            viewer = getattr(base, "viewer", None)
+            screen_position = None
+            if ego is not None and viewer is not None:
+                project = getattr(viewer, "get_screen_position", None)
+                if callable(project):
+                    screen_position = project(ego.position)
+
+            if screen_position is not None:
+                x, y = int(screen_position[0]), int(screen_position[1])
+                label = "EGO"
+                bbox = draw.textbbox((0, 0), label, font=font)
+                text_w = bbox[2] - bbox[0]
+                text_h = bbox[3] - bbox[1]
+                left = max(0, min(image.width - text_w - 8, x - text_w // 2))
+                top = max(0, y - 48)
+                draw.rounded_rectangle(
+                    (left - 4, top - 3, left + text_w + 4, top + text_h + 3),
+                    radius=4, fill=(0, 150, 255)
+                )
+                draw.text((left, top), label, fill=(255, 255, 255), font=font)
+            else:
+                # Fallback HUD if the highway-env viewer doesn't expose projection.
+                draw.rounded_rectangle((10, 10, 76, 38), radius=4, fill=(0, 150, 255))
+                draw.text((18, 15), "EGO", fill=(255, 255, 255), font=font)
+
+            return np.asarray(image)
+        except Exception as exc:
+            # Do not interrupt evaluation if optional frame annotation fails.
+            if not getattr(self, "_annotation_warning_printed", False):
+                print(f"[VIDEO ANNOTATION WARNING] {exc}")
+                self._annotation_warning_printed = True
+            return frame
+
+
 def evaluate_and_record_video(
     model_path=MODEL_PATH,
     video_dir=os.path.join("figures", "videos"),
     seed=SEED,
+    episode_index=1,
     deterministic=True,
     max_steps=MAX_STEPS,
 ):
@@ -4010,12 +4083,21 @@ def evaluate_and_record_video(
     This path does not train or update the policy. Gymnasium's RecordVideo
     wrapper captures the RGB frames produced by highway-env.
     """
+    if int(episode_index) < 1:
+        raise ValueError("--episode-index must be a 1-based positive integer.")
+    base_seed = int(seed)
+    seed = base_seed + int(episode_index) - 1
+
     if not os.path.isfile(model_path):
         raise FileNotFoundError(
             f"Policy checkpoint not found: {model_path}. Train first or pass --model-path."
         )
 
     os.makedirs(video_dir, exist_ok=True)
+    print(
+        f"[VIDEO EVALUATION] episode_index={episode_index} | "
+        f"base_seed={base_seed} | scenario_seed={seed} | checkpoint={model_path}"
+    )
 
     # Seed Python, NumPy, PyTorch and the Gymnasium environment for repeatability.
     random.seed(seed)
@@ -4067,11 +4149,14 @@ def evaluate_and_record_video(
     try:
         # Attach the recorder to the underlying Gymnasium environment. The
         # simulator adapter continues to access it through simulator.env.
+        # Apply visual styling inside RecordVideo so even the first captured
+        # reset frame has the blue ego vehicle and EGO label.
+        styled_env = EgoVisualWrapper(simulator.env)
         simulator.env = gym.wrappers.RecordVideo(
-            simulator.env,
+            styled_env,
             video_folder=video_dir,
             episode_trigger=lambda episode_id: True,
-            name_prefix=f"evaluation_seed_{seed}",
+            name_prefix=f"evaluation_ep_{int(episode_index):04d}_seed_{seed}",
         )
         video_recorder = simulator.env
 
@@ -4141,7 +4226,9 @@ def evaluate_and_record_video(
         print(
             "[VIDEO EVALUATION SUMMARY]",
             f"checkpoint={model_path}",
-            f"seed={seed}",
+            f"episode_index={episode_index}",
+            f"base_seed={base_seed}",
+            f"scenario_seed={seed}",
             f"deterministic={deterministic}",
             f"steps={episode_steps}",
             f"return={episode_return:.3f}",
@@ -4152,6 +4239,8 @@ def evaluate_and_record_video(
         return {
             "model_path": model_path,
             "video_dir": os.path.abspath(video_dir),
+            "episode_index": int(episode_index),
+            "base_seed": int(base_seed),
             "seed": int(seed),
             "steps": int(episode_steps),
             "episode_return": float(episode_return),
@@ -4198,7 +4287,11 @@ def main():
     )
     parser.add_argument(
         "--seed", type=int, default=SEED,
-        help=f"Evaluation seed (default: {SEED})."
+        help=f"Base evaluation seed (default: {SEED}); scenario seed = base seed + episode index - 1."
+    )
+    parser.add_argument(
+        "--episode-index", type=int, default=1,
+        help="1-based evaluation episode identifier; also selects scenario seed as --seed + index - 1."
     )
     parser.add_argument(
         "--stochastic", action="store_true",
@@ -4217,6 +4310,7 @@ def main():
             model_path=args.model_path,
             video_dir=args.video_dir,
             seed=args.seed,
+            episode_index=args.episode_index,
             deterministic=not args.stochastic,
         )
         return
