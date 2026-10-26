@@ -2669,13 +2669,23 @@ def _safety_aware_lane_selector_and_controller(self, sampled_action, selected_ta
     vals = metrics.get(target, {})
     front_speed, front_gap = vals.get("front_speed"), float(vals.get("front_gap", 100.0))
     current_vals = metrics.get(current, {})
+    print(
+        "[MASK DEBUG][CURRENT LANE TRAFFIC]",
+        f"current_lane={current}",
+        f"current_front_speed_mps={current_vals.get('front_speed')}",
+        f"current_front_gap_m={float(current_vals.get('front_gap', float('inf'))):.3f}",
+        f"current_rear_speed_mps={current_vals.get('rear_speed')}",
+        f"current_rear_gap_m={float(current_vals.get('rear_gap', float('inf'))):.3f}",
+    )
 
     accel = (float(np.clip(0.5 * (30.0 - float(ego.speed)) / MAX_PHYSICAL_ACCELERATION, -1.0, 1.0)
              ) if front_speed is None else self._speed_matching_acceleration(float(front_speed), front_gap))
     cur = metrics.get(current, {})
     emergency = (float(cur.get("front_ttc", float("inf"))) <= SAFETY_OVERRIDE_TTC
                  or float(cur.get("front_gap", float("inf"))) <= MIN_FOLLOWING_GAP)
+    controller_acceleration_before_emergency = float(accel)
     if emergency: accel = min(accel, -0.5)
+    acceleration_overridden = abs(float(accel) - controller_acceleration_before_emergency) > 1e-6
     req_id = None
     if requested == 1:
         req_id = int(getattr(self, "_lane_request_trace_sequence", 0)) + 1
@@ -2695,6 +2705,8 @@ def _safety_aware_lane_selector_and_controller(self, sampled_action, selected_ta
         "target_selector_mode": "learned_lane_ranking_head_plus_execution_recheck",
         "safety_filter_applied": bool(blocked or emergency), "overridden": bool(blocked or emergency),
         "emergency_braking": bool(emergency),
+        "controller_acceleration_before_emergency": controller_acceleration_before_emergency,
+        "acceleration_overridden": bool(acceleration_overridden),
         "intervention_reason": "current_lane_emergency" if emergency else ("unsafe_target_rejected" if blocked else "none"),
         "sampled_action": action.copy(), "filtered_action": np.asarray([accel, executed], dtype=np.float32),
         "controller_acceleration": float(accel),
@@ -3383,6 +3395,11 @@ def train_pure_rl(simulator, policy):
     lane_change_rate_history = []
     safe_travel_dis_history = []
     safe_step_count_history = []
+    emergency_braking_rate_history = []
+    lane_change_rejection_rate_history = []
+    acceleration_override_rate_history = []
+    overall_intervention_rate_history = []
+    interventions_per_km_history = []
     actor_loss_history = []
     critic_loss_history = []
     episode_metric_history = []
@@ -3429,6 +3446,14 @@ def train_pure_rl(simulator, policy):
         no_safe_target_lane_steps = 0
         valid_target_lane_steps = 0
         lane_counters = make_lane_request_counters()
+        intervention_counts = {
+            "emergency_braking_steps": 0,
+            "lane_change_requests": 0,
+            "lane_change_rejections": 0,
+            "acceleration_override_steps": 0,
+            "steps_with_any_intervention": 0,
+            "intervention_events": 0,
+        }
         seen_completed = {
             "LEFT": int(getattr(simulator, "_lane_change_stats", {}).get("completed_LEFT", 0)),
             "RIGHT": int(getattr(simulator, "_lane_change_stats", {}).get("completed_RIGHT", 0)),
@@ -3465,6 +3490,23 @@ def train_pure_rl(simulator, policy):
             )
             filtered_action = np.asarray(filtered_action, dtype=np.float32).reshape(-1)
             record_lane_request_decision(lane_counters, sampled_action, valid_mask, safety_info)
+
+            # Count safety-layer interventions on online-training steps. Acceleration
+            # override means emergency braking changed the normal controller output;
+            # the policy's acceleration dimension is only a placeholder in this design.
+            requested_change = int(np.clip(np.rint(float(sampled_action[1])), 0, 1)) == 1
+            emergency_intervention = bool(safety_info.get("emergency_braking", False))
+            lane_change_rejected = bool(requested_change and safety_info.get("lane_change_blocked", False))
+            acceleration_override = bool(safety_info.get("acceleration_overridden", False))
+            any_intervention = bool(emergency_intervention or lane_change_rejected or acceleration_override)
+            intervention_counts["emergency_braking_steps"] += int(emergency_intervention)
+            intervention_counts["lane_change_requests"] += int(requested_change)
+            intervention_counts["lane_change_rejections"] += int(lane_change_rejected)
+            intervention_counts["acceleration_override_steps"] += int(acceleration_override)
+            intervention_counts["steps_with_any_intervention"] += int(any_intervention)
+            intervention_counts["intervention_events"] += (
+                int(emergency_intervention) + int(lane_change_rejected) + int(acceleration_override)
+            )
             previous_speed_mps = float(simulator.env.unwrapped.vehicle.speed)
 
             next_state, simulator_reward, done, step_info = simulator.step(
@@ -3607,6 +3649,25 @@ def train_pure_rl(simulator, policy):
         safe_travel_dis_history.append(float(safe_travel_dis))
         safe_step_count_history.append(safe_step_count)
 
+        # Step rates use policy decisions as denominator. Rejection rate uses
+        # lane-change attempts. Distance is stored in metres and converted to km
+        # only for the interpretable interventions-per-km metric.
+        episode_step_denominator = max(episode_steps, 1)
+        emergency_braking_rate = intervention_counts["emergency_braking_steps"] / episode_step_denominator
+        lane_change_rejection_rate = (
+            intervention_counts["lane_change_rejections"] / intervention_counts["lane_change_requests"]
+            if intervention_counts["lane_change_requests"] else 0.0
+        )
+        acceleration_override_rate = intervention_counts["acceleration_override_steps"] / episode_step_denominator
+        overall_intervention_rate = intervention_counts["steps_with_any_intervention"] / episode_step_denominator
+        distance_km = float(safe_travel_dis) / 1000.0
+        interventions_per_km = intervention_counts["intervention_events"] / distance_km if distance_km > 1e-9 else 0.0
+        emergency_braking_rate_history.append(float(emergency_braking_rate))
+        lane_change_rejection_rate_history.append(float(lane_change_rejection_rate))
+        acceleration_override_rate_history.append(float(acceleration_override_rate))
+        overall_intervention_rate_history.append(float(overall_intervention_rate))
+        interventions_per_km_history.append(float(interventions_per_km))
+
         actor_loss_history.append(float(np.mean(episode_actor_losses)) if episode_actor_losses else 0.0)
         critic_loss_history.append(float(np.mean(episode_critic_losses)) if episode_critic_losses else 0.0)
 
@@ -3622,6 +3683,12 @@ def train_pure_rl(simulator, policy):
             f"lane_change_rate={lane_change_rate:.4f} | "
             f"safe_travel_dis={safe_travel_dis:.2f}m | "
             f"safe_step_count={safe_step_count} | "
+            f"emergency_braking_rate={emergency_braking_rate:.4f} | "
+            f"lane_change_rejection_rate={lane_change_rejection_rate:.4f} "
+            f"({intervention_counts['lane_change_rejections']}/{intervention_counts['lane_change_requests']} requests) | "
+            f"acceleration_override_rate={acceleration_override_rate:.4f} | "
+            f"overall_intervention_rate={overall_intervention_rate:.4f} | "
+            f"interventions_per_km={interventions_per_km:.3f} (safe distance={safe_travel_dis:.2f}m) | "
             f"lane_requested={lane_stats.get('requested', 0)} | "
             f"lane_accepted={lane_stats.get('accepted', 0)} | "
             f"lane_completed={lane_stats.get('completed', 0)} | "
@@ -3645,6 +3712,12 @@ def train_pure_rl(simulator, policy):
             "lane_change_rate": float(lane_change_rate),
             "safe_travel_dis": float(safe_travel_dis),
             "safe_step_count": int(safe_step_count),
+            "emergency_braking_rate": float(emergency_braking_rate),
+            "lane_change_rejection_rate": float(lane_change_rejection_rate),
+            "acceleration_override_rate": float(acceleration_override_rate),
+            "overall_intervention_rate": float(overall_intervention_rate),
+            "interventions_per_km": float(interventions_per_km),
+            "intervention_counts": dict(intervention_counts),
         }
         episode_metric_history.append(episode_metrics)
 
@@ -3665,6 +3738,12 @@ def train_pure_rl(simulator, policy):
             lane_change_rate=float(lane_change_rate),
             safe_travel_dis=float(safe_travel_dis),
             safe_step_count=int(safe_step_count),
+            emergency_braking_rate=float(emergency_braking_rate),
+            lane_change_rejection_rate=float(lane_change_rejection_rate),
+            acceleration_override_rate=float(acceleration_override_rate),
+            overall_intervention_rate=float(overall_intervention_rate),
+            interventions_per_km=float(interventions_per_km),
+            intervention_counts=dict(intervention_counts),
             first_collision_step=first_collision_step,
             lane_change_stats=lane_stats,
             lane_request_counters=lane_counters,
@@ -3821,6 +3900,11 @@ def train_pure_rl(simulator, policy):
     print(f"lane_change_rate={float(np.mean(lane_change_rate_history)) if lane_change_rate_history else 0.0:.4f}")
     print(f"safe_travel_dis={float(np.mean(safe_travel_dis_history)) if safe_travel_dis_history else 0.0:.2f} m/episode (mean)")
     print(f"safe_step_count={float(np.mean(safe_step_count_history)) if safe_step_count_history else 0.0:.2f} steps/episode (mean)")
+    print(f"emergency_braking_rate={float(np.mean(emergency_braking_rate_history)) if emergency_braking_rate_history else 0.0:.4f} (per-step rate)")
+    print(f"lane_change_rejection_rate={float(np.mean(lane_change_rejection_rate_history)) if lane_change_rejection_rate_history else 0.0:.4f} (per-request rate)")
+    print(f"acceleration_override_rate={float(np.mean(acceleration_override_rate_history)) if acceleration_override_rate_history else 0.0:.4f} (per-step rate)")
+    print(f"overall_intervention_rate={float(np.mean(overall_intervention_rate_history)) if overall_intervention_rate_history else 0.0:.4f} (per-step rate)")
+    print(f"interventions_per_km={float(np.mean(interventions_per_km_history)) if interventions_per_km_history else 0.0:.3f} (safe_travel_dis is measured in metres)")
 
     save_policy(policy, MODEL_PATH)
     return {
@@ -3833,6 +3917,11 @@ def train_pure_rl(simulator, policy):
         "lane_change_rate": lane_change_rate_history,
         "safe_travel_dis": safe_travel_dis_history,
         "safe_step_count": safe_step_count_history,
+        "emergency_braking_rate": emergency_braking_rate_history,
+        "lane_change_rejection_rate": lane_change_rejection_rate_history,
+        "acceleration_override_rate": acceleration_override_rate_history,
+        "overall_intervention_rate": overall_intervention_rate_history,
+        "interventions_per_km": interventions_per_km_history,
     }
 
 
