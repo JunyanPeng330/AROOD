@@ -323,7 +323,7 @@ def append_trajectory_record(record):
             archive.write(json.dumps(
                 _trajectory_jsonable(record), ensure_ascii=False,
                 allow_nan=False, separators=(",", ":")
-            ) + "\\n")
+            ) + "\n")
             archive.flush()
     except (OSError, TypeError, ValueError) as exc:
         print("[TRAJECTORY RECORD WARNING]", f"error={exc}", f"path={EPISODE_TRAJECTORY_PATH}")
