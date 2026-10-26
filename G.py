@@ -155,6 +155,9 @@ DIAGNOSTIC_LOG_PATH = "training_diagnostics_binary_lane_ranked.jsonl"
 # Keep this distinct from any tracked README/placeholder so exclusive creation works.
 NEGATIVE_SPEED_FIRST_TRANSITION_PATH = os.path.join("figures", "negative_speed_first_transition.txt")
 
+# Persistent append-only simulator log for evaluation episodes and transitions.
+SIMULATOR_RECORD_PATH = os.path.join("figures", "simulation_info.jsonl")
+
 # Episode-level evaluator settings. The placeholder is deterministic and does not
 # call a network or pretend to be a real LLM.
 EVALUATOR_BATCH_SIZE = 10
@@ -4113,8 +4116,10 @@ def store_for_simulator(
     safety_info=None,
     step_info=None,
     metadata=None,
+    run_id=None,
+    episode_id=None,
 ):
-    """Save episode initialization and transitions to a streamed JSONL record.
+    """Append episode initialization and transitions to a persistent JSONL record.
 
     Call with event='episode_start' immediately after reset, then with
     event='transition' after each simulator step. Each transition stores both
@@ -4126,6 +4131,8 @@ def store_for_simulator(
         "schema": "arood_simulator_record_v1",
         "event": str(event),
         "episode_seed": int(episode_seed),
+        "run_id": run_id,
+        "episode_id": episode_id,
         "recorded_at_unix": float(time.time()),
     }
 
@@ -4150,7 +4157,8 @@ def store_for_simulator(
                 "traffic_speed_variation": TRAFFIC_SPEED_VARIATION,
             },
         })
-        mode = "w"
+        # Append rather than truncate: preserve previous episodes and experiments.
+        mode = "a"
     elif event == "transition":
         record.update({
             "step": int(step) if step is not None else None,
@@ -4183,7 +4191,7 @@ def evaluate_and_record_video(
     deterministic=True,
     max_steps=MAX_STEPS,
     store_simulator=True,
-    simulator_record_dir=os.path.join("figures", "simulator_records"),
+    simulator_record_path=SIMULATOR_RECORD_PATH,
 ):
     """Run one evaluation episode from a saved checkpoint and write an MP4.
 
@@ -4275,20 +4283,22 @@ def evaluate_and_record_video(
         video_recorder = simulator.env
 
         state = simulator.reset(seed=seed, randomize_traffic_gaps=True)
-        simulator_record_path = None
+        active_simulator_record_path = None
+        run_id = f"{int(time.time())}_{os.getpid()}"
+        episode_id = f"{run_id}_ep{int(episode_index):04d}_seed{int(seed)}"
         if store_simulator:
-            os.makedirs(simulator_record_dir, exist_ok=True)
-            simulator_record_path = os.path.join(
-                simulator_record_dir,
-                f"evaluation_ep_{int(episode_index):04d}_seed_{int(seed)}.jsonl",
-            )
+            active_simulator_record_path = os.path.abspath(simulator_record_path)
             store_for_simulator(
-                simulator_record_path,
+                active_simulator_record_path,
                 event="episode_start",
                 simulator=simulator,
                 episode_seed=seed,
                 state=state,
+                run_id=run_id,
+                episode_id=episode_id,
                 metadata={
+                    "run_id": run_id,
+                    "episode_id": episode_id,
                     "rollout_label": int(episode_index),
                     "checkpoint": os.path.abspath(model_path),
                     "deterministic_policy": bool(deterministic),
@@ -4296,7 +4306,7 @@ def evaluate_and_record_video(
                     "recording_mode": "evaluation_only_no_training",
                 },
             )
-            print(f"[SIMULATOR RECORD] path={os.path.abspath(simulator_record_path)}")
+            print(f"[SIMULATOR RECORD] path={active_simulator_record_path} run_id={run_id} episode_id={episode_id}")
         episode_return = 0.0
         episode_steps = 0
         collision = False
@@ -4348,12 +4358,14 @@ def evaluate_and_record_video(
                     safety_info=safety_info,
                 )
 
-                if simulator_record_path is not None:
+                if active_simulator_record_path is not None:
                     store_for_simulator(
-                        simulator_record_path,
+                        active_simulator_record_path,
                         event="transition",
                         simulator=simulator,
                         episode_seed=seed,
+                        run_id=run_id,
+                        episode_id=episode_id,
                         step=step_index + 1,
                         state=previous_state,
                         sampled_action=sampled_action,
@@ -4399,7 +4411,7 @@ def evaluate_and_record_video(
             f"collision={collision}",
             f"completed_lane_changes={completed_lane_changes}",
             f"video_directory={os.path.abspath(video_dir)}",
-            f"simulator_record={os.path.abspath(simulator_record_path) if simulator_record_path else None}",
+            f"simulator_record={active_simulator_record_path}",
         )
         return {
             "model_path": model_path,
@@ -4413,7 +4425,7 @@ def evaluate_and_record_video(
             "episode_return": float(episode_return),
             "collision": bool(collision),
             "completed_lane_changes": completed_lane_changes,
-            "simulator_record_path": os.path.abspath(simulator_record_path) if simulator_record_path else None,
+            "simulator_record_path": active_simulator_record_path,
         }
     finally:
         # Closing RecordVideo finalizes the MP4 file and its metadata.
@@ -4478,8 +4490,8 @@ def main():
         help="Disable JSONL recording of initial traffic configuration and state/action/reward transitions."
     )
     parser.add_argument(
-        "--simulator-record-dir", default=os.path.join("figures", "simulator_records"),
-        help="Directory for simulator JSONL records (default: figures/simulator_records)."
+        "--simulator-record-path", default=SIMULATOR_RECORD_PATH,
+        help=f"Persistent append-only JSONL simulator log (default: {SIMULATOR_RECORD_PATH})."
     )
     args = parser.parse_args()
 
@@ -4499,7 +4511,7 @@ def main():
             max_steps=args.max_steps,
             deterministic=not args.stochastic,
             store_simulator=not args.no_store_simulator,
-            simulator_record_dir=args.simulator_record_dir,
+            simulator_record_path=args.simulator_record_path,
         )
         return
 
