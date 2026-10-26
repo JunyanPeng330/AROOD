@@ -176,6 +176,10 @@ def replay_episode(start, frames, playback_speed=1.0, save_path=None):
         0.985, 0.985, "", transform=ax.transAxes, va="top", ha="right",
         fontsize=10, weight="bold"
     )
+    ego_label = ax.text(
+        0.0, 0.0, "EGO", ha="center", va="bottom",
+        fontsize=9, weight="bold", color="#0755a3", zorder=10
+    )
 
     def draw(frame_index):
         frame = frames[frame_index]
@@ -218,11 +222,11 @@ def replay_episode(start, frames, playback_speed=1.0, save_path=None):
             ax.add_patch(patch)
             vehicle_patches.append(patch)
             if is_ego:
-                ax.annotate(
-                    "EGO", (float(pos[0]), float(pos[1])),
-                    xytext=(0, 11), textcoords="offset points",
-                    ha="center", fontsize=9, weight="bold", color="#0755a3"
-                )
+                ego_label.set_position((float(pos[0]), float(pos[1]) + width / 2 + 0.3))
+                ego_label.set_visible(True)
+
+        if ego is None:
+            ego_label.set_visible(False)
 
         safety = frame.get("safety_info") or {}
         step_info = frame.get("step_info") or {}
@@ -245,7 +249,7 @@ def replay_episode(start, frames, playback_speed=1.0, save_path=None):
         else:
             status_text.set_text("RECORDED REPLAY")
             status_text.set_color("#087443")
-        return [trail, info_text, status_text, *vehicle_patches]
+        return [trail, info_text, status_text, ego_label, *vehicle_patches]
 
     interval = max(1, int(1000 / max(0.1, float(start.get("policy_frequency_hz", 5)) * playback_speed)))
     animation = FuncAnimation(
