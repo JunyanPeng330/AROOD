@@ -15,6 +15,7 @@ import numpy as np
 import torch
 import json
 import os
+import uuid
 
 import gymnasium as gym
 import highway_env
@@ -184,6 +185,148 @@ torch.manual_seed(SEED)
 # ============================================================
 # 2. Utility Functions
 # ============================================================
+
+# Persistent, append-only episode trajectory archive. Each JSONL record is
+# self-contained enough to replay the actual recorded vehicle states without
+# running the policy or stepping a new simulator.
+EPISODE_TRAJECTORY_PATH = os.path.join("figures", "episode_trajectories.jsonl")
+TRAJECTORY_RECORDING_ENABLED = os.environ.get("AROOD_RECORD_TRAJECTORIES", "1").strip().lower() not in {
+    "0", "false", "no", "off"
+}
+TRAJECTORY_RUN_ID = f"{time.strftime('%Y%m%d-%H%M%S')}-{os.getpid()}-{uuid.uuid4().hex[:8]}"
+
+
+def _trajectory_jsonable(value):
+    """Convert numpy/torch values and non-finite floats to strict JSON values."""
+    if isinstance(value, dict):
+        return {str(k): _trajectory_jsonable(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_trajectory_jsonable(v) for v in value]
+    if isinstance(value, np.ndarray):
+        return _trajectory_jsonable(value.tolist())
+    if isinstance(value, torch.Tensor):
+        return _trajectory_jsonable(value.detach().cpu().tolist())
+    if isinstance(value, (np.integer,)):
+        return int(value)
+    if isinstance(value, (np.floating, float)):
+        number = float(value)
+        return number if np.isfinite(number) else str(number)
+    if isinstance(value, (np.bool_, bool)):
+        return bool(value)
+    if value is None or isinstance(value, (str, int)):
+        return value
+    return str(value)
+
+
+def snapshot_simulator_vehicles(simulator):
+    """Capture actual world coordinates/kinematics for every vehicle at this instant."""
+    base_env = simulator.env.unwrapped
+    ego = getattr(base_env, "vehicle", None)
+    vehicles = list(getattr(getattr(base_env, "road", None), "vehicles", []) or [])
+    if ego is not None and all(vehicle is not ego for vehicle in vehicles):
+        vehicles.insert(0, ego)
+    records = []
+    for index, vehicle in enumerate(vehicles):
+        position = np.asarray(getattr(vehicle, "position", [np.nan, np.nan]), dtype=float).reshape(-1)
+        lane_index = getattr(vehicle, "lane_index", None)
+        try:
+            lane_id = int(lane_index[2])
+        except (TypeError, IndexError, ValueError):
+            lane_id = None
+        records.append({
+            "vehicle_index": int(index),
+            "is_ego": bool(vehicle is ego),
+            "vehicle_class": type(vehicle).__name__,
+            "vehicle_id": getattr(vehicle, "id", None),
+            "position_xy_m": position[:2].tolist(),
+            "lane_id": lane_id,
+            "lane_index": lane_index,
+            "speed_mps": float(getattr(vehicle, "speed", 0.0)),
+            "heading_rad": float(getattr(vehicle, "heading", 0.0)),
+            "crashed": bool(getattr(vehicle, "crashed", False)),
+            "length_m": float(getattr(vehicle, "LENGTH", getattr(vehicle, "length", 5.0))),
+            "width_m": float(getattr(vehicle, "WIDTH", getattr(vehicle, "width", 2.0))),
+        })
+    return records
+
+
+def record_episode_start(simulator, phase, episode_number, initial_state):
+    """Append episode metadata and the exact initial scene; does not affect simulation."""
+    if not TRAJECTORY_RECORDING_ENABLED:
+        return
+    record = {
+        "record_type": "episode_start",
+        "schema_version": 1,
+        "run_id": TRAJECTORY_RUN_ID,
+        "phase": str(phase),
+        "episode_number": int(episode_number),
+        "episode_key": f"{TRAJECTORY_RUN_ID}:{phase}:{int(episode_number)}",
+        "recorded_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
+        "seed_base": int(SEED),
+        "max_steps": int(getattr(simulator, "max_steps", MAX_STEPS)),
+        "policy_frequency_hz": int(policy_frequency),
+        "simulation_frequency_hz": int(simulation_frequency),
+        "num_lanes": int(NUM_LANES),
+        "managed_surrounding_vehicle_slots": int(NUM_SURROUNDING_VEHICLES),
+        "speed_limit_mps": float(SPEED_LIMIT),
+        "initial_state": np.asarray(initial_state, dtype=np.float32).tolist(),
+        "vehicles": snapshot_simulator_vehicles(simulator),
+    }
+    append_trajectory_record(record)
+
+
+def record_episode_transition(
+    simulator, phase, episode_number, step_number, state_before, state_after,
+    vehicles_before, sampled_action, executed_action, selected_target_lane,
+    valid_action_mask, target_lane_mask, safety_info, step_info, reward,
+    reward_components=None, done=False, terminated=False, truncated=False
+):
+    """Append one transition with pre/post world snapshots and decision context."""
+    if not TRAJECTORY_RECORDING_ENABLED:
+        return
+    record = {
+        "record_type": "transition",
+        "schema_version": 1,
+        "run_id": TRAJECTORY_RUN_ID,
+        "phase": str(phase),
+        "episode_number": int(episode_number),
+        "episode_key": f"{TRAJECTORY_RUN_ID}:{phase}:{int(episode_number)}",
+        "step": int(step_number),
+        "state_before": np.asarray(state_before, dtype=np.float32).tolist(),
+        "state_after": np.asarray(state_after, dtype=np.float32).tolist(),
+        "vehicles_before": vehicles_before,
+        "vehicles_after": snapshot_simulator_vehicles(simulator),
+        "policy_sampled_action": sampled_action,
+        "executed_high_level_action": executed_action,
+        "selected_target_lane": int(selected_target_lane),
+        "valid_action_mask": valid_action_mask,
+        "valid_target_lane_mask": target_lane_mask,
+        "safety_info": safety_info,
+        "step_info": step_info,
+        "reward": float(reward),
+        "reward_components": reward_components or {},
+        "done": bool(done),
+        "terminated": bool(terminated),
+        "truncated": bool(truncated),
+        "ego_lane_change_stats": dict(getattr(simulator, "_lane_change_stats", {})),
+    }
+    append_trajectory_record(record)
+
+
+def append_trajectory_record(record):
+    """Append and flush a single JSONL record so completed steps survive interruption."""
+    if not TRAJECTORY_RECORDING_ENABLED:
+        return
+    try:
+        os.makedirs(os.path.dirname(EPISODE_TRAJECTORY_PATH) or ".", exist_ok=True)
+        with open(EPISODE_TRAJECTORY_PATH, "a", encoding="utf-8") as archive:
+            archive.write(json.dumps(
+                _trajectory_jsonable(record), ensure_ascii=False,
+                allow_nan=False, separators=(",", ":")
+            ) + "\\n")
+            archive.flush()
+    except (OSError, TypeError, ValueError) as exc:
+        print("[TRAJECTORY RECORD WARNING]", f"error={exc}", f"path={EPISODE_TRAJECTORY_PATH}")
 
 
 def write_diagnostic_event(event, simulator=None, **fields):
@@ -3160,6 +3303,7 @@ def collect_reference_rollouts(simulator, policy, reward_function):
         state = np.asarray(
             simulator.reset(randomize_traffic_gaps=True), dtype=np.float32
         )
+        record_episode_start(simulator, "reference_collection", episode + 1, state)
         trajectory = {
             "states": [], "actions": [], "pre_tanh_accels": [], "masks": [],
             "selected_target_lanes": [], "target_lane_masks": [],
@@ -3195,6 +3339,7 @@ def collect_reference_rollouts(simulator, policy, reward_function):
                 lane_counters, sampled_action, valid_mask, safety_info or {}
             )
             previous_speed_mps = float(simulator.env.unwrapped.vehicle.speed)
+            vehicles_before = snapshot_simulator_vehicles(simulator)
             next_state, _, done, step_info = simulator.step(
                 filtered_action,
                 apply_safety_filter=False,
@@ -3257,6 +3402,30 @@ def collect_reference_rollouts(simulator, policy, reward_function):
                 if isinstance(step_info, dict) else bool(done or offroad)
             )
             trajectory["terminated"].append(is_terminated)
+            record_episode_transition(
+                simulator=simulator,
+                phase="reference_collection",
+                episode_number=episode + 1,
+                step_number=step_index + 1,
+                state_before=state,
+                state_after=next_state,
+                vehicles_before=vehicles_before,
+                sampled_action=sampled_action.tolist(),
+                executed_action=np.asarray(
+                    step_info.get("filtered_policy_action", filtered_action)
+                    if isinstance(step_info, dict) else filtered_action,
+                    dtype=np.float32,
+                ).reshape(-1).tolist(),
+                selected_target_lane=selected_target_lane,
+                valid_action_mask=valid_mask.tolist(),
+                target_lane_mask=target_lane_mask.tolist(),
+                safety_info=safety_info,
+                step_info=step_info,
+                reward=reward,
+                done=done,
+                terminated=is_terminated,
+                truncated=bool(step_info.get("truncated", False)) if isinstance(step_info, dict) else False,
+            )
             total_transitions += 1
             state = next_state
             if done:
@@ -3438,6 +3607,7 @@ def train_pure_rl(simulator, policy):
         simulator._trace_episode = episode + 1
         start_time = time.time()
         state = simulator.reset(randomize_traffic_gaps=True)
+        record_episode_start(simulator, "pure_rl", episode + 1, state)
         episode_return = 0.0
         episode_steps = 0
         collisions = 0
@@ -3512,6 +3682,7 @@ def train_pure_rl(simulator, policy):
                 int(emergency_intervention) + int(lane_change_rejected) + int(acceleration_override)
             )
             previous_speed_mps = float(simulator.env.unwrapped.vehicle.speed)
+            vehicles_before = snapshot_simulator_vehicles(simulator)
 
             next_state, simulator_reward, done, step_info = simulator.step(
                 filtered_action,
@@ -3581,6 +3752,30 @@ def train_pure_rl(simulator, policy):
                 safety_info=reward_safety_info,
                 policy_sampled_action=sampled_action,
                 reward_diagnostics=reward_components,
+            )
+
+            record_episode_transition(
+                simulator=simulator,
+                phase="pure_rl",
+                episode_number=episode + 1,
+                step_number=t + 1,
+                state_before=state,
+                state_after=next_state,
+                vehicles_before=vehicles_before,
+                sampled_action=sampled_action.tolist(),
+                executed_action=executed_action.tolist(),
+                selected_target_lane=selected_target_lane,
+                valid_action_mask=np.asarray(valid_mask, dtype=bool).tolist(),
+                target_lane_mask=target_lane_mask.tolist(),
+                safety_info=safety_info,
+                step_info=step_info,
+                reward=reward,
+                reward_components=reward_components,
+                done=done,
+                terminated=bool(step_info.get("terminated", False) or offroad)
+                    if isinstance(step_info, dict) else bool(done or offroad),
+                truncated=bool(step_info.get("truncated", False))
+                    if isinstance(step_info, dict) else False,
             )
 
             update_stats = update_policy(
@@ -3978,6 +4173,11 @@ def main():
     check_model_device(policy, "Policy")
     results = train_pure_rl(simulator, policy)
     print("Pure RL training finished. Policy:", MODEL_PATH)
+    print(
+        "Recorded episode archive:",
+        os.path.abspath(EPISODE_TRAJECTORY_PATH)
+        if TRAJECTORY_RECORDING_ENABLED else "disabled (AROOD_RECORD_TRAJECTORIES=0)"
+    )
 
 
 if __name__ == "__main__":
