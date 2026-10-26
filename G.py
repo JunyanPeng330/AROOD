@@ -293,9 +293,9 @@ class ActorCriticPolicy(nn.Module):
         return torch.distributions.Categorical(logits=logits)
 
     def act(self, state, deterministic=False, valid_action_mask=None,
-            valid_target_lane_mask=None, return_aux=False):
+            valid_target_lane_mask=None, current_lane_id=None, return_aux=False):
+        """Rank current and safe adjacent lanes; derive KEEP/CHANGE from the winner."""
         dist = self.action_distributions(state, valid_action_mask)
-        a = torch.argmax(dist.logits, dim=-1) if deterministic else dist.sample()
         target = -1
         if valid_target_lane_mask is not None:
             tm = torch.as_tensor(valid_target_lane_mask, dtype=torch.bool, device=dist.logits.device)
@@ -305,13 +305,20 @@ class ActorCriticPolicy(nn.Module):
                 ld = self.lane_distributions(state, tm)
                 li = torch.argmax(ld.logits, dim=-1) if deterministic else ld.sample()
                 target = int(li[0].detach().cpu().item())
+        if current_lane_id is not None and target >= 0:
+            binary_action = int(target != int(current_lane_id))
+        else:
+            a = torch.argmax(dist.logits, dim=-1) if deterministic else dist.sample()
+            binary_action = int(a[0].detach().cpu().item())
+        a = torch.as_tensor([binary_action], dtype=torch.long, device=dist.logits.device)
         action = torch.stack([torch.zeros_like(a, dtype=torch.float32), a.float()], dim=-1)
         out = action.squeeze(0).detach().cpu().numpy().astype(np.float32)
         return (out, {"pre_tanh_accel": 0.0, "selected_target_lane": target}) if return_aux else out
 
-    def __call__(self, state, valid_action_mask=None, valid_target_lane_mask=None):
+    def __call__(self, state, valid_action_mask=None, valid_target_lane_mask=None, current_lane_id=None):
         return self.act(state, valid_action_mask=valid_action_mask,
-                        valid_target_lane_mask=valid_target_lane_mask)
+                        valid_target_lane_mask=valid_target_lane_mask,
+                        current_lane_id=current_lane_id)
 
     def value(self, state):
         return self.critic(self.features(state)).squeeze(-1)
@@ -2628,7 +2635,11 @@ def _safety_aware_lane_action_mask(self):
 
 
 def _get_valid_target_lane_mask(self):
+    """Mask the current lane plus every safe adjacent lane for direct comparison."""
     mask = np.zeros(NUM_LANES, dtype=bool)
+    current_lane = int(self.env.unwrapped.vehicle.lane_index[2])
+    if 0 <= current_lane < NUM_LANES:
+        mask[current_lane] = True
     if getattr(self, "_lane_change_active", False) or getattr(self, "_lane_change_cooldown", 0) > 0:
         self._last_safe_lane_candidates = []
         return mask
@@ -2637,6 +2648,9 @@ def _get_valid_target_lane_mask(self):
     for c in candidates:
         lane = int(c["target_lane"])
         if 0 <= lane < NUM_LANES: mask[lane] = True
+    print("[LANE RANKING CANDIDATES]", f"current_lane={current_lane}",
+          f"candidate_lane_mask={mask.tolist()}",
+          f"safe_adjacent_lanes={[int(c['target_lane']) for c in candidates]}")
     return mask
 
 
@@ -3029,7 +3043,8 @@ def compute_reward(
 # ============================================================
 def update_policy(policy, state, action, reward, next_state, done,
                   valid_action_mask=None, terminated=None, pre_tanh_accel=None,
-                  selected_target_lane=-1, valid_target_lane_mask=None):
+                  selected_target_lane=-1, valid_target_lane_mask=None,
+                  current_lane_id=None):
     """Update the binary policy and conditional target-lane ranking head."""
     st, nst = to_tensor(state).reshape(1, -1), to_tensor(next_state).reshape(1, -1)
     act, rew = to_tensor(action).reshape(1, -1), to_tensor([reward])
@@ -3040,15 +3055,17 @@ def update_policy(policy, state, action, reward, next_state, done,
         target = rew if terminal else rew + 0.99 * nv
     adv = target - value
     critic_loss = F.mse_loss(value, target)
-    binary = act[:, 1].round().long().clamp(0, 1)
-    action_log_prob = policy.action_distributions(st, valid_action_mask).log_prob(binary)
-    target_log_prob = torch.zeros_like(action_log_prob)
-    if int(binary.item()) == 1 and int(selected_target_lane) >= 0 and valid_target_lane_mask is not None:
+    # Lane ranking is the decision distribution for every transition. The
+    # selected lane is either the current lane (KEEP) or a safe adjacent lane (CHANGE).
+    if int(selected_target_lane) >= 0 and valid_target_lane_mask is not None:
         lane_dist = policy.lane_distributions(
             st, torch.as_tensor(valid_target_lane_mask, dtype=torch.bool, device=DEVICE).reshape(1, -1)
         )
         target_log_prob = lane_dist.log_prob(torch.as_tensor([int(selected_target_lane)], dtype=torch.long, device=DEVICE))
-    actor_loss = -((action_log_prob + target_log_prob) * adv.detach()).mean()
+    else:
+        target_log_prob = torch.zeros(1, dtype=torch.float32, device=DEVICE)
+    action_log_prob = target_log_prob
+    actor_loss = -(action_log_prob * adv.detach()).mean()
     loss = actor_loss + critic_loss
     policy.optimizer.zero_grad()
     loss.backward()
@@ -3057,7 +3074,7 @@ def update_policy(policy, state, action, reward, next_state, done,
     return {"actor_loss": float(actor_loss.detach().item()),
             "critic_loss": float(critic_loss.detach().item()),
             "advantage": float(adv.detach().mean().item()),
-            "binary_log_prob": float(action_log_prob.detach().mean().item()),
+            "binary_log_prob": 0.0,
             "target_lane_log_prob": float(target_log_prob.detach().mean().item())}
 
 
@@ -3112,16 +3129,12 @@ def build_fixed_reward_function():
 
 def _hybrid_action_log_probability(policy, states, actions, pre_tanh_accels, masks,
                                   selected_target_lanes=None, target_lane_masks=None):
-    """Joint likelihood of binary KEEP/CHANGE and conditional target lane."""
-    binary = actions[:, 1].round().long().clamp(0, 1)
-    log_prob = policy.action_distributions(states, valid_action_mask=masks).log_prob(binary)
-    if selected_target_lanes is not None and target_lane_masks is not None:
-        lanes = torch.as_tensor(selected_target_lanes, dtype=torch.long, device=DEVICE).reshape(-1)
-        lane_masks = torch.as_tensor(target_lane_masks, dtype=torch.bool, device=DEVICE)
-        lane_log_prob = policy.lane_distributions(states, lane_masks).log_prob(lanes.clamp(0, NUM_LANES - 1))
-        active = (binary == 1) & (lanes >= 0) & lane_masks.any(dim=-1)
-        log_prob = log_prob + torch.where(active, lane_log_prob, torch.zeros_like(lane_log_prob))
-    return log_prob
+    """Likelihood of selected lane; KEEP/CHANGE is derived from lane identity."""
+    if selected_target_lanes is None or target_lane_masks is None:
+        return torch.zeros(actions.shape[0], dtype=torch.float32, device=DEVICE)
+    lanes = torch.as_tensor(selected_target_lanes, dtype=torch.long, device=DEVICE).reshape(-1)
+    lane_masks = torch.as_tensor(target_lane_masks, dtype=torch.bool, device=DEVICE)
+    return policy.lane_distributions(states, lane_masks).log_prob(lanes.clamp(0, NUM_LANES - 1))
 
 
 
@@ -3162,9 +3175,11 @@ def collect_reference_rollouts(simulator, policy, reward_function):
             )
             record_action_mask(action_mask_counters, valid_mask)
             target_lane_mask = np.asarray(simulator.get_valid_target_lane_mask(), dtype=bool)
+            current_lane_id = int(simulator.env.unwrapped.vehicle.lane_index[2])
             sampled_action, policy_aux = policy.act(
                 state, deterministic=False, valid_action_mask=valid_mask,
-                valid_target_lane_mask=target_lane_mask, return_aux=True,
+                valid_target_lane_mask=target_lane_mask,
+                current_lane_id=current_lane_id, return_aux=True,
             )
             sampled_action = np.asarray(sampled_action, dtype=np.float32).reshape(-1)
             pre_tanh_accel = float(policy_aux.get("pre_tanh_accel", 0.0))
@@ -3439,9 +3454,11 @@ def train_pure_rl(simulator, policy):
                 valid_target_lane_steps += 1
             else:
                 no_safe_target_lane_steps += 1
+            current_lane_id = int(simulator.env.unwrapped.vehicle.lane_index[2])
             sampled_action, policy_aux = policy.act(
                 state, deterministic=False, valid_action_mask=valid_mask,
-                valid_target_lane_mask=target_lane_mask, return_aux=True,
+                valid_target_lane_mask=target_lane_mask,
+                current_lane_id=current_lane_id, return_aux=True,
             )
             sampled_action = np.asarray(sampled_action, dtype=np.float32).reshape(-1)
             pre_tanh_accel = float(policy_aux.get("pre_tanh_accel", 0.0))
