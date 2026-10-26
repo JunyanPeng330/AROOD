@@ -4070,6 +4070,110 @@ class EgoVisualWrapper(gym.Wrapper):
             return frame
 
 
+
+def _simulator_vehicle_snapshot(simulator):
+    """Return a JSON-safe snapshot of ego and traffic vehicles in road order."""
+    base = simulator.env.unwrapped
+    vehicles = []
+    ego = getattr(base, "vehicle", None)
+    for index, vehicle in enumerate(getattr(getattr(base, "road", None), "vehicles", [])):
+        position = getattr(vehicle, "position", None)
+        velocity = getattr(vehicle, "velocity", None)
+        lane_index = getattr(vehicle, "lane_index", None)
+        vehicles.append({
+            "road_order_index": int(index),
+            "role": "ego" if vehicle is ego else "traffic",
+            "vehicle_class": type(vehicle).__name__,
+            "position_xy": np.asarray(position, dtype=float).tolist() if position is not None else None,
+            "velocity_xy": np.asarray(velocity, dtype=float).tolist() if velocity is not None else None,
+            "speed": _safe_float_for_diagnostic(getattr(vehicle, "speed", None)),
+            "heading": _safe_float_for_diagnostic(getattr(vehicle, "heading", None)),
+            "lane_index": list(lane_index) if lane_index is not None else None,
+            "crashed": bool(getattr(vehicle, "crashed", False)),
+            "traffic_side": getattr(vehicle, "_arood_traffic_side", None),
+            "length": _safe_float_for_diagnostic(getattr(vehicle, "LENGTH", None)),
+            "width": _safe_float_for_diagnostic(getattr(vehicle, "WIDTH", None)),
+        })
+    return vehicles
+
+
+def store_for_simulator(
+    record_path,
+    *,
+    event,
+    simulator,
+    episode_seed,
+    step=None,
+    state=None,
+    sampled_action=None,
+    executed_action=None,
+    reward=None,
+    next_state=None,
+    done=None,
+    safety_info=None,
+    step_info=None,
+    metadata=None,
+):
+    """Save episode initialization and transitions to a streamed JSONL record.
+
+    Call with event='episode_start' immediately after reset, then with
+    event='transition' after each simulator step. Each transition stores both
+    the policy-sampled and safety-filtered/executed action. Records are flushed
+    line by line, so an interrupted run retains already-written transitions.
+    """
+    os.makedirs(os.path.dirname(os.path.abspath(record_path)), exist_ok=True)
+    record = {
+        "schema": "arood_simulator_record_v1",
+        "event": str(event),
+        "episode_seed": int(episode_seed),
+        "recorded_at_unix": float(time.time()),
+    }
+
+    if event == "episode_start":
+        record.update({
+            "metadata": metadata or {},
+            "initial_state": np.asarray(state, dtype=np.float32).tolist() if state is not None else None,
+            "initial_traffic_configuration": _simulator_vehicle_snapshot(simulator),
+            "simulator_configuration": {
+                "environment_id": "highway-v0",
+                "lanes_count": NUM_LANES,
+                "managed_surrounding_vehicles": NUM_SURROUNDING_VEHICLES,
+                "policy_frequency": policy_frequency,
+                "simulation_frequency": simulation_frequency,
+                "max_steps": int(getattr(simulator, "max_steps", MAX_STEPS)),
+                "randomize_traffic_gaps": bool(getattr(simulator, "randomize_traffic_gaps", False)),
+                "traffic_front_gap": _safe_float_for_diagnostic(getattr(simulator, "traffic_front_gap", None)),
+                "traffic_rear_gap": _safe_float_for_diagnostic(getattr(simulator, "traffic_rear_gap", None)),
+                "front_gap_range": [RANDOMIZED_FRONT_GAP_MIN, RANDOMIZED_FRONT_GAP_MAX],
+                "rear_gap_range": [RANDOMIZED_REAR_GAP_MIN, RANDOMIZED_REAR_GAP_MAX],
+                "traffic_speed_range": [TRAFFIC_SPEED_MIN, TRAFFIC_SPEED_MAX],
+                "traffic_speed_variation": TRAFFIC_SPEED_VARIATION,
+            },
+        })
+        mode = "w"
+    elif event == "transition":
+        record.update({
+            "step": int(step) if step is not None else None,
+            "state": np.asarray(state, dtype=np.float32).tolist() if state is not None else None,
+            "sampled_action": np.asarray(sampled_action).tolist() if sampled_action is not None else None,
+            "executed_action": np.asarray(executed_action).tolist() if executed_action is not None else None,
+            "reward": float(reward) if reward is not None else None,
+            "next_state": np.asarray(next_state, dtype=np.float32).tolist() if next_state is not None else None,
+            "done": bool(done) if done is not None else None,
+            "ego_and_traffic_after_step": _simulator_vehicle_snapshot(simulator),
+            "safety_info": safety_info,
+            "step_info": step_info,
+        })
+        mode = "a"
+    else:
+        raise ValueError("event must be 'episode_start' or 'transition'")
+
+    with open(record_path, mode, encoding="utf-8") as record_file:
+        record_file.write(json.dumps(record, ensure_ascii=False, default=str, allow_nan=True) + "\n")
+        record_file.flush()
+    return record_path
+
+
 def evaluate_and_record_video(
     model_path=MODEL_PATH,
     video_dir=os.path.join("figures", "videos"),
@@ -4078,6 +4182,8 @@ def evaluate_and_record_video(
     scenario_seed=None,
     deterministic=True,
     max_steps=MAX_STEPS,
+    store_simulator=True,
+    simulator_record_dir=os.path.join("figures", "simulator_records"),
 ):
     """Run one evaluation episode from a saved checkpoint and write an MP4.
 
@@ -4169,6 +4275,28 @@ def evaluate_and_record_video(
         video_recorder = simulator.env
 
         state = simulator.reset(seed=seed, randomize_traffic_gaps=True)
+        simulator_record_path = None
+        if store_simulator:
+            os.makedirs(simulator_record_dir, exist_ok=True)
+            simulator_record_path = os.path.join(
+                simulator_record_dir,
+                f"evaluation_ep_{int(episode_index):04d}_seed_{int(seed)}.jsonl",
+            )
+            store_for_simulator(
+                simulator_record_path,
+                event="episode_start",
+                simulator=simulator,
+                episode_seed=seed,
+                state=state,
+                metadata={
+                    "rollout_label": int(episode_index),
+                    "checkpoint": os.path.abspath(model_path),
+                    "deterministic_policy": bool(deterministic),
+                    "max_steps_requested": int(max_steps),
+                    "recording_mode": "evaluation_only_no_training",
+                },
+            )
+            print(f"[SIMULATOR RECORD] path={os.path.abspath(simulator_record_path)}")
         episode_return = 0.0
         episode_steps = 0
         collision = False
@@ -4212,12 +4340,30 @@ def evaluate_and_record_video(
                     sampled_action,
                     selected_target_lane=selected_target_lane,
                 )
+                previous_state = np.asarray(state, dtype=np.float32).copy()
                 next_state, reward, done, step_info = simulator.step(
                     executed_action,
                     apply_safety_filter=False,
                     sampled_action=sampled_action,
                     safety_info=safety_info,
                 )
+
+                if simulator_record_path is not None:
+                    store_for_simulator(
+                        simulator_record_path,
+                        event="transition",
+                        simulator=simulator,
+                        episode_seed=seed,
+                        step=step_index + 1,
+                        state=previous_state,
+                        sampled_action=sampled_action,
+                        executed_action=executed_action,
+                        reward=reward,
+                        next_state=next_state,
+                        done=done,
+                        safety_info=safety_info,
+                        step_info=step_info,
+                    )
 
                 state = np.asarray(next_state, dtype=np.float32)
                 episode_return += float(reward)
@@ -4253,6 +4399,7 @@ def evaluate_and_record_video(
             f"collision={collision}",
             f"completed_lane_changes={completed_lane_changes}",
             f"video_directory={os.path.abspath(video_dir)}",
+            f"simulator_record={os.path.abspath(simulator_record_path) if simulator_record_path else None}",
         )
         return {
             "model_path": model_path,
@@ -4266,6 +4413,7 @@ def evaluate_and_record_video(
             "episode_return": float(episode_return),
             "collision": bool(collision),
             "completed_lane_changes": completed_lane_changes,
+            "simulator_record_path": os.path.abspath(simulator_record_path) if simulator_record_path else None,
         }
     finally:
         # Closing RecordVideo finalizes the MP4 file and its metadata.
@@ -4325,6 +4473,14 @@ def main():
         "--stochastic", action="store_true",
         help="Sample policy actions instead of using deterministic choices during recording."
     )
+    parser.add_argument(
+        "--no-store-simulator", action="store_true",
+        help="Disable JSONL recording of initial traffic configuration and state/action/reward transitions."
+    )
+    parser.add_argument(
+        "--simulator-record-dir", default=os.path.join("figures", "simulator_records"),
+        help="Directory for simulator JSONL records (default: figures/simulator_records)."
+    )
     args = parser.parse_args()
 
     print("PyTorch version:", torch.__version__)
@@ -4342,6 +4498,8 @@ def main():
             scenario_seed=args.scenario_seed,
             max_steps=args.max_steps,
             deterministic=not args.stochastic,
+            store_simulator=not args.no_store_simulator,
+            simulator_record_dir=args.simulator_record_dir,
         )
         return
 
