@@ -95,9 +95,10 @@ TRAFFIC_SPEED_MAX = 60.0
 # the rear vehicle: rear_speed <= front_speed + tolerance.
 FRONT_REAR_SPEED_TOLERANCE = 5.0
 
-# Lane changes are evaluated through stable task rewards and safety filtering.
-# Do not grant an instantaneous bonus based on TTC.
-#LANE_CHANGE_COST = 0.0
+# Tiny regularization cost for a lane change that actually completes.
+# This discourages unnecessary lane switching without penalizing rejected requests
+# or making lane changes prohibitively expensive.
+LANE_CHANGE_COST = 0.005
 
 # Instantaneous lane changes complete within the current policy transition.
 # This cooldown constant is retained for legacy helper paths only; the active
@@ -159,8 +160,8 @@ EVALUATOR_BATCH_SIZE = 10
 EVALUATOR_MIN_EPISODES = 10
 EVALUATOR_MAX_SAFETY_WEIGHT = 3.0
 EVALUATOR_MIN_SAFETY_WEIGHT = 0.5
-# Lane-change frequency is monitored diagnostically, not directly optimized by
-# changing a lane-change penalty. No blanket lane-change cost is used.
+# Lane-change frequency is monitored diagnostically. A tiny cost is applied
+# only when a lane change completes; rejected requests are not charged this cost.
 
 
 reward_path = 'figure/Re_A_' + '1.png'
@@ -2904,8 +2905,8 @@ def build_evaluator_prompt(batch_metrics, reward_specification):
         "principles": [
             "Prioritize reaching and maintaining the road speed limit when traffic permits.",
             "Maintain safe following distance and avoid collisions.",
-            "Lane changes are actions, not separately rewarded objectives; evaluate them by their effect on achieved speed.",
-            "Do not reward or penalize a lane change merely because it occurred.",
+            "Lane changes are not rewarded; a tiny regularization cost applies only to completed lane changes.",
+            "Do not charge rejected lane-change requests; evaluate lane changes primarily by their effect on achieved speed and safety.",
             "Consider both front-vehicle and rear-vehicle conditions.",
             "Treat TTC thresholds as evidence, not universal optimal boundaries.",
             "Distinguish predicted risk from observed collision or near-collision outcomes.",
@@ -3087,8 +3088,9 @@ def construct_reward(reward_specification, embedding_model=None):
 
     Zero acceleration or deceleration yields zero speed reward below target speed;
     at/above target speed, speed reward is 1.0 regardless of acceleration.
-    Deceleration has no direct negative reward. Collision penalty remains separate;
-    lane changes and TTC have no direct reward.
+    Deceleration has no direct negative reward. Collision penalty remains separate.
+    A tiny cost applies only to a lane change confirmed as completed; TTC remains
+    outside the reward and is handled by the independent safety shield.
     """
     def reward_function(
         behavior_description, safety_violation, action, lane_deviation, offroad,
@@ -3116,7 +3118,13 @@ def construct_reward(reward_specification, embedding_model=None):
             if bool(safety_violation) else 0.0
         )
 
-        reward = float(speed_reward - safety_penalty)
+        # Charge only a completed lane change, not a request or a safety-filter rejection.
+        lane_change_completed = bool(safety_info.get("lane_change_accepted", False))
+        lane_change_cost = (
+            max(0.0, float(reward_specification.get("lane_change_cost", LANE_CHANGE_COST)))
+            if lane_change_completed else 0.0
+        )
+        reward = float(speed_reward - safety_penalty - lane_change_cost)
         speed_error = max(0.0, target_speed - ego_speed)
         speed_target_reached = bool(ego_speed >= target_speed)
         if reward_diagnostics is not None:
@@ -3132,6 +3140,8 @@ def construct_reward(reward_specification, embedding_model=None):
                 "speed_error_mps": float(speed_error),
                 "speed_limit_reached": speed_target_reached,
                 "safety_penalty": float(safety_penalty),
+                "lane_change_completed": lane_change_completed,
+                "lane_change_cost": float(lane_change_cost),
                 "total_reward": reward,
             })
         print(
@@ -3140,7 +3150,9 @@ def construct_reward(reward_specification, embedding_model=None):
             f"acceleration={ego_acceleration:.3f}m/s^2, "
             f"normalized_positive_acceleration={normalized_positive_acceleration:.3f}, "
             f"speed_limit_gate_open={speed_limit_gate}, "
-            f"safety_penalty={safety_penalty:.3f}, total={reward:.3f}"
+            f"safety_penalty={safety_penalty:.3f}, "
+            f"lane_change_completed={lane_change_completed}, "
+            f"lane_change_cost={lane_change_cost:.3f}, total={reward:.3f}"
         )
         print("[TTC REWARD] disabled; TTC is recorded for episode-level evaluation, not used as a per-step action override.")
         return reward
@@ -3257,10 +3269,12 @@ def build_fixed_reward_function():
             "acceleration, only while ego speed is below the 60 m/s speed limit. Zero acceleration "
             "or deceleration gives zero speed reward below the target; deceleration is not directly "
             "penalized. At or above the target speed, speed reward is 1.0. Avoid collisions using the "
-            "separate penalty and independent TTC/minimum-gap safety shield; lane changes are not directly rewarded."
+            "separate penalty and independent TTC/minimum-gap safety shield. Apply only a tiny cost "
+            "to completed lane changes to discourage unnecessary switching without suppressing useful overtaking."
         ),
         "safety_weight": INITIAL_COLLISION_PENALTY,
         "target_speed": SPEED_LIMIT,
+        "lane_change_cost": LANE_CHANGE_COST,
     }
     reward_function = construct_reward(reward_specification)
     # The closure and evaluator share this mutable specification. Only the
