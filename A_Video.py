@@ -436,22 +436,45 @@ class ActorCriticPolicy(nn.Module):
 
     def act(self, state, deterministic=False, valid_action_mask=None,
             valid_target_lane_mask=None, current_lane_id=None, return_aux=False):
-        """Rank current and safe adjacent lanes; derive KEEP/CHANGE from the winner."""
+        """Sample KEEP/CHANGE first; sample a target lane only conditional on CHANGE."""
         dist = self.action_distributions(state, valid_action_mask)
+        binary_dist = dist
+        sampled_binary = torch.argmax(binary_dist.logits, dim=-1) if deterministic else binary_dist.sample()
+        binary_action = int(sampled_binary[0].detach().cpu().item())
         target = -1
-        if valid_target_lane_mask is not None:
+
+        if current_lane_id is not None:
+            current = int(current_lane_id)
+            if binary_action == 0:
+                target = current
+            elif valid_target_lane_mask is not None:
+                tm = torch.as_tensor(valid_target_lane_mask, dtype=torch.bool, device=dist.logits.device)
+                if tm.ndim == 1: tm = tm.unsqueeze(0)
+                if tm.shape[0] == 1 and dist.logits.shape[0] > 1:
+                    tm = tm.expand(dist.logits.shape[0], -1)
+                change_mask = tm.clone()
+                if 0 <= current < change_mask.shape[-1]:
+                    change_mask[:, current] = False
+                if change_mask.any(dim=-1).all():
+                    lane_dist = self.lane_distributions(state, change_mask)
+                    lane_index = (torch.argmax(lane_dist.logits, dim=-1) if deterministic
+                                  else lane_dist.sample())
+                    target = int(lane_index[0].detach().cpu().item())
+                else:
+                    # Defensive fallback: never issue CHANGE without a valid target.
+                    binary_action = 0
+                    target = current
+        elif valid_target_lane_mask is not None:
+            # Compatibility fallback for callers without the current lane ID.
             tm = torch.as_tensor(valid_target_lane_mask, dtype=torch.bool, device=dist.logits.device)
             if tm.ndim == 1: tm = tm.unsqueeze(0)
-            if tm.shape[0] == 1 and dist.logits.shape[0] > 1: tm = tm.expand(dist.logits.shape[0], -1)
+            if tm.shape[0] == 1 and dist.logits.shape[0] > 1:
+                tm = tm.expand(dist.logits.shape[0], -1)
             if tm.any(dim=-1).all():
-                ld = self.lane_distributions(state, tm)
-                li = torch.argmax(ld.logits, dim=-1) if deterministic else ld.sample()
-                target = int(li[0].detach().cpu().item())
-        if current_lane_id is not None and target >= 0:
-            binary_action = int(target != int(current_lane_id))
-        else:
-            a = torch.argmax(dist.logits, dim=-1) if deterministic else dist.sample()
-            binary_action = int(a[0].detach().cpu().item())
+                lane_dist = self.lane_distributions(state, tm)
+                lane_index = torch.argmax(lane_dist.logits, dim=-1) if deterministic else lane_dist.sample()
+                target = int(lane_index[0].detach().cpu().item())
+
         a = torch.as_tensor([binary_action], dtype=torch.long, device=dist.logits.device)
         action = torch.stack([torch.zeros_like(a, dtype=torch.float32), a.float()], dim=-1)
         out = action.squeeze(0).detach().cpu().numpy().astype(np.float32)
@@ -3198,7 +3221,7 @@ def update_policy(policy, state, action, reward, next_state, done,
                   valid_action_mask=None, terminated=None, pre_tanh_accel=None,
                   selected_target_lane=-1, valid_target_lane_mask=None,
                   current_lane_id=None):
-    """Update the lane-ranking policy; KEEP/CHANGE follows the selected lane."""
+    """Update the binary KEEP/CHANGE decision and conditional target-lane selector."""
     st, nst = to_tensor(state).reshape(1, -1), to_tensor(next_state).reshape(1, -1)
     act, rew = to_tensor(action).reshape(1, -1), to_tensor([reward])
     value = policy.value(st)
@@ -3208,16 +3231,30 @@ def update_policy(policy, state, action, reward, next_state, done,
         target = rew if terminal else rew + 0.99 * nv
     adv = target - value
     critic_loss = F.mse_loss(value, target)
-    # Lane ranking is the decision distribution for every transition. The
-    # selected lane is either the current lane (KEEP) or a safe adjacent lane (CHANGE).
-    if int(selected_target_lane) >= 0 and valid_target_lane_mask is not None:
-        lane_dist = policy.lane_distributions(
-            st, torch.as_tensor(valid_target_lane_mask, dtype=torch.bool, device=DEVICE).reshape(1, -1)
-        )
-        target_log_prob = lane_dist.log_prob(torch.as_tensor([int(selected_target_lane)], dtype=torch.long, device=DEVICE))
-    else:
-        target_log_prob = torch.zeros(1, dtype=torch.float32, device=DEVICE)
-    action_log_prob = target_log_prob
+
+    binary_action = int(np.clip(np.rint(float(act[0, 1].detach().cpu().item())), 0, 1))
+    binary_dist = policy.action_distributions(
+        st, torch.as_tensor(valid_action_mask, dtype=torch.bool, device=DEVICE).reshape(1, -1)
+        if valid_action_mask is not None else None
+    )
+    binary_log_prob = binary_dist.log_prob(
+        torch.as_tensor([binary_action], dtype=torch.long, device=DEVICE)
+    )
+
+    # The lane-ranking head is conditional: it is trained only on CHANGE,
+    # and its distribution excludes the current lane.
+    target_log_prob = torch.zeros(1, dtype=torch.float32, device=DEVICE)
+    if binary_action == 1 and int(selected_target_lane) >= 0 and valid_target_lane_mask is not None:
+        lane_mask = torch.as_tensor(valid_target_lane_mask, dtype=torch.bool, device=DEVICE).reshape(1, -1).clone()
+        if current_lane_id is not None and 0 <= int(current_lane_id) < lane_mask.shape[-1]:
+            lane_mask[:, int(current_lane_id)] = False
+        if lane_mask.any(dim=-1).all():
+            lane_dist = policy.lane_distributions(st, lane_mask)
+            target_log_prob = lane_dist.log_prob(
+                torch.as_tensor([int(selected_target_lane)], dtype=torch.long, device=DEVICE)
+            )
+
+    action_log_prob = binary_log_prob + target_log_prob
     actor_loss = -(action_log_prob * adv.detach()).mean()
     loss = actor_loss + critic_loss
     policy.optimizer.zero_grad()
@@ -3227,7 +3264,7 @@ def update_policy(policy, state, action, reward, next_state, done,
     return {"actor_loss": float(actor_loss.detach().item()),
             "critic_loss": float(critic_loss.detach().item()),
             "advantage": float(adv.detach().mean().item()),
-            "binary_log_prob": 0.0,
+            "binary_log_prob": float(binary_log_prob.detach().mean().item()),
             "target_lane_log_prob": float(target_log_prob.detach().mean().item())}
 
 
@@ -3284,13 +3321,30 @@ def build_fixed_reward_function():
 
 
 def _hybrid_action_log_probability(policy, states, actions, pre_tanh_accels, masks,
-                                  selected_target_lanes=None, target_lane_masks=None):
-    """Likelihood of selected lane; KEEP/CHANGE is derived from lane identity."""
-    if selected_target_lanes is None or target_lane_masks is None:
-        return torch.zeros(actions.shape[0], dtype=torch.float32, device=DEVICE)
-    lanes = torch.as_tensor(selected_target_lanes, dtype=torch.long, device=DEVICE).reshape(-1)
-    lane_masks = torch.as_tensor(target_lane_masks, dtype=torch.bool, device=DEVICE)
-    return policy.lane_distributions(states, lane_masks).log_prob(lanes.clamp(0, NUM_LANES - 1))
+                                  selected_target_lanes=None, target_lane_masks=None,
+                                  current_lane_ids=None):
+    """Joint log-likelihood: binary KEEP/CHANGE plus target lane conditional on CHANGE."""
+    binary_actions = torch.clamp(torch.round(actions[:, 1]).long(), 0, 1)
+    binary_dist = policy.action_distributions(states, torch.as_tensor(masks, dtype=torch.bool, device=DEVICE))
+    binary_log_prob = binary_dist.log_prob(binary_actions)
+    target_log_prob = torch.zeros_like(binary_log_prob)
+    if selected_target_lanes is not None and target_lane_masks is not None and current_lane_ids is not None:
+        lanes = torch.as_tensor(selected_target_lanes, dtype=torch.long, device=DEVICE).reshape(-1)
+        lane_masks = torch.as_tensor(target_lane_masks, dtype=torch.bool, device=DEVICE).clone()
+        currents = torch.as_tensor(current_lane_ids, dtype=torch.long, device=DEVICE).reshape(-1)
+        rows = torch.arange(lane_masks.shape[0], device=DEVICE)
+        valid_current = (currents >= 0) & (currents < lane_masks.shape[1])
+        lane_masks[rows[valid_current], currents[valid_current]] = False
+        change_rows = (binary_actions == 1) & (lanes >= 0) & (lanes < lane_masks.shape[1])
+        if change_rows.any():
+            selected_rows = rows[change_rows]
+            selected_mask = lane_masks[change_rows]
+            has_candidates = selected_mask.any(dim=-1)
+            if has_candidates.any():
+                candidate_rows = selected_rows[has_candidates]
+                lane_dist = policy.lane_distributions(states[change_rows][has_candidates], selected_mask[has_candidates])
+                target_log_prob[candidate_rows] = lane_dist.log_prob(lanes[change_rows][has_candidates])
+    return binary_log_prob + target_log_prob
 
 
 
@@ -3316,7 +3370,7 @@ def collect_reference_rollouts(simulator, policy, reward_function):
         record_episode_start(simulator, "reference_collection", episode + 1, state)
         trajectory = {
             "states": [], "actions": [], "pre_tanh_accels": [], "masks": [],
-            "selected_target_lanes": [], "target_lane_masks": [],
+            "selected_target_lanes": [], "target_lane_masks": [], "current_lane_ids": [],
             "rewards": [], "next_states": [], "terminated": []
         }
         lane_counters = make_lane_request_counters()
@@ -3405,6 +3459,7 @@ def collect_reference_rollouts(simulator, policy, reward_function):
             trajectory["masks"].append(valid_mask.copy())
             trajectory["selected_target_lanes"].append(int(selected_target_lane))
             trajectory["target_lane_masks"].append(target_lane_mask.copy())
+            trajectory["current_lane_ids"].append(int(current_lane_id))
             trajectory["rewards"].append(float(reward))
             trajectory["next_states"].append(next_state.copy())
             is_terminated = (
@@ -3473,7 +3528,7 @@ def collect_reference_rollouts(simulator, policy, reward_function):
         key: np.concatenate([np.asarray(traj[key]) for traj in trajectories], axis=0)
         for key in (
             "states", "actions", "pre_tanh_accels", "masks",
-            "selected_target_lanes", "target_lane_masks",
+            "selected_target_lanes", "target_lane_masks", "current_lane_ids",
             "rewards", "next_states", "terminated", "returns"
         )
     }
@@ -3500,6 +3555,7 @@ def warm_start_policy_from_reference(policy, reference_data):
     masks = torch.as_tensor(reference_data["masks"], dtype=torch.bool, device=DEVICE)
     selected_target_lanes = torch.as_tensor(reference_data["selected_target_lanes"], dtype=torch.long, device=DEVICE)
     target_lane_masks = torch.as_tensor(reference_data["target_lane_masks"], dtype=torch.bool, device=DEVICE)
+    current_lane_ids = torch.as_tensor(reference_data["current_lane_ids"], dtype=torch.long, device=DEVICE)
     returns = to_tensor(reference_data["returns"]).reshape(-1)
 
     with torch.no_grad():
@@ -3527,12 +3583,13 @@ def warm_start_policy_from_reference(policy, reference_data):
             batch_masks = masks[idx]
             batch_target_lanes = selected_target_lanes[idx]
             batch_target_masks = target_lane_masks[idx]
+            batch_current_lanes = current_lane_ids[idx]
             batch_returns = returns[idx]
             batch_weights = weights[idx]
 
             log_prob = _hybrid_action_log_probability(
                 policy, batch_states, batch_actions, batch_pre_tanh, batch_masks,
-                batch_target_lanes, batch_target_masks
+                batch_target_lanes, batch_target_masks, batch_current_lanes
             )
             actor_loss = -(batch_weights.detach() * log_prob).mean()
             predicted_returns = policy.value(batch_states).reshape(-1)
@@ -3801,6 +3858,7 @@ def train_pure_rl(simulator, policy):
                 pre_tanh_accel=pre_tanh_accel,
                 selected_target_lane=selected_target_lane,
                 valid_target_lane_mask=target_lane_mask,
+                current_lane_id=current_lane_id,
             )
             episode_actor_losses.append(update_stats["actor_loss"])
             episode_critic_losses.append(update_stats["critic_loss"])
