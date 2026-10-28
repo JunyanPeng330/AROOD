@@ -3005,13 +3005,13 @@ def _safety_aware_lane_action_mask(self):
     return mask
 
 def _get_valid_target_lane_mask(self):
-    """Mask the current lane baseline plus top-ranked safe adjacent lane(s)."""
+    """Mask only maximum-front-TTC winner(s), including current lane if it wins."""
     mask = np.zeros(NUM_LANES, dtype=bool)
     current_lane = int(self.env.unwrapped.vehicle.lane_index[2])
-    if 0 <= current_lane < NUM_LANES:
-        mask[current_lane] = True
     if getattr(self, "_lane_change_active", False) or getattr(self, "_lane_change_cooldown", 0) > 0:
         self._last_safe_lane_candidates = []
+        if 0 <= current_lane < NUM_LANES:
+            mask[current_lane] = True
         return mask
     ranked = self._safe_lane_change_candidates(self._min_ttc_by_lane())
     self._last_safe_lane_candidates = [
@@ -3021,6 +3021,8 @@ def _get_valid_target_lane_mask(self):
         lane = int(c["target_lane"])
         if 0 <= lane < NUM_LANES:
             mask[lane] = True
+    # Current lane is not unconditionally included: it remains a target
+    # candidate only when it ties for the maximum front TTC.
     print("[LANE RANKING CANDIDATES]", f"current_lane={current_lane}",
           f"candidate_lane_mask={mask.tolist()}",
           f"ranked_lanes={[int(c['target_lane']) for c in ranked]}",
