@@ -73,7 +73,7 @@ if not getattr(Vehicle, "_arood_simulator_nonnegative_speed_guard", False):
                 ) as _log_file:
                     _log_file.write(
                         json.dumps(_event, ensure_ascii=False, default=str, allow_nan=False)
-                        + "\\n"
+                        + "\n"
                     )
             except (OSError, TypeError, ValueError) as _log_exc:
                 print("[SIMULATOR SPEED GUARD LOG FAILED]", repr(_log_exc))
