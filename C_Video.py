@@ -178,7 +178,7 @@ if not getattr(Vehicle, "_arood_simulator_nonnegative_speed_guard", False):
 # ============================================================
 INSTANT_LANE_CHANGE_MODE = True
 steering_scale = 0.5
-offroad_penalty = 0.5
+offroad_penalty = 0.0  # No separate off-road reward penalty
 
 # Instantaneous lane-transition abstraction: one policy decision advances exactly
 # one simulator update. There are no intermediate lateral-motion substeps.
@@ -1226,7 +1226,7 @@ class HighwaySimulator:
                   f"lane_change_active={self._lane_change_active}",
                   f"cooldown={self._lane_change_cooldown}",
                   f"mask={mask.tolist()}",
-                  "reason=active_maneuver_or_cooldown")
+                  "reason=active_maneuver")
             return mask
         lane_ttc = self._min_ttc_by_lane()
         candidates = self._safe_lane_change_candidates(lane_ttc)
