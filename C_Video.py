@@ -99,6 +99,20 @@ if not getattr(Vehicle, "_arood_simulator_nonnegative_speed_guard", False):
             _speed_before = float("nan")
             _requested_acceleration = float("nan")
 
+        # Do not let a previously invalid speed move the vehicle backwards
+        # during this step's position integration.
+        if np.isfinite(_speed_before) and _speed_before < 0.0:
+            print(
+                "[SIMULATOR PRE-STEP SPEED CORRECTION]",
+                f"vehicle_id={id(self)}",
+                f"lane={getattr(self, 'lane_index', None)}",
+                f"side={getattr(self, '_arood_traffic_side', None)}",
+                f"raw_speed_mps={_speed_before}",
+                "corrected_speed_mps=0.0",
+            )
+            self.speed = 0.0
+            _speed_before = 0.0
+
         if (
             np.isfinite(_dt) and _dt > 0.0
             and np.isfinite(_speed_before)
