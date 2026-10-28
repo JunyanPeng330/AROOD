@@ -1139,18 +1139,13 @@ class HighwaySimulator:
         return reasons
 
     def _safe_lane_change_candidates(self, lane_ttc=None):
-        """Return safe adjacent lane(s) with the longest front TTC.
+        """Rank the current lane and safe adjacent lanes by front TTC.
 
-        The ego no longer has to prove that an adjacent lane has both a longer
-        front gap and a faster lead vehicle than its current lane. That old
-        comparative rule made lane changes from the outermost lanes needlessly
-        difficult.
-
-        Eligibility still requires the hard target-lane front/rear TTC thresholds
-        and minimum front/rear bumper gaps. Among eligible adjacent lanes, only
-        the lane(s) with the maximum front TTC are returned. Equal-TTC ties are
-        retained so the learned target-lane head can choose between equivalent
-        candidates. If front TTC is infinite, it is treated as the longest value.
+        The current lane is the baseline and is not subjected to lane-change
+        admission thresholds. Adjacent lanes must pass the hard front/rear TTC
+        and minimum-gap safety principles first. Only maximum-front-TTC lane(s)
+        are returned. If the current lane wins outright, CHANGE is invalid; if
+        it ties with a safe adjacent lane, that adjacent lane remains available.
         """
         base_env = self.env.unwrapped
         vehicle = base_env.vehicle
@@ -1163,14 +1158,28 @@ class HighwaySimulator:
         current_lane = int(current_lane)
         candidates = []
 
-        # Lane IDs are geometry only. The policy action remains binary
-        # [KEEP, CHANGE]; target-lane choice is handled by the separate head.
+        # Add current lane as a comparison baseline. It is already occupied,
+        # so its TTC is ranked but lane-change entry thresholds do not apply.
+        if current_lane in lane_ttc:
+            values = lane_ttc[current_lane]
+            front_ttc = float(values.get("front_ttc", float("inf")))
+            candidates.append({
+                "target_lane": current_lane,
+                "utility": front_ttc,
+                "front_gap": float(values.get("front_gap", float("inf"))),
+                "rear_gap": float(values.get("rear_gap", float("inf"))),
+                "front_ttc": front_ttc,
+                "rear_ttc": float(values.get("rear_ttc", float("inf"))),
+                "front_speed": values.get("front_speed"),
+                "rear_speed": values.get("rear_speed"),
+                "selection_principle": "maximum_front_ttc_current_lane_baseline",
+                "is_current_lane": True,
+            })
+
+        # Only safe adjacent lanes may compete with the current-lane baseline.
         for candidate_lane in (current_lane - 1, current_lane + 1):
             if candidate_lane not in valid_ids or candidate_lane not in lane_ttc:
                 continue
-
-            # Keep hard safety requirements, but do not require the adjacent
-            # lane to outperform the current lane's front gap or lead speed.
             reasons = self._lane_change_principle_reasons(
                 candidate_lane, lane_ttc, current_lane=current_lane,
                 ego_speed=ego_speed,
@@ -1180,30 +1189,22 @@ class HighwaySimulator:
 
             values = lane_ttc[candidate_lane]
             front_ttc = float(values.get("front_ttc", float("inf")))
-            rear_ttc = float(values.get("rear_ttc", float("inf")))
-            front_gap = float(values.get("front_gap", float("inf")))
-            rear_gap = float(values.get("rear_gap", float("inf")))
-            front_speed = values.get("front_speed")
-            rear_speed = values.get("rear_speed")
             candidates.append({
                 "target_lane": int(candidate_lane),
-                # Keep utility for diagnostics/compatibility; front TTC is now
-                # the primary and decisive lane-selection criterion.
                 "utility": front_ttc,
-                "front_gap": front_gap,
-                "rear_gap": rear_gap,
+                "front_gap": float(values.get("front_gap", float("inf"))),
+                "rear_gap": float(values.get("rear_gap", float("inf"))),
                 "front_ttc": front_ttc,
-                "rear_ttc": rear_ttc,
-                "front_speed": front_speed,
-                "rear_speed": rear_speed,
+                "rear_ttc": float(values.get("rear_ttc", float("inf"))),
+                "front_speed": values.get("front_speed"),
+                "rear_speed": values.get("rear_speed"),
                 "selection_principle": "maximum_front_ttc",
+                "is_current_lane": False,
             })
 
         if not candidates:
             return []
 
-        # Restrict the target-lane mask to the maximum-front-TTC candidate(s),
-        # so the learned target head cannot select a lower-front-TTC lane.
         longest_front_ttc = max(candidate["front_ttc"] for candidate in candidates)
         if np.isinf(longest_front_ttc):
             best_candidates = [
@@ -1219,7 +1220,7 @@ class HighwaySimulator:
         print(
             "[FRONT TTC LANE SELECTION]",
             f"current_lane={current_lane}",
-            f"eligible_candidates={[{'lane': c['target_lane'], 'front_ttc': c['front_ttc'], 'rear_ttc': c['rear_ttc']} for c in candidates]}",
+            f"ranked_candidates={[{'lane': c['target_lane'], 'front_ttc': c['front_ttc'], 'rear_ttc': c['rear_ttc'], 'is_current_lane': c['target_lane'] == current_lane} for c in candidates]}",
             f"longest_front_ttc_s={longest_front_ttc}",
             f"selected_candidate_lanes={[c['target_lane'] for c in best_candidates]}",
         )
@@ -2989,20 +2990,22 @@ def print_action_mask_counters(tag, counters):
 # ============================================================
 
 def _safety_aware_lane_action_mask(self):
-    """Binary action mask [KEEP, CHANGE]."""
+    """Binary action mask [KEEP, CHANGE], comparing adjacent lanes to current lane."""
     if getattr(self, "_lane_change_active", False) or getattr(self, "_lane_change_cooldown", 0) > 0:
         self._last_safe_lane_candidates = []
         return np.asarray([True, False], dtype=bool)
-    candidates = self._safe_lane_change_candidates(self._min_ttc_by_lane())
-    self._last_safe_lane_candidates = candidates
-    mask = np.asarray([True, bool(candidates)], dtype=bool)
+    ranked = self._safe_lane_change_candidates(self._min_ttc_by_lane())
+    current_lane = int(self.env.unwrapped.vehicle.lane_index[2])
+    change_candidates = [c for c in ranked if int(c["target_lane"]) != current_lane]
+    self._last_safe_lane_candidates = change_candidates
+    mask = np.asarray([True, bool(change_candidates)], dtype=bool)
     print("[BINARY SAFETY MASK]", f"mask={mask.tolist()}",
-          f"valid_target_lanes={[int(c['target_lane']) for c in candidates]}")
+          f"ranked_lanes={[int(c['target_lane']) for c in ranked]}",
+          f"valid_change_target_lanes={[int(c['target_lane']) for c in change_candidates]}")
     return mask
 
-
 def _get_valid_target_lane_mask(self):
-    """Mask the current lane plus every safe adjacent lane for direct comparison."""
+    """Mask the current lane baseline plus top-ranked safe adjacent lane(s)."""
     mask = np.zeros(NUM_LANES, dtype=bool)
     current_lane = int(self.env.unwrapped.vehicle.lane_index[2])
     if 0 <= current_lane < NUM_LANES:
@@ -3010,16 +3013,19 @@ def _get_valid_target_lane_mask(self):
     if getattr(self, "_lane_change_active", False) or getattr(self, "_lane_change_cooldown", 0) > 0:
         self._last_safe_lane_candidates = []
         return mask
-    candidates = self._safe_lane_change_candidates(self._min_ttc_by_lane())
-    self._last_safe_lane_candidates = candidates
-    for c in candidates:
+    ranked = self._safe_lane_change_candidates(self._min_ttc_by_lane())
+    self._last_safe_lane_candidates = [
+        c for c in ranked if int(c["target_lane"]) != current_lane
+    ]
+    for c in ranked:
         lane = int(c["target_lane"])
-        if 0 <= lane < NUM_LANES: mask[lane] = True
+        if 0 <= lane < NUM_LANES:
+            mask[lane] = True
     print("[LANE RANKING CANDIDATES]", f"current_lane={current_lane}",
           f"candidate_lane_mask={mask.tolist()}",
-          f"safe_adjacent_lanes={[int(c['target_lane']) for c in candidates]}")
+          f"ranked_lanes={[int(c['target_lane']) for c in ranked]}",
+          f"safe_adjacent_lanes={[int(c['target_lane']) for c in self._last_safe_lane_candidates]}")
     return mask
-
 
 def _safety_aware_lane_selector_and_controller(self, sampled_action, selected_target_lane=None):
     """Recheck the learned target lane immediately before execution."""
@@ -3029,12 +3035,15 @@ def _safety_aware_lane_selector_and_controller(self, sampled_action, selected_ta
     base, ego = self.env.unwrapped, self.env.unwrapped.vehicle
     current = int(ego.lane_index[2])
     metrics = self._min_ttc_by_lane()
-    safe = {int(c["target_lane"]) for c in self._safe_lane_change_candidates(metrics)}
+    ranked = self._safe_lane_change_candidates(metrics)
+    safe = {int(c["target_lane"]) for c in ranked if int(c["target_lane"]) != current}
     selected = None if selected_target_lane is None else int(selected_target_lane)
     target, executed, blocked, reason = current, requested, False, "none"
     if requested == 1:
         if selected is None or selected < 0 or selected >= min(int(base.config["lanes_count"]), NUM_LANES):
             blocked, reason, executed = True, "no_valid_target_lane_selected", 0
+        elif selected == current:
+            blocked, reason, executed = True, "current_lane_won_front_ttc_ranking", 0
         elif selected not in safe:
             blocked, reason, executed = True, "target_lane_failed_execution_time_safety_recheck", 0
         else: target = selected
