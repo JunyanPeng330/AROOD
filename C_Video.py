@@ -81,6 +81,82 @@ if not getattr(Vehicle, "_arood_simulator_nonnegative_speed_guard", False):
         return _AROOD_ORIGINAL_VEHICLE_ON_STATE_UPDATE(self)
 
     Vehicle.on_state_update = _arood_guard_vehicle_speed_before_state_update
+
+    # Enforce the nonnegative-speed constraint at the dynamics integration point.
+    # The state-update guard alone is insufficient: if a vehicle keeps a negative
+    # acceleration while its speed is clamped to zero, the next step makes it
+    # negative again. Limit the acceleration for this integration step so that
+    # speed + acceleration * dt cannot cross below zero.
+    _AROOD_ORIGINAL_VEHICLE_STEP = Vehicle.step
+
+    def _arood_nonnegative_vehicle_step(self, dt):
+        try:
+            _dt = float(dt)
+            _speed_before = float(self.speed)
+            _requested_acceleration = float(self.action.get("acceleration", 0.0))
+        except (AttributeError, TypeError, ValueError):
+            _dt = float("nan")
+            _speed_before = float("nan")
+            _requested_acceleration = float("nan")
+
+        if (
+            np.isfinite(_dt) and _dt > 0.0
+            and np.isfinite(_speed_before)
+            and np.isfinite(_requested_acceleration)
+        ):
+            _speed_for_bound = max(0.0, _speed_before)
+            _minimum_acceleration = -_speed_for_bound / _dt
+            if _requested_acceleration < _minimum_acceleration:
+                _effective_acceleration = _minimum_acceleration
+                _event = {
+                    "event": "simulator_acceleration_limited_to_prevent_reverse_speed",
+                    "time": time.time(),
+                    "vehicle_id": id(self),
+                    "vehicle_class": type(self).__name__,
+                    "lane_index": str(getattr(self, "lane_index", None)),
+                    "traffic_side": getattr(self, "_arood_traffic_side", None),
+                    "dt_s": _dt,
+                    "speed_before_mps": _speed_before,
+                    "requested_acceleration_mps2": _requested_acceleration,
+                    "effective_acceleration_mps2": _effective_acceleration,
+                }
+                print(
+                    "[SIMULATOR ACCELERATION LIMIT]",
+                    f"vehicle_id={id(self)}",
+                    f"lane={getattr(self, 'lane_index', None)}",
+                    f"side={getattr(self, '_arood_traffic_side', None)}",
+                    f"speed_before_mps={_speed_before}",
+                    f"dt_s={_dt}",
+                    f"requested_acceleration_mps2={_requested_acceleration}",
+                    f"effective_acceleration_mps2={_effective_acceleration}",
+                )
+                try:
+                    os.makedirs("figure", exist_ok=True)
+                    with open(
+                        os.path.join("figure", "simulator_speed_guard.jsonl"),
+                        "a",
+                        encoding="utf-8",
+                    ) as _log_file:
+                        _log_file.write(
+                            json.dumps(_event, ensure_ascii=False, default=str, allow_nan=True)
+                            + "\n"
+                        )
+                except (OSError, TypeError, ValueError) as _log_exc:
+                    print("[SIMULATOR SPEED GUARD LOG FAILED]", repr(_log_exc))
+
+                # Temporarily constrain only the acceleration consumed by the
+                # simulator integrator; restore the controller's requested action
+                # afterwards so this guard does not rewrite controller logic.
+                try:
+                    self.action["acceleration"] = _effective_acceleration
+                    return _AROOD_ORIGINAL_VEHICLE_STEP(self, _dt)
+                finally:
+                    self.action["acceleration"] = _requested_acceleration
+
+        return _AROOD_ORIGINAL_VEHICLE_STEP(self, dt)
+
+    Vehicle.step = _arood_nonnegative_vehicle_step
+    Vehicle._arood_simulator_nonnegative_step_guard = True
     Vehicle._arood_simulator_nonnegative_speed_guard = True
 
 # ============================================================
