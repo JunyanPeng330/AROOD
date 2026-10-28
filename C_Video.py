@@ -21,6 +21,68 @@ import gymnasium as gym
 import highway_env
 from highway_env.vehicle.kinematics import Vehicle
 
+# Simulator-level speed invariant:
+# highway-env's Vehicle.step() integrates acceleration and then calls
+# on_state_update(). Clamp invalid/negative speed here, before state history is
+# recorded and before the next simulator update can use a negative speed.
+# This does not change policy actions, lane decisions, or controller logic.
+if not getattr(Vehicle, "_arood_simulator_nonnegative_speed_guard", False):
+    _AROOD_ORIGINAL_VEHICLE_ON_STATE_UPDATE = Vehicle.on_state_update
+
+    def _arood_guard_vehicle_speed_before_state_update(self):
+        try:
+            _raw_speed = float(self.speed)
+        except (AttributeError, TypeError, ValueError):
+            _raw_speed = float("nan")
+
+        if not np.isfinite(_raw_speed) or _raw_speed < 0.0:
+            _corrected_speed = 0.0
+            try:
+                self.speed = _corrected_speed
+            except (AttributeError, TypeError, ValueError) as exc:
+                raise RuntimeError(
+                    "Simulator-level speed guard could not correct vehicle speed: "
+                    f"vehicle_id={id(self)}, raw_speed={_raw_speed}"
+                ) from exc
+
+            _event = {
+                "event": "simulator_vehicle_speed_corrected",
+                "time": time.time(),
+                "vehicle_id": id(self),
+                "vehicle_class": type(self).__name__,
+                "lane_index": str(getattr(self, "lane_index", None)),
+                "traffic_side": getattr(self, "_arood_traffic_side", None),
+                "raw_speed_mps": _raw_speed,
+                "corrected_speed_mps": _corrected_speed,
+            }
+            print(
+                "[SIMULATOR SPEED GUARD]",
+                f"vehicle_id={id(self)}",
+                f"class={type(self).__name__}",
+                f"lane={getattr(self, 'lane_index', None)}",
+                f"side={getattr(self, '_arood_traffic_side', None)}",
+                f"raw_speed_mps={_raw_speed}",
+                f"corrected_speed_mps={_corrected_speed}",
+            )
+            try:
+                os.makedirs("figure", exist_ok=True)
+                with open(
+                    os.path.join("figure", "simulator_speed_guard.jsonl"),
+                    "a",
+                    encoding="utf-8",
+                ) as _log_file:
+                    _log_file.write(
+                        json.dumps(_event, ensure_ascii=False, default=str, allow_nan=False)
+                        + "\\n"
+                    )
+            except (OSError, TypeError, ValueError) as _log_exc:
+                print("[SIMULATOR SPEED GUARD LOG FAILED]", repr(_log_exc))
+
+        return _AROOD_ORIGINAL_VEHICLE_ON_STATE_UPDATE(self)
+
+    Vehicle.on_state_update = _arood_guard_vehicle_speed_before_state_update
+    Vehicle._arood_simulator_nonnegative_speed_guard = True
+
 # ============================================================
 # 1. Configuration — instantaneous lane-change diagnostic mode
 # ============================================================
