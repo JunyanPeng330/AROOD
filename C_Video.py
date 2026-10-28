@@ -72,7 +72,7 @@ if not getattr(Vehicle, "_arood_simulator_nonnegative_speed_guard", False):
                     encoding="utf-8",
                 ) as _log_file:
                     _log_file.write(
-                        json.dumps(_event, ensure_ascii=False, default=str, allow_nan=False)
+                        json.dumps(_event, ensure_ascii=False, default=str, allow_nan=True)
                         + "\n"
                     )
             except (OSError, TypeError, ValueError) as _log_exc:
