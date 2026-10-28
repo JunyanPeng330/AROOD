@@ -974,7 +974,13 @@ class HighwaySimulator:
         return reasons
 
     def _safe_lane_change_candidates(self, lane_ttc=None):
-        """Return safe adjacent-lane candidates with a comparable utility score."""
+        """Return adjacent lanes that are both safer and measurably better for overtaking.
+
+        A lane is eligible only when its front gap is strictly longer and its
+        front-vehicle speed is strictly higher than those in the current lane.
+        The existing candidate front/rear TTC and minimum-gap checks remain
+        mandatory and are evaluated before a lane can be selected.
+        """
         base_env = self.env.unwrapped
         vehicle = base_env.vehicle
         if lane_ttc is None:
@@ -983,26 +989,63 @@ class HighwaySimulator:
         available_lanes = base_env.road.network.graph[start_node][end_node]
         valid_ids = set(range(len(available_lanes)))
         ego_speed = float(vehicle.speed)
+        current_lane = int(current_lane)
+        current_values = lane_ttc.get(current_lane, {})
+        current_front_gap = float(current_values.get("front_gap", float("inf")))
+        current_front_speed = current_values.get("front_speed")
         candidates = []
+
         # Lane IDs are geometry only. The selector checks both adjacent IDs;
         # LEFT/RIGHT are not separate policy actions.
-        for candidate_lane in (int(current_lane) - 1, int(current_lane) + 1):
+        for candidate_lane in (current_lane - 1, current_lane + 1):
             if candidate_lane not in valid_ids or candidate_lane not in lane_ttc:
                 continue
+
+            # Preserve the existing hard safety gate: both TTC thresholds and
+            # physical front/rear bumper gaps must pass before eligibility.
             reasons = self._lane_change_principle_reasons(
-                candidate_lane, lane_ttc, current_lane=int(current_lane),
+                candidate_lane, lane_ttc, current_lane=current_lane,
                 ego_speed=ego_speed,
             )
             if reasons:
                 continue
+
             values = lane_ttc[candidate_lane]
             front_gap = float(values.get("front_gap", float("inf")))
             rear_gap = float(values.get("rear_gap", float("inf")))
             front_speed = values.get("front_speed")
+
+            # Continuous opportunity monitoring: a lane change is considered
+            # only if BOTH the front gap and front-vehicle speed improve over
+            # the current lane. Missing front-speed data cannot prove the
+            # higher-front-speed condition, so it is not treated as an upgrade.
+            has_comparable_front_speeds = (
+                current_front_speed is not None and front_speed is not None
+            )
+            gap_improves = front_gap > current_front_gap
+            speed_improves = (
+                has_comparable_front_speeds
+                and float(front_speed) > float(current_front_speed)
+            )
+            if not (gap_improves and speed_improves):
+                print(
+                    "[LANE OPPORTUNITY REJECTED]",
+                    f"current_lane={current_lane}",
+                    f"candidate_lane={candidate_lane}",
+                    f"current_front_gap_m={current_front_gap:.3f}",
+                    f"candidate_front_gap_m={front_gap:.3f}",
+                    f"current_front_speed_mps={current_front_speed}",
+                    f"candidate_front_speed_mps={front_speed}",
+                    f"gap_improves={gap_improves}",
+                    f"speed_improves={speed_improves}",
+                    "reason=candidate_must_have_both_longer_front_gap_and_higher_front_speed",
+                )
+                continue
+
             # Hard TTC/gap constraints are applied before this utility score.
             front_space_score = min(front_gap, 100.0) if np.isfinite(front_gap) else 100.0
             rear_space_score = min(rear_gap, 100.0) if np.isfinite(rear_gap) else 100.0
-            lead_speed_score = float(front_speed) if front_speed is not None else ego_speed
+            lead_speed_score = float(front_speed)
             utility = front_space_score + 0.5 * lead_speed_score + 0.25 * rear_space_score
             candidates.append({
                 "target_lane": int(candidate_lane),
@@ -1013,6 +1056,10 @@ class HighwaySimulator:
                 "rear_ttc": float(values.get("rear_ttc", float("inf"))),
                 "front_speed": front_speed,
                 "rear_speed": values.get("rear_speed"),
+                "current_front_gap": current_front_gap,
+                "current_front_speed": current_front_speed,
+                "gap_improves": bool(gap_improves),
+                "front_speed_improves": bool(speed_improves),
             })
         return candidates
 
