@@ -1230,7 +1230,11 @@ class HighwaySimulator:
             return mask
         lane_ttc = self._min_ttc_by_lane()
         candidates = self._safe_lane_change_candidates(lane_ttc)
-        mask = np.array([True, bool(candidates)], dtype=bool)
+        safe_adjacent = [
+            item for item in candidates
+            if int(item["target_lane"]) != int(vehicle.lane_index[2])
+        ]
+        mask = np.array([True, bool(safe_adjacent)], dtype=bool)
         print("[LANE ACTION MASK]",
               f"current_lane={int(vehicle.lane_index[2])}",
               f"mask={mask.tolist()}",
@@ -2986,7 +2990,7 @@ def _get_valid_target_lane_mask(self):
     """Mask every safe adjacent target lane; TTC is a safety filter, not a ranking rule."""
     mask = np.zeros(NUM_LANES, dtype=bool)
     current_lane = int(self.env.unwrapped.vehicle.lane_index[2])
-    if getattr(self, "_lane_change_active", False) or getattr(self, "_lane_change_cooldown", 0) > 0:
+    if getattr(self, "_lane_change_active", False):
         self._last_safe_lane_candidates = []
         if 0 <= current_lane < NUM_LANES:
             mask[current_lane] = True
@@ -2999,8 +3003,8 @@ def _get_valid_target_lane_mask(self):
         lane = int(c["target_lane"])
         if 0 <= lane < NUM_LANES:
             mask[lane] = True
-    # When no adjacent lane strictly beats current front TTC, the candidate
-    # list contains only current lane; equal TTC (including inf/inf) means KEEP.
+    # When no adjacent lane passes the hard safety checks, the current lane
+    # remains the fallback candidate and CHANGE is masked off.
     print("[LANE RANKING CANDIDATES]", f"current_lane={current_lane}",
           f"candidate_lane_mask={mask.tolist()}",
           f"ranked_lanes={[int(c['target_lane']) for c in ranked]}",
