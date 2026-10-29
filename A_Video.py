@@ -3337,7 +3337,7 @@ def construct_reward(reward_specification, embedding_model=None):
         reward = float(progress_reward - collision_penalty - lane_change_cost)
         if reward_diagnostics is not None:
             reward_diagnostics.update({
-                "reward_objective": "normalized_forward_progress_speed_minus_collision_penalty",
+                "reward_objective": "normalized_forward_progress_minus_collision_and_lane_change_cost",
                 "progress_reward": progress_reward,
                 "speed_reward": progress_reward,
                 "ego_speed_mps": float(ego_speed),
