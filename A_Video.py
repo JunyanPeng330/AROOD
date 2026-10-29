@@ -21,27 +21,180 @@ import gymnasium as gym
 import highway_env
 from highway_env.vehicle.kinematics import Vehicle
 
+# Simulator-level speed invariant:
+# highway-env's Vehicle.step() integrates acceleration and then calls
+# on_state_update(). Clamp invalid/negative speed here, before state history is
+# recorded and before the next simulator update can use a negative speed.
+# This does not change policy actions, lane decisions, or controller logic.
+if not getattr(Vehicle, "_arood_simulator_nonnegative_speed_guard", False):
+    _AROOD_ORIGINAL_VEHICLE_ON_STATE_UPDATE = Vehicle.on_state_update
+
+    def _arood_guard_vehicle_speed_before_state_update(self):
+        try:
+            _raw_speed = float(self.speed)
+        except (AttributeError, TypeError, ValueError):
+            _raw_speed = float("nan")
+
+        if not np.isfinite(_raw_speed) or _raw_speed < 0.0:
+            _corrected_speed = 0.0
+            try:
+                self.speed = _corrected_speed
+            except (AttributeError, TypeError, ValueError) as exc:
+                raise RuntimeError(
+                    "Simulator-level speed guard could not correct vehicle speed: "
+                    f"vehicle_id={id(self)}, raw_speed={_raw_speed}"
+                ) from exc
+
+            _event = {
+                "event": "simulator_vehicle_speed_corrected",
+                "time": time.time(),
+                "vehicle_id": id(self),
+                "vehicle_class": type(self).__name__,
+                "lane_index": str(getattr(self, "lane_index", None)),
+                "traffic_side": getattr(self, "_arood_traffic_side", None),
+                "raw_speed_mps": _raw_speed,
+                "corrected_speed_mps": _corrected_speed,
+            }
+            print(
+                "[SIMULATOR SPEED GUARD]",
+                f"vehicle_id={id(self)}",
+                f"class={type(self).__name__}",
+                f"lane={getattr(self, 'lane_index', None)}",
+                f"side={getattr(self, '_arood_traffic_side', None)}",
+                f"raw_speed_mps={_raw_speed}",
+                f"corrected_speed_mps={_corrected_speed}",
+            )
+            try:
+                os.makedirs("figure", exist_ok=True)
+                with open(
+                    os.path.join("figure", "simulator_speed_guard.jsonl"),
+                    "a",
+                    encoding="utf-8",
+                ) as _log_file:
+                    _log_file.write(
+                        json.dumps(_event, ensure_ascii=False, default=str, allow_nan=True)
+                        + "\n"
+                    )
+            except (OSError, TypeError, ValueError) as _log_exc:
+                print("[SIMULATOR SPEED GUARD LOG FAILED]", repr(_log_exc))
+
+        return _AROOD_ORIGINAL_VEHICLE_ON_STATE_UPDATE(self)
+
+    Vehicle.on_state_update = _arood_guard_vehicle_speed_before_state_update
+
+    # Enforce the nonnegative-speed constraint at the dynamics integration point.
+    # The state-update guard alone is insufficient: if a vehicle keeps a negative
+    # acceleration while its speed is clamped to zero, the next step makes it
+    # negative again. Limit the acceleration for this integration step so that
+    # speed + acceleration * dt cannot cross below zero.
+    _AROOD_ORIGINAL_VEHICLE_STEP = Vehicle.step
+
+    def _arood_nonnegative_vehicle_step(self, dt):
+        try:
+            _dt = float(dt)
+            _speed_before = float(self.speed)
+            _requested_acceleration = float(self.action.get("acceleration", 0.0))
+        except (AttributeError, TypeError, ValueError):
+            _dt = float("nan")
+            _speed_before = float("nan")
+            _requested_acceleration = float("nan")
+
+        # Do not let a previously invalid speed move the vehicle backwards
+        # during this step's position integration.
+        if np.isfinite(_speed_before) and _speed_before < 0.0:
+            print(
+                "[SIMULATOR PRE-STEP SPEED CORRECTION]",
+                f"vehicle_id={id(self)}",
+                f"lane={getattr(self, 'lane_index', None)}",
+                f"side={getattr(self, '_arood_traffic_side', None)}",
+                f"raw_speed_mps={_speed_before}",
+                "corrected_speed_mps=0.0",
+            )
+            self.speed = 0.0
+            _speed_before = 0.0
+
+        if (
+            np.isfinite(_dt) and _dt > 0.0
+            and np.isfinite(_speed_before)
+            and np.isfinite(_requested_acceleration)
+        ):
+            _speed_for_bound = max(0.0, _speed_before)
+            _minimum_acceleration = -_speed_for_bound / _dt
+            if _requested_acceleration < _minimum_acceleration:
+                _effective_acceleration = _minimum_acceleration
+                _event = {
+                    "event": "simulator_acceleration_limited_to_prevent_reverse_speed",
+                    "time": time.time(),
+                    "vehicle_id": id(self),
+                    "vehicle_class": type(self).__name__,
+                    "lane_index": str(getattr(self, "lane_index", None)),
+                    "traffic_side": getattr(self, "_arood_traffic_side", None),
+                    "dt_s": _dt,
+                    "speed_before_mps": _speed_before,
+                    "requested_acceleration_mps2": _requested_acceleration,
+                    "effective_acceleration_mps2": _effective_acceleration,
+                }
+                print(
+                    "[SIMULATOR ACCELERATION LIMIT]",
+                    f"vehicle_id={id(self)}",
+                    f"lane={getattr(self, 'lane_index', None)}",
+                    f"side={getattr(self, '_arood_traffic_side', None)}",
+                    f"speed_before_mps={_speed_before}",
+                    f"dt_s={_dt}",
+                    f"requested_acceleration_mps2={_requested_acceleration}",
+                    f"effective_acceleration_mps2={_effective_acceleration}",
+                )
+                try:
+                    os.makedirs("figure", exist_ok=True)
+                    with open(
+                        os.path.join("figure", "simulator_speed_guard.jsonl"),
+                        "a",
+                        encoding="utf-8",
+                    ) as _log_file:
+                        _log_file.write(
+                            json.dumps(_event, ensure_ascii=False, default=str, allow_nan=True)
+                            + "\n"
+                        )
+                except (OSError, TypeError, ValueError) as _log_exc:
+                    print("[SIMULATOR SPEED GUARD LOG FAILED]", repr(_log_exc))
+
+                # Temporarily constrain only the acceleration consumed by the
+                # simulator integrator; restore the controller's requested action
+                # afterwards so this guard does not rewrite controller logic.
+                try:
+                    self.action["acceleration"] = _effective_acceleration
+                    return _AROOD_ORIGINAL_VEHICLE_STEP(self, _dt)
+                finally:
+                    self.action["acceleration"] = _requested_acceleration
+
+        return _AROOD_ORIGINAL_VEHICLE_STEP(self, dt)
+
+    Vehicle.step = _arood_nonnegative_vehicle_step
+    Vehicle._arood_simulator_nonnegative_step_guard = True
+    Vehicle._arood_simulator_nonnegative_speed_guard = True
+
 # ============================================================
 # 1. Configuration — instantaneous lane-change diagnostic mode
 # ============================================================
 INSTANT_LANE_CHANGE_MODE = True
 steering_scale = 0.5
-offroad_penalty = 0.5
+offroad_penalty = 0.0  # No separate off-road reward penalty
 
 # Instantaneous lane-transition abstraction: one policy decision advances exactly
 # one simulator update. There are no intermediate lateral-motion substeps.
 policy_frequency = 5
-simulation_frequency = 20
+simulation_frequency = 10
 
 lane_keeping_weight = 0.20
 
 # Below SPEED_LIMIT, reward positive measured longitudinal acceleration; at/above it, give full speed reward.
 # MAX_PHYSICAL_ACCELERATION normalizes below-limit acceleration reward to [0, 1].
 # Lane selection is judged separately; TTC/gap stay in the independent safety shield.
-SPEED_LIMIT = 60.0
+SPEED_LIMIT = 40.0
 INITIAL_PROGRESS_WEIGHT = 4.0
 INITIAL_COLLISION_PENALTY = 5.0
-INITIAL_OFFROAD_PENALTY = 5.0
+# No off-road reward term: the policy chooses only among the three valid lanes.
+INITIAL_OFFROAD_PENALTY = 0.0
 
 # TTC thresholds are used by the safety shield, not reward shaping.
 ttc_critical_threshold = 2.0
@@ -51,7 +204,7 @@ ttc_caution_threshold = 4.0
 SPEED_MATCH_TTC = 3.0
 SPEED_MATCH_GAP_TOLERANCE = 5.0  # metres; avoid needless overrides for tiny gap deviations
 # Execution-time safety shield (TTC is measured in seconds).
-SAFETY_OVERRIDE_TTC = 1.0       # Emergency braking threshold
+SAFETY_OVERRIDE_TTC = 2.0       # Emergency braking threshold
 # Candidate-lane TTC thresholds. Keep front TTC at least as conservative as rear TTC.
 LANE_CHANGE_MIN_FRONT_TTC = 4.0
 LANE_CHANGE_MIN_REAR_TTC = 3.0
@@ -60,7 +213,7 @@ assert LANE_CHANGE_MIN_FRONT_TTC >= LANE_CHANGE_MIN_REAR_TTC, (
 )
 LANE_CHANGE_PREDICTION_HORIZON = 1.5  # Retained for transition/diagnostic predictions (seconds)
 LANE_CHANGE_TTC_MARGIN = 0.5     # Extra rear-TTC margin during the transition
-LANE_CHANGE_MIN_GAP = 10.0        # Independent minimum bumper-gap safeguard (metres)
+LANE_CHANGE_MIN_GAP = 15.0        # Independent minimum bumper-gap safeguard (metres)
 
 # Maneuver completion uses geometric alignment over consecutive policy decisions.
 LANE_CHANGE_COMPLETE_LATERAL_TOL = 0.45   # metres from target-lane centre
@@ -81,29 +234,41 @@ SHIELD_ACCEL_INTERVENTION_WEIGHT = 0.15  # Modest cost for routine acceleration 
 # Randomized traffic gaps create varied lane-change opportunities.
 
 REFERENCE_GAP_MIN = 20.0
-REFERENCE_GAP_MAX = 100.0
+REFERENCE_GAP_MAX = 200.0
 RANDOMIZED_FRONT_GAP_MIN = 20.0
-RANDOMIZED_FRONT_GAP_MAX = 100.0
+RANDOMIZED_FRONT_GAP_MAX = 200.0
 RANDOMIZED_REAR_GAP_MIN = 20.0
-RANDOMIZED_REAR_GAP_MAX = 100.0
+RANDOMIZED_REAR_GAP_MAX = 200.0
 TRAFFIC_SPEED_VARIATION = 10.0
+
+
+
+'''
+In _maintain_six_vehicle_traffic(), it calculates the absolute longitudinal distance between each vehicle and ego.
+- Within 120 m: the vehicle can qualify for a front or rear slot.
+- Beyond 120 m: the vehicle is excluded from slot selection and removed from the managed traffic list.
+- Crossing the ego: if the longitudinal separation is within the 0.5 m crossing tolerance,
+the vehicle is not assigned to either side.
+- Missing slot: _spawn_slot_vehicle(lane_id, side) creates a replacement for that slot.
+'''
+# Simulator triggers a replacement of surrounding vehicle
+Traffic_relevant_range = 200
+
 # Surrounding-vehicle speed distribution (m/s).
 TRAFFIC_SPEED_MIN = 15.0
-TRAFFIC_SPEED_MAX = 65.0
+TRAFFIC_SPEED_MAX = 40.0
 # A front vehicle may be at most this much slower than the rear vehicle
 # in the same lane. The reciprocal constraint is enforced when spawning
 # the rear vehicle: rear_speed <= front_speed + tolerance.
 FRONT_REAR_SPEED_TOLERANCE = 5.0
 
-# Tiny regularization cost for a lane change that actually completes.
-# This discourages unnecessary lane switching without penalizing rejected requests
-# or making lane changes prohibitively expensive.
-LANE_CHANGE_COST = 0.005
+# Lane changes are not intrinsically rewarded or penalized.
+LANE_CHANGE_COST = 0.0
 
 # Instantaneous lane changes complete within the current policy transition.
 # This cooldown constant is retained for legacy helper paths only; the active
 # instantaneous step path clears maneuver state immediately after relocation.
-LANE_CHANGE_COOLDOWN_STEPS = 1
+LANE_CHANGE_COOLDOWN_STEPS = 0
 
 
 # Speed-matching controller
@@ -112,7 +277,7 @@ MIN_FOLLOWING_GAP = 10.0      # metres
 SPEED_MATCH_KV = 0.5         # 1/second
 SPEED_MATCH_KD = 0.08        # 1/second^2
 
-MAX_PHYSICAL_ACCELERATION = 10.0  # m/s^2
+MAX_PHYSICAL_ACCELERATION = 8.0  # m/s^2
 
 
 NUM_LANES = 3
@@ -130,10 +295,10 @@ POLICY_ACTION_DIM = 2  # KEEP, CHANGE
 HIDDEN_DIM = 128
 
 
-NUM_REFERENCE_EPISODES = 200
+NUM_REFERENCE_EPISODES = 100
 REFERENCE_TRAINING_EPOCHS = 200
 REFERENCE_BATCH_SIZE = 256
-NUM_ONLINE_EPISODES = 200
+NUM_ONLINE_EPISODES = 100
 
 MAX_STEPS = 200
 
@@ -164,13 +329,12 @@ EVALUATOR_MIN_SAFETY_WEIGHT = 0.5
 # only when a lane change completes; rejected requests are not charged this cost.
 
 
-reward_path = 'figure/Re_C_' + '2.png'
-reward_per_step_path = 'figure/Re_C_per_step_' + '2.png'
-plot_path = 'figure/plot_C_' + '2.txt'
-MODEL_PATH = 'policy/C_' + '2.pt'
-EPISODE_TRAJECTORY_PATH = 'figure/episode_trajectories_C_' + '2.jsonl'
-GIF_save_path = 'figure/videos/replay_5.gif'
-TRAJECTORY_RECORDING_ENABLED = os.environ.get("AROOD_RECORD_TRAJECTORIES_C_", "2").strip().lower() not in {"0", "false", "no", "off"}
+reward_path = 'figure/Re_D_' + '3.png'
+reward_per_step_path = 'figure/Re_D_per_step_' + '3.png'
+plot_path = 'figure/plot_D_' + '3.txt'
+MODEL_PATH = 'policy/D_' + '3.pt'
+EPISODE_TRAJECTORY_PATH = 'figure/episode_trajectories_D_' + '3.jsonl'
+TRAJECTORY_RECORDING_ENABLED = os.environ.get("AROOD_RECORD_TRAJECTORIES_D_", "3").strip().lower() not in {"0", "false", "no", "off"}
 
 
 # ============================================================
@@ -694,7 +858,7 @@ class HighwaySimulator:
     # In highway-v0, the three lanes share the same road segment and longitudinal
     # axis; using one reference lane avoids comparing independently projected s
     # values from different lane geometries.
-    TRAFFIC_RELEVANT_RANGE = 120.0  # metres ahead/behind; farther vehicles are recycled
+    TRAFFIC_RELEVANT_RANGE = Traffic_relevant_range  # metres ahead/behind; farther vehicles are recycled
     TRAFFIC_CROSSING_EPSILON = 0.5  # metres; avoids unstable front/rear classification at ego
 
     def _lane_longitudinal_position(self, vehicle, lane_index):
@@ -974,7 +1138,13 @@ class HighwaySimulator:
         return reasons
 
     def _safe_lane_change_candidates(self, lane_ttc=None):
-        """Return safe adjacent-lane candidates with a comparable utility score."""
+        """Return every adjacent lane that passes the hard safety checks.
+
+        TTC and minimum-gap thresholds determine admissibility only. They do not
+        rank lanes or require an adjacent lane to have a larger front TTC than
+        the current lane. If no adjacent lane is safe, return the current lane
+        as a compatibility fallback; target-lane masks exclude it for CHANGE.
+        """
         base_env = self.env.unwrapped
         vehicle = base_env.vehicle
         if lane_ttc is None:
@@ -982,39 +1152,57 @@ class HighwaySimulator:
         start_node, end_node, current_lane = vehicle.lane_index
         available_lanes = base_env.road.network.graph[start_node][end_node]
         valid_ids = set(range(len(available_lanes)))
-        ego_speed = float(vehicle.speed)
-        candidates = []
-        # Lane IDs are geometry only. The selector checks both adjacent IDs;
-        # LEFT/RIGHT are not separate policy actions.
-        for candidate_lane in (int(current_lane) - 1, int(current_lane) + 1):
+        current_lane = int(current_lane)
+        safe_adjacent = []
+
+        for candidate_lane in (current_lane - 1, current_lane + 1):
             if candidate_lane not in valid_ids or candidate_lane not in lane_ttc:
                 continue
             reasons = self._lane_change_principle_reasons(
-                candidate_lane, lane_ttc, current_lane=int(current_lane),
-                ego_speed=ego_speed,
+                candidate_lane, lane_ttc, current_lane=current_lane,
+                ego_speed=float(vehicle.speed),
             )
             if reasons:
                 continue
             values = lane_ttc[candidate_lane]
-            front_gap = float(values.get("front_gap", float("inf")))
-            rear_gap = float(values.get("rear_gap", float("inf")))
-            front_speed = values.get("front_speed")
-            # Hard TTC/gap constraints are applied before this utility score.
-            front_space_score = min(front_gap, 100.0) if np.isfinite(front_gap) else 100.0
-            rear_space_score = min(rear_gap, 100.0) if np.isfinite(rear_gap) else 100.0
-            lead_speed_score = float(front_speed) if front_speed is not None else ego_speed
-            utility = front_space_score + 0.5 * lead_speed_score + 0.25 * rear_space_score
-            candidates.append({
+            safe_adjacent.append({
                 "target_lane": int(candidate_lane),
-                "utility": float(utility),
-                "front_gap": front_gap,
-                "rear_gap": rear_gap,
+                "utility": float(values.get("front_ttc", float("inf"))),
+                "front_gap": float(values.get("front_gap", float("inf"))),
+                "rear_gap": float(values.get("rear_gap", float("inf"))),
                 "front_ttc": float(values.get("front_ttc", float("inf"))),
                 "rear_ttc": float(values.get("rear_ttc", float("inf"))),
-                "front_speed": front_speed,
+                "front_speed": values.get("front_speed"),
                 "rear_speed": values.get("rear_speed"),
+                "selection_principle": "hard_safety_checks_only_rl_selects_strategy",
+                "is_current_lane": False,
             })
-        return candidates
+
+        if safe_adjacent:
+            selected_candidates = safe_adjacent
+        else:
+            values = lane_ttc.get(current_lane, {})
+            selected_candidates = [{
+                "target_lane": current_lane,
+                "utility": float(values.get("front_ttc", float("inf"))),
+                "front_gap": float(values.get("front_gap", float("inf"))),
+                "rear_gap": float(values.get("rear_gap", float("inf"))),
+                "front_ttc": float(values.get("front_ttc", float("inf"))),
+                "rear_ttc": float(values.get("rear_ttc", float("inf"))),
+                "front_speed": values.get("front_speed"),
+                "rear_speed": values.get("rear_speed"),
+                "selection_principle": "current_lane_fallback_no_safe_adjacent",
+                "is_current_lane": True,
+            }]
+
+        print(
+            "[SAFETY-ONLY LANE CANDIDATES]",
+            f"current_lane={current_lane}",
+            f"safe_adjacent_lanes={[c['target_lane'] for c in safe_adjacent]}",
+            f"returned_candidates={[c['target_lane'] for c in selected_candidates]}",
+            "selection_policy=learned_target_lane_head",
+        )
+        return selected_candidates
 
     def _select_best_safe_lane_candidate(self, lane_ttc=None):
         """Choose the highest-utility safe target lane, or None if none is safe."""
@@ -1031,23 +1219,27 @@ class HighwaySimulator:
     def get_valid_lane_action_mask(self):
         """Two-action mask: [KEEP, CHANGE]; CHANGE is valid if any safe target exists."""
         vehicle = self.env.unwrapped.vehicle
-        if self._lane_change_active or self._lane_change_cooldown > 0:
+        if self._lane_change_active:
             mask = np.array([True, False], dtype=bool)
             print("[MASK DEBUG][FORCED KEEP]",
                   f"current_lane={int(vehicle.lane_index[2])}",
                   f"lane_change_active={self._lane_change_active}",
                   f"cooldown={self._lane_change_cooldown}",
                   f"mask={mask.tolist()}",
-                  "reason=active_maneuver_or_cooldown")
+                  "reason=active_maneuver")
             return mask
         lane_ttc = self._min_ttc_by_lane()
         candidates = self._safe_lane_change_candidates(lane_ttc)
-        mask = np.array([True, bool(candidates)], dtype=bool)
+        safe_adjacent = [
+            item for item in candidates
+            if int(item["target_lane"]) != int(vehicle.lane_index[2])
+        ]
+        mask = np.array([True, bool(safe_adjacent)], dtype=bool)
         print("[LANE ACTION MASK]",
               f"current_lane={int(vehicle.lane_index[2])}",
               f"mask={mask.tolist()}",
               f"safe_target_lanes={[item['target_lane'] for item in candidates]}",
-              f"principles=front_ttc>={LANE_CHANGE_MIN_FRONT_TTC:.1f}s_and_rear_ttc>={LANE_CHANGE_MIN_REAR_TTC:.1f}s",
+              f"principles=hard_front_rear_ttc_and_minimum_gap_safety_only",
               "action_order=[KEEP, CHANGE]")
         return mask
 
@@ -2780,37 +2972,44 @@ def print_action_mask_counters(tag, counters):
 # ============================================================
 
 def _safety_aware_lane_action_mask(self):
-    """Binary action mask [KEEP, CHANGE]."""
-    if getattr(self, "_lane_change_active", False) or getattr(self, "_lane_change_cooldown", 0) > 0:
+    """Binary [KEEP, CHANGE] mask; CHANGE is allowed when any adjacent lane is safe."""
+    if getattr(self, "_lane_change_active", False):
         self._last_safe_lane_candidates = []
         return np.asarray([True, False], dtype=bool)
-    candidates = self._safe_lane_change_candidates(self._min_ttc_by_lane())
-    self._last_safe_lane_candidates = candidates
-    mask = np.asarray([True, bool(candidates)], dtype=bool)
+    ranked = self._safe_lane_change_candidates(self._min_ttc_by_lane())
+    current_lane = int(self.env.unwrapped.vehicle.lane_index[2])
+    change_candidates = [c for c in ranked if int(c["target_lane"]) != current_lane]
+    self._last_safe_lane_candidates = change_candidates
+    mask = np.asarray([True, bool(change_candidates)], dtype=bool)
     print("[BINARY SAFETY MASK]", f"mask={mask.tolist()}",
-          f"valid_target_lanes={[int(c['target_lane']) for c in candidates]}")
+          f"ranked_lanes={[int(c['target_lane']) for c in ranked]}",
+          f"valid_change_target_lanes={[int(c['target_lane']) for c in change_candidates]}")
     return mask
-
 
 def _get_valid_target_lane_mask(self):
-    """Mask the current lane plus every safe adjacent lane for direct comparison."""
+    """Mask every safe adjacent target lane; TTC is a safety filter, not a ranking rule."""
     mask = np.zeros(NUM_LANES, dtype=bool)
     current_lane = int(self.env.unwrapped.vehicle.lane_index[2])
-    if 0 <= current_lane < NUM_LANES:
-        mask[current_lane] = True
-    if getattr(self, "_lane_change_active", False) or getattr(self, "_lane_change_cooldown", 0) > 0:
+    if getattr(self, "_lane_change_active", False):
         self._last_safe_lane_candidates = []
+        if 0 <= current_lane < NUM_LANES:
+            mask[current_lane] = True
         return mask
-    candidates = self._safe_lane_change_candidates(self._min_ttc_by_lane())
-    self._last_safe_lane_candidates = candidates
-    for c in candidates:
+    ranked = self._safe_lane_change_candidates(self._min_ttc_by_lane())
+    self._last_safe_lane_candidates = [
+        c for c in ranked if int(c["target_lane"]) != current_lane
+    ]
+    for c in ranked:
         lane = int(c["target_lane"])
-        if 0 <= lane < NUM_LANES: mask[lane] = True
+        if 0 <= lane < NUM_LANES:
+            mask[lane] = True
+    # When no adjacent lane passes the hard safety checks, the current lane
+    # remains the fallback candidate and CHANGE is masked off.
     print("[LANE RANKING CANDIDATES]", f"current_lane={current_lane}",
           f"candidate_lane_mask={mask.tolist()}",
-          f"safe_adjacent_lanes={[int(c['target_lane']) for c in candidates]}")
+          f"ranked_lanes={[int(c['target_lane']) for c in ranked]}",
+          f"safe_adjacent_lanes={[int(c['target_lane']) for c in self._last_safe_lane_candidates]}")
     return mask
-
 
 def _safety_aware_lane_selector_and_controller(self, sampled_action, selected_target_lane=None):
     """Recheck the learned target lane immediately before execution."""
@@ -2820,12 +3019,15 @@ def _safety_aware_lane_selector_and_controller(self, sampled_action, selected_ta
     base, ego = self.env.unwrapped, self.env.unwrapped.vehicle
     current = int(ego.lane_index[2])
     metrics = self._min_ttc_by_lane()
-    safe = {int(c["target_lane"]) for c in self._safe_lane_change_candidates(metrics)}
+    ranked = self._safe_lane_change_candidates(metrics)
+    safe = {int(c["target_lane"]) for c in ranked if int(c["target_lane"]) != current}
     selected = None if selected_target_lane is None else int(selected_target_lane)
     target, executed, blocked, reason = current, requested, False, "none"
     if requested == 1:
         if selected is None or selected < 0 or selected >= min(int(base.config["lanes_count"]), NUM_LANES):
             blocked, reason, executed = True, "no_valid_target_lane_selected", 0
+        elif selected == current:
+            blocked, reason, executed = True, "no_safe_adjacent_target_or_invalid_target", 0
         elif selected not in safe:
             blocked, reason, executed = True, "target_lane_failed_execution_time_safety_recheck", 0
         else: target = selected
@@ -2924,8 +3126,8 @@ def build_evaluator_prompt(batch_metrics, reward_specification):
         "principles": [
             "Prioritize reaching and maintaining the road speed limit when traffic permits.",
             "Maintain safe following distance and avoid collisions.",
-            "Lane changes are not rewarded; a tiny regularization cost applies only to completed lane changes.",
-            "Do not charge rejected lane-change requests; evaluate lane changes primarily by their effect on achieved speed and safety.",
+            "Do not reward or penalize a lane change merely because it occurs; judge its value through speed/progress and safety outcomes.",
+            "Use TTC and minimum-gap thresholds only to reject unsafe adjacent lanes, not to rank safe lanes.",
             "Consider both front-vehicle and rear-vehicle conditions.",
             "Treat TTC thresholds as evidence, not universal optimal boundaries.",
             "Distinguish predicted risk from observed collision or near-collision outcomes.",
@@ -3103,77 +3305,45 @@ def calculate_min_ttc(simulator):
 
 
 def construct_reward(reward_specification, embedding_model=None):
-    """Reward normalized positive measured acceleration below the speed limit.
+    """Reward sustained forward progress through normalized ego speed.
 
-    Zero acceleration or deceleration yields zero speed reward below target speed;
-    at/above target speed, speed reward is 1.0 regardless of acceleration.
-    Deceleration has no direct negative reward. Collision penalty remains separate.
-    A tiny cost applies only to a lane change confirmed as completed; TTC remains
-    outside the reward and is handled by the independent safety shield.
+    A collision receives a strong penalty. Lane changes and off-road status are
+    not separate reward terms; admissible target lanes are controlled by the
+    safety shield and the three-lane action space.
     """
     def reward_function(
         behavior_description, safety_violation, action, lane_deviation, offroad,
         min_ttc, lane_change_allowed=True, ego_speed=0.0, ego_acceleration_mps2=0.0,
         safety_info=None, policy_sampled_action=None, reward_diagnostics=None,
     ):
-        safety_info = dict(safety_info or {})
-        sampled_action = np.asarray(
-            action if policy_sampled_action is None else policy_sampled_action,
-            dtype=np.float32,
-        ).reshape(-1)
-
-        # 1. Reward positive measured acceleration only while below the speed limit.
-        target_speed = max(1e-6, float(reward_specification.get("target_speed", SPEED_LIMIT)))
+        target_speed = max(
+            1e-6, float(reward_specification.get("target_speed", SPEED_LIMIT))
+        )
         ego_speed = max(0.0, float(ego_speed))
-        ego_acceleration = float(ego_acceleration_mps2)
-        acceleration_scale = max(1e-6, float(MAX_PHYSICAL_ACCELERATION))
-        speed_limit_gate = bool(ego_speed < target_speed)
-        normalized_positive_acceleration = float(np.clip(max(0.0, ego_acceleration) / acceleration_scale, 0.0, 1.0))
-        speed_reward = normalized_positive_acceleration if speed_limit_gate else 1.0
-
-        # 2. Collision penalty. TTC and gap checks remain in the independent shield.
-        safety_penalty = (
-            max(0.0, float(reward_specification.get("safety_weight", INITIAL_COLLISION_PENALTY)))
-            if bool(safety_violation) else 0.0
-        )
-
-        # Charge only a completed lane change, not a request or a safety-filter rejection.
-        lane_change_completed = bool(safety_info.get("lane_change_accepted", False))
-        lane_change_cost = (
-            max(0.0, float(reward_specification.get("lane_change_cost", LANE_CHANGE_COST)))
-            if lane_change_completed else 0.0
-        )
-        reward = float(speed_reward - safety_penalty - lane_change_cost)
-        speed_error = max(0.0, target_speed - ego_speed)
-        speed_target_reached = bool(ego_speed >= target_speed)
+        # Normalized speed is a direct per-step proxy for sustained forward progress.
+        progress_reward = float((ego_speed - target_speed)/target_speed)      #float(np.clip(ego_speed / target_speed, 0.0, 1.0))
+        collision_penalty = (max(0.0, float(reward_specification.get("safety_weight", INITIAL_COLLISION_PENALTY)))
+            if bool(safety_violation) else 0.0)
+        reward = float(progress_reward - collision_penalty)
         if reward_diagnostics is not None:
             reward_diagnostics.update({
-                "reward_objective": "positive_acceleration_below_target_speed_full_speed_reward_at_or_above_target_no_deceleration_penalty_and_collision_penalty",
-                "speed_reward": float(speed_reward),
+                "reward_objective": "normalized_forward_progress_speed_minus_collision_penalty",
+                "progress_reward": progress_reward,
+                "speed_reward": progress_reward,
                 "ego_speed_mps": float(ego_speed),
                 "target_speed_mps": float(target_speed),
-                "ego_acceleration_mps2": float(ego_acceleration),
-                "max_physical_acceleration_mps2": float(acceleration_scale),
-                "normalized_positive_acceleration": float(normalized_positive_acceleration),
-                "speed_limit_gate_open": speed_limit_gate,
-                "speed_error_mps": float(speed_error),
-                "speed_limit_reached": speed_target_reached,
-                "safety_penalty": float(safety_penalty),
-                "lane_change_completed": lane_change_completed,
-                "lane_change_cost": float(lane_change_cost),
+                "safety_penalty": float(collision_penalty),
+                "collision_penalty": float(collision_penalty),
+                "lane_change_cost": 0.0,
+                "offroad_penalty": 0.0,
                 "total_reward": reward,
             })
         print(
-            f"[REWARD DEBUG] speed_reward={speed_reward:.3f}, "
+            f"[REWARD DEBUG] progress_reward={progress_reward:.3f}, "
             f"speed={ego_speed:.2f}m/s, target_speed={target_speed:.2f}m/s, "
-            f"acceleration={ego_acceleration:.3f}m/s^2, "
-            f"normalized_positive_acceleration={normalized_positive_acceleration:.3f}, "
-            f"speed_limit_gate_open={speed_limit_gate}, "
-            f"safety_penalty={safety_penalty:.3f}, "
-            f"lane_change_completed={lane_change_completed}, "
-            f"lane_change_cost={lane_change_cost:.3f}, total={reward:.3f}"
+            f"collision_penalty={collision_penalty:.3f}, total={reward:.3f}"
         )
-        print("[TTC REWARD] disabled; TTC is recorded for episode-level evaluation, not used as a per-step action override.")
+        print("[TTC REWARD] disabled; TTC/gap are used only by the independent safety shield.")
         return reward
     return reward_function
 
@@ -3298,16 +3468,12 @@ def build_fixed_reward_function():
     reward_specification = {
         "name": "pure_rl_episode_adaptive_reward",
         "target_behavior": (
-            "Reward positive measured longitudinal acceleration, normalized by maximum physical "
-            "acceleration, only while ego speed is below the 60 m/s speed limit. Zero acceleration "
-            "or deceleration gives zero speed reward below the target; deceleration is not directly "
-            "penalized. At or above the target speed, speed reward is 1.0. Avoid collisions using the "
-            "separate penalty and independent TTC/minimum-gap safety shield. Apply only a tiny cost "
-            "to completed lane changes to discourage unnecessary switching without suppressing useful overtaking."
+            "Reward sustained forward progress using normalized ego speed, with a strong penalty for collisions. "
+            "Do not add a lane-change penalty or off-road penalty. TTC and minimum-gap checks are "
+            "independent safety constraints; the learned policy chooses among all safe adjacent lanes."
         ),
         "safety_weight": INITIAL_COLLISION_PENALTY,
         "target_speed": SPEED_LIMIT,
-        "lane_change_cost": LANE_CHANGE_COST,
     }
     reward_function = construct_reward(reward_specification)
     # The closure and evaluator share this mutable specification. Only the
@@ -4169,15 +4335,15 @@ def train_pure_rl(simulator, policy):
         f.write(f"acceleration_override_rate={float(np.mean(acceleration_override_rate_history)) if acceleration_override_rate_history else 0.0:.4f} (per-step rate)"+ "\n")
         f.write(f"overall_intervention_rate={float(np.mean(overall_intervention_rate_history)) if overall_intervention_rate_history else 0.0:.4f} (per-step rate)"+ "\n")
         f.write(f"interventions_per_km={float(np.mean(interventions_per_km_history)) if interventions_per_km_history else 0.0:.3f} (safe_travel_dis is measured in metres)"+ "\n")
-        f.write(str(reward_history) + "\n")
-        f.write(str(collision_history) + "\n")
-        f.write(str(collision_rate_history) + "\n")
-        f.write(str(safe_travel_dis_history) + "\n")
-        f.write(str(safe_step_count_history) + "\n")
-        f.write(str(lane_change_history) + "\n")
-        f.write(str(episode_times) + "\n")
-        f.write(str(lane_change_rate_history) + "\n")
-        f.write(str(mean_step_reward_history) + "\n")
+        f.write("reward:\n" + str(reward_history) + "\n")
+        f.write("collision:\n" + str(collision_history) + "\n")
+        f.write("collision_rate:\n" + str(collision_rate_history) + "\n")
+        f.write("safe_travel_distance:\n" + str(safe_travel_dis_history) + "\n")
+        f.write("safe_step_count:\n" + str(safe_step_count_history) + "\n")
+        f.write("lane_change:\n" + str(lane_change_history) + "\n")
+        f.write("episode_times:\n" + str(episode_times) + "\n")
+        f.write("lane_change_rate:\n" + str(lane_change_rate_history) + "\n")
+        f.write("mean_step_reward:\n" + str(mean_step_reward_history) + "\n")
 
 
 
