@@ -3305,11 +3305,11 @@ def calculate_min_ttc(simulator):
 
 
 def construct_reward(reward_specification, embedding_model=None):
-    """Reward sustained forward progress through normalized ego speed.
+    """Reward normalized forward progress, penalize collisions, and expose a configurable lane-change cost.
 
-    A collision receives a strong penalty. Lane changes and off-road status are
-    not separate reward terms; admissible target lanes are controlled by the
-    safety shield and the three-lane action space.
+    The lane-change cost is charged only when a lane change completes. Its
+    configured default is zero, preserving the existing reward behavior.
+    TTC/gap remain independent safety constraints, not reward terms.
     """
     def reward_function(
         behavior_description, safety_violation, action, lane_deviation, offroad,
@@ -3322,9 +3322,19 @@ def construct_reward(reward_specification, embedding_model=None):
         ego_speed = max(0.0, float(ego_speed))
         # Normalized speed is a direct per-step proxy for sustained forward progress.
         progress_reward = float((ego_speed - target_speed)/target_speed)      #float(np.clip(ego_speed / target_speed, 0.0, 1.0))
-        collision_penalty = (max(0.0, float(reward_specification.get("safety_weight", INITIAL_COLLISION_PENALTY)))
-            if bool(safety_violation) else 0.0)
-        reward = float(progress_reward - collision_penalty)
+        collision_penalty = (
+            max(0.0, float(reward_specification.get("safety_weight", INITIAL_COLLISION_PENALTY)))
+            if bool(safety_violation) else 0.0
+        )
+        # Charge only a completed lane change, never a rejected request or KEEP.
+        lane_change_completed = bool(
+            isinstance(safety_info, dict) and safety_info.get("lane_change_accepted", False)
+        )
+        lane_change_cost_weight = max(
+            0.0, float(reward_specification.get("lane_change_cost", LANE_CHANGE_COST))
+        )
+        lane_change_cost = lane_change_cost_weight if lane_change_completed else 0.0
+        reward = float(progress_reward - collision_penalty - lane_change_cost)
         if reward_diagnostics is not None:
             reward_diagnostics.update({
                 "reward_objective": "normalized_forward_progress_speed_minus_collision_penalty",
@@ -3334,14 +3344,17 @@ def construct_reward(reward_specification, embedding_model=None):
                 "target_speed_mps": float(target_speed),
                 "safety_penalty": float(collision_penalty),
                 "collision_penalty": float(collision_penalty),
-                "lane_change_cost": 0.0,
+                "lane_change_completed": bool(lane_change_completed),
+                "lane_change_cost_weight": float(lane_change_cost_weight),
+                "lane_change_cost": float(lane_change_cost),
                 "offroad_penalty": 0.0,
                 "total_reward": reward,
             })
         print(
             f"[REWARD DEBUG] progress_reward={progress_reward:.3f}, "
             f"speed={ego_speed:.2f}m/s, target_speed={target_speed:.2f}m/s, "
-            f"collision_penalty={collision_penalty:.3f}, total={reward:.3f}"
+            f"collision_penalty={collision_penalty:.3f}, "
+            f"lane_change_cost={lane_change_cost:.3f}, total={reward:.3f}"
         )
         print("[TTC REWARD] disabled; TTC/gap are used only by the independent safety shield.")
         return reward
@@ -3469,11 +3482,13 @@ def build_fixed_reward_function():
         "name": "pure_rl_episode_adaptive_reward",
         "target_behavior": (
             "Reward sustained forward progress using normalized ego speed, with a strong penalty for collisions. "
-            "Do not add a lane-change penalty or off-road penalty. TTC and minimum-gap checks are "
-            "independent safety constraints; the learned policy chooses among all safe adjacent lanes."
+            "A configurable lane-change cost is charged only when a lane change completes; its initial "
+            "weight is zero. Do not add an off-road penalty. TTC and minimum-gap checks remain independent "
+            "safety constraints; the learned policy chooses among all safe adjacent lanes."
         ),
         "safety_weight": INITIAL_COLLISION_PENALTY,
         "target_speed": SPEED_LIMIT,
+        "lane_change_cost": float(LANE_CHANGE_COST),
     }
     reward_function = construct_reward(reward_specification)
     # The closure and evaluator share this mutable specification. Only the
