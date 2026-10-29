@@ -1,6 +1,6 @@
-# BINARY KEEP/CHANGE POLICY + LEARNED TARGET-LANE RANKING HEAD
-# raw_prob contains only [P(KEEP), P(CHANGE)]; target lane is selected by a separate learned head.
-# Execution-time lane safety is rechecked; acceleration is not a learned policy dimension.
+# CONDITIONAL HYBRID RL POLICY: KEEP/CHANGE -> TARGET LANE -> ACCELERATION
+# The binary lane-action distribution remains separate from target-lane selection.
+# Continuous acceleration is sampled by a learned head conditioned on the lane decision.
 # The initial evaluator is a transparent placeholder, not a real LLM.
 
 # Research baseline; instantaneous lane changes are not physically realistic lateral trajectories.
@@ -289,8 +289,8 @@ CONTEXT_DIM = 4
 SAFETY_FEATURES_PER_LANE = 6
 SAFETY_FEATURES_DIM = NUM_LANES * SAFETY_FEATURES_PER_LANE
 STATE_DIM = VEHICLE_STATE_DIM + CONTEXT_DIM + SAFETY_FEATURES_DIM
-ACTION_DIM = 2  # execution envelope [controller_acceleration, binary_action]
-POLICY_ACTION_DIM = 2  # KEEP, CHANGE
+ACTION_DIM = 2  # execution action [normalized learned acceleration, binary KEEP/CHANGE]
+POLICY_ACTION_DIM = 2  # binary KEEP, CHANGE decision; acceleration is a conditional continuous head
 
 HIDDEN_DIM = 128
 
@@ -556,14 +556,23 @@ def to_tensor(x):
 
 
 class ActorCriticPolicy(nn.Module):
-    """Binary KEEP/CHANGE actor with a learned lane-ranking head."""
+    """Conditional hybrid actor: KEEP/CHANGE -> target lane -> continuous acceleration."""
     def __init__(self, state_dim, action_dim, hidden_dim, steering_scale=None):
         super().__init__()
-        if action_dim != 2: raise ValueError("Expected binary KEEP/CHANGE policy")
-        self.shared = nn.Sequential(nn.Linear(state_dim, hidden_dim), nn.ReLU(),
-                                     nn.Linear(hidden_dim, hidden_dim), nn.ReLU())
+        if action_dim != 2:
+            raise ValueError("Expected execution action [acceleration, binary KEEP/CHANGE]")
+        self.shared = nn.Sequential(
+            nn.Linear(state_dim, hidden_dim), nn.ReLU(),
+            nn.Linear(hidden_dim, hidden_dim), nn.ReLU()
+        )
         self.action_logits = nn.Linear(hidden_dim, 2)
         self.lane_rank_logits = nn.Linear(hidden_dim, NUM_LANES)
+        accel_context_dim = hidden_dim + 2 + NUM_LANES
+        self.acceleration_mean = nn.Sequential(
+            nn.Linear(accel_context_dim, hidden_dim // 2), nn.ReLU(),
+            nn.Linear(hidden_dim // 2, 1)
+        )
+        self.acceleration_log_std = nn.Parameter(torch.tensor([-0.5], dtype=torch.float32))
         self.critic = nn.Sequential(nn.Linear(hidden_dim, hidden_dim // 2), nn.ReLU(),
                                     nn.Linear(hidden_dim // 2, 1))
         self.optimizer = Adam(self.parameters(), lr=POLICY_LR)
@@ -598,51 +607,62 @@ class ActorCriticPolicy(nn.Module):
             logits = logits.masked_fill(~mask, -1e9)
         return torch.distributions.Categorical(logits=logits)
 
+    def acceleration_distribution(self, state, binary_action, target_lane):
+        """Gaussian over pre-tanh acceleration, conditioned on both lane decisions."""
+        features = self.features(state)
+        batch = features.shape[0]
+        binary = torch.as_tensor(binary_action, dtype=torch.long, device=features.device).reshape(-1)
+        if binary.numel() == 1 and batch > 1: binary = binary.expand(batch)
+        target = torch.as_tensor(target_lane, dtype=torch.long, device=features.device).reshape(-1)
+        if target.numel() == 1 and batch > 1: target = target.expand(batch)
+        binary = binary.clamp(0, 1)
+        target = target.clamp(0, NUM_LANES - 1)
+        context = torch.cat([
+            features,
+            F.one_hot(binary, num_classes=2).to(features.dtype),
+            F.one_hot(target, num_classes=NUM_LANES).to(features.dtype)
+        ], dim=-1)
+        mean = self.acceleration_mean(context).squeeze(-1)
+        log_std = self.acceleration_log_std.clamp(-3.0, 0.5).expand_as(mean)
+        return torch.distributions.Normal(mean, log_std.exp())
+
+    @staticmethod
+    def squashed_normal_log_prob(distribution, pre_tanh_value):
+        z = torch.as_tensor(pre_tanh_value, dtype=distribution.mean.dtype,
+                            device=distribution.mean.device).reshape_as(distribution.mean)
+        return distribution.log_prob(z) - torch.log(1.0 - torch.tanh(z).pow(2) + 1e-6)
+
     def act(self, state, deterministic=False, valid_action_mask=None,
             valid_target_lane_mask=None, current_lane_id=None, return_aux=False):
-        """Sample KEEP/CHANGE first; sample a target lane only conditional on CHANGE."""
+        """Sample KEEP/CHANGE, then target lane if needed, then conditional acceleration."""
         dist = self.action_distributions(state, valid_action_mask)
-        binary_dist = dist
-        sampled_binary = torch.argmax(binary_dist.logits, dim=-1) if deterministic else binary_dist.sample()
+        sampled_binary = torch.argmax(dist.logits, dim=-1) if deterministic else dist.sample()
         binary_action = int(sampled_binary[0].detach().cpu().item())
-        target = -1
-
-        if current_lane_id is not None:
-            current = int(current_lane_id)
-            if binary_action == 0:
-                target = current
-            elif valid_target_lane_mask is not None:
-                tm = torch.as_tensor(valid_target_lane_mask, dtype=torch.bool, device=dist.logits.device)
-                if tm.ndim == 1: tm = tm.unsqueeze(0)
-                if tm.shape[0] == 1 and dist.logits.shape[0] > 1:
-                    tm = tm.expand(dist.logits.shape[0], -1)
-                change_mask = tm.clone()
-                if 0 <= current < change_mask.shape[-1]:
-                    change_mask[:, current] = False
-                if change_mask.any(dim=-1).all():
-                    lane_dist = self.lane_distributions(state, change_mask)
-                    lane_index = (torch.argmax(lane_dist.logits, dim=-1) if deterministic
-                                  else lane_dist.sample())
-                    target = int(lane_index[0].detach().cpu().item())
-                else:
-                    # Defensive fallback: never issue CHANGE without a valid target.
-                    binary_action = 0
-                    target = current
-        elif valid_target_lane_mask is not None:
-            # Compatibility fallback for callers without the current lane ID.
+        current = int(current_lane_id) if current_lane_id is not None else 0
+        target = current
+        if binary_action == 1 and valid_target_lane_mask is not None:
             tm = torch.as_tensor(valid_target_lane_mask, dtype=torch.bool, device=dist.logits.device)
             if tm.ndim == 1: tm = tm.unsqueeze(0)
-            if tm.shape[0] == 1 and dist.logits.shape[0] > 1:
-                tm = tm.expand(dist.logits.shape[0], -1)
-            if tm.any(dim=-1).all():
-                lane_dist = self.lane_distributions(state, tm)
+            if tm.shape[0] == 1 and dist.logits.shape[0] > 1: tm = tm.expand(dist.logits.shape[0], -1)
+            change_mask = tm.clone()
+            if 0 <= current < change_mask.shape[-1]: change_mask[:, current] = False
+            if change_mask.any(dim=-1).all():
+                lane_dist = self.lane_distributions(state, change_mask)
                 lane_index = torch.argmax(lane_dist.logits, dim=-1) if deterministic else lane_dist.sample()
                 target = int(lane_index[0].detach().cpu().item())
-
-        a = torch.as_tensor([binary_action], dtype=torch.long, device=dist.logits.device)
-        action = torch.stack([torch.zeros_like(a, dtype=torch.float32), a.float()], dim=-1)
-        out = action.squeeze(0).detach().cpu().numpy().astype(np.float32)
-        return (out, {"pre_tanh_accel": 0.0, "selected_target_lane": target}) if return_aux else out
+            else:
+                binary_action, target = 0, current
+        accel_dist = self.acceleration_distribution(state, binary_action, target)
+        pre_tanh = accel_dist.mean if deterministic else accel_dist.sample()
+        action = np.asarray([
+            float(torch.tanh(pre_tanh[0]).detach().cpu().item()), float(binary_action)
+        ], dtype=np.float32)
+        aux = {
+            "pre_tanh_accel": float(pre_tanh[0].detach().cpu().item()),
+            "selected_target_lane": int(target),
+            "acceleration_log_prob": float(self.squashed_normal_log_prob(accel_dist, pre_tanh)[0].detach().cpu().item())
+        }
+        return (action, aux) if return_aux else action
 
     def __call__(self, state, valid_action_mask=None, valid_target_lane_mask=None, current_lane_id=None):
         return self.act(state, valid_action_mask=valid_action_mask,
@@ -3043,14 +3063,16 @@ def _safety_aware_lane_selector_and_controller(self, sampled_action, selected_ta
         f"current_rear_gap_m={float(current_vals.get('rear_gap', float('inf'))):.3f}",
     )
 
-    accel = (float(np.clip(0.5 * (30.0 - float(ego.speed)) / MAX_PHYSICAL_ACCELERATION, -1.0, 1.0)
-             ) if front_speed is None else self._speed_matching_acceleration(float(front_speed), front_gap))
+    # The policy proposes acceleration after selecting KEEP/CHANGE and target lane.
+    # Routine speed matching must not overwrite learned acceleration.
+    accel = float(np.clip(action[0], -1.0, 1.0))
     cur = metrics.get(current, {})
     emergency = (float(cur.get("front_ttc", float("inf"))) <= SAFETY_OVERRIDE_TTC
                  or float(cur.get("front_gap", float("inf"))) <= MIN_FOLLOWING_GAP)
-    controller_acceleration_before_emergency = float(accel)
-    if emergency: accel = min(accel, -0.5)
-    acceleration_overridden = abs(float(accel) - controller_acceleration_before_emergency) > 1e-6
+    policy_acceleration_before_emergency = float(accel)
+    if emergency:
+        accel = min(accel, -0.5)
+    acceleration_overridden = abs(float(accel) - float(policy_acceleration_before_emergency)) > 1e-6
     req_id = None
     if requested == 1:
         req_id = int(getattr(self, "_lane_request_trace_sequence", 0)) + 1
@@ -3070,11 +3092,12 @@ def _safety_aware_lane_selector_and_controller(self, sampled_action, selected_ta
         "target_selector_mode": "learned_lane_ranking_head_plus_execution_recheck",
         "safety_filter_applied": bool(blocked or emergency), "overridden": bool(blocked or emergency),
         "emergency_braking": bool(emergency),
-        "controller_acceleration_before_emergency": controller_acceleration_before_emergency,
+        "policy_acceleration_before_emergency": policy_acceleration_before_emergency,
         "acceleration_overridden": bool(acceleration_overridden),
         "intervention_reason": "current_lane_emergency" if emergency else ("unsafe_target_rejected" if blocked else "none"),
         "sampled_action": action.copy(), "filtered_action": np.asarray([accel, executed], dtype=np.float32),
-        "controller_acceleration": float(accel),
+        "proposed_policy_acceleration": float(action[0]),
+        "executed_acceleration": float(accel),
         "lane_change_candidate_front_gap": float(vals.get("front_gap", float("inf"))),
         "lane_change_candidate_rear_gap": float(vals.get("rear_gap", float("inf"))),
         "lane_change_candidate_front_ttc": float(vals.get("front_ttc", float("inf"))),
@@ -3400,7 +3423,7 @@ def update_policy(policy, state, action, reward, next_state, done,
                   valid_action_mask=None, terminated=None, pre_tanh_accel=None,
                   selected_target_lane=-1, valid_target_lane_mask=None,
                   current_lane_id=None):
-    """Update the binary KEEP/CHANGE decision and conditional target-lane selector."""
+    """Update lane choice, conditional target lane, and learned acceleration jointly."""
     st, nst = to_tensor(state).reshape(1, -1), to_tensor(next_state).reshape(1, -1)
     act, rew = to_tensor(action).reshape(1, -1), to_tensor([reward])
     value = policy.value(st)
@@ -3410,18 +3433,15 @@ def update_policy(policy, state, action, reward, next_state, done,
         target = rew if terminal else rew + 0.99 * nv
     adv = target - value
     critic_loss = F.mse_loss(value, target)
-
     binary_action = int(np.clip(np.rint(float(act[0, 1].detach().cpu().item())), 0, 1))
+    current = int(current_lane_id) if current_lane_id is not None else 0
+    effective_target = int(selected_target_lane) if binary_action == 1 and int(selected_target_lane) >= 0 else current
+    effective_target = int(np.clip(effective_target, 0, NUM_LANES - 1))
     binary_dist = policy.action_distributions(
         st, torch.as_tensor(valid_action_mask, dtype=torch.bool, device=DEVICE).reshape(1, -1)
         if valid_action_mask is not None else None
     )
-    binary_log_prob = binary_dist.log_prob(
-        torch.as_tensor([binary_action], dtype=torch.long, device=DEVICE)
-    )
-
-    # The lane-ranking head is conditional: it is trained only on CHANGE,
-    # and its distribution excludes the current lane.
+    binary_log_prob = binary_dist.log_prob(torch.as_tensor([binary_action], dtype=torch.long, device=DEVICE))
     target_log_prob = torch.zeros(1, dtype=torch.float32, device=DEVICE)
     if binary_action == 1 and int(selected_target_lane) >= 0 and valid_target_lane_mask is not None:
         lane_mask = torch.as_tensor(valid_target_lane_mask, dtype=torch.bool, device=DEVICE).reshape(1, -1).clone()
@@ -3429,11 +3449,13 @@ def update_policy(policy, state, action, reward, next_state, done,
             lane_mask[:, int(current_lane_id)] = False
         if lane_mask.any(dim=-1).all():
             lane_dist = policy.lane_distributions(st, lane_mask)
-            target_log_prob = lane_dist.log_prob(
-                torch.as_tensor([int(selected_target_lane)], dtype=torch.long, device=DEVICE)
-            )
-
-    action_log_prob = binary_log_prob + target_log_prob
+            target_log_prob = lane_dist.log_prob(torch.as_tensor([int(selected_target_lane)], dtype=torch.long, device=DEVICE))
+    accel_value = (float(pre_tanh_accel) if pre_tanh_accel is not None else
+                   float(np.arctanh(np.clip(float(act[0, 0].detach().cpu().item()), -0.999, 0.999))))
+    pre_tanh = torch.as_tensor([accel_value], dtype=torch.float32, device=DEVICE)
+    accel_dist = policy.acceleration_distribution(st, binary_action, effective_target)
+    acceleration_log_prob = policy.squashed_normal_log_prob(accel_dist, pre_tanh)
+    action_log_prob = binary_log_prob + target_log_prob + acceleration_log_prob
     actor_loss = -(action_log_prob * adv.detach()).mean()
     loss = actor_loss + critic_loss
     policy.optimizer.zero_grad()
@@ -3444,7 +3466,8 @@ def update_policy(policy, state, action, reward, next_state, done,
             "critic_loss": float(critic_loss.detach().item()),
             "advantage": float(adv.detach().mean().item()),
             "binary_log_prob": float(binary_log_prob.detach().mean().item()),
-            "target_lane_log_prob": float(target_log_prob.detach().mean().item())}
+            "target_lane_log_prob": float(target_log_prob.detach().mean().item()),
+            "acceleration_log_prob": float(acceleration_log_prob.detach().mean().item())}
 
 
 
@@ -3500,15 +3523,19 @@ def build_fixed_reward_function():
 def _hybrid_action_log_probability(policy, states, actions, pre_tanh_accels, masks,
                                   selected_target_lanes=None, target_lane_masks=None,
                                   current_lane_ids=None):
-    """Joint log-likelihood: binary KEEP/CHANGE plus target lane conditional on CHANGE."""
+    """Joint log-likelihood for lane action, target lane, and conditional acceleration."""
     binary_actions = torch.clamp(torch.round(actions[:, 1]).long(), 0, 1)
     binary_dist = policy.action_distributions(states, torch.as_tensor(masks, dtype=torch.bool, device=DEVICE))
     binary_log_prob = binary_dist.log_prob(binary_actions)
     target_log_prob = torch.zeros_like(binary_log_prob)
+    batch = actions.shape[0]
+    currents = (torch.as_tensor(current_lane_ids, dtype=torch.long, device=DEVICE).reshape(-1)
+                if current_lane_ids is not None else torch.zeros(batch, dtype=torch.long, device=DEVICE))
+    lanes = (torch.as_tensor(selected_target_lanes, dtype=torch.long, device=DEVICE).reshape(-1)
+             if selected_target_lanes is not None else currents.clone())
+    effective_targets = torch.where((binary_actions == 1) & (lanes >= 0), lanes, currents).clamp(0, NUM_LANES - 1)
     if selected_target_lanes is not None and target_lane_masks is not None and current_lane_ids is not None:
-        lanes = torch.as_tensor(selected_target_lanes, dtype=torch.long, device=DEVICE).reshape(-1)
         lane_masks = torch.as_tensor(target_lane_masks, dtype=torch.bool, device=DEVICE).clone()
-        currents = torch.as_tensor(current_lane_ids, dtype=torch.long, device=DEVICE).reshape(-1)
         rows = torch.arange(lane_masks.shape[0], device=DEVICE)
         valid_current = (currents >= 0) & (currents < lane_masks.shape[1])
         lane_masks[rows[valid_current], currents[valid_current]] = False
@@ -3519,9 +3546,12 @@ def _hybrid_action_log_probability(policy, states, actions, pre_tanh_accels, mas
             has_candidates = selected_mask.any(dim=-1)
             if has_candidates.any():
                 candidate_rows = selected_rows[has_candidates]
-                lane_dist = policy.lane_distributions(states[change_rows][has_candidates], selected_mask[has_candidates])
-                target_log_prob[candidate_rows] = lane_dist.log_prob(lanes[change_rows][has_candidates])
-    return binary_log_prob + target_log_prob
+                lane_dist = policy.lane_distributions(states[candidate_rows], selected_mask[has_candidates])
+                target_log_prob[candidate_rows] = lane_dist.log_prob(lanes[candidate_rows])
+    pre_tanh = torch.as_tensor(pre_tanh_accels, dtype=actions.dtype, device=DEVICE).reshape(-1)
+    accel_dist = policy.acceleration_distribution(states, binary_actions, effective_targets)
+    acceleration_log_prob = policy.squashed_normal_log_prob(accel_dist, pre_tanh)
+    return binary_log_prob + target_log_prob + acceleration_log_prob
 
 
 
@@ -4403,7 +4433,7 @@ def main():
         print("GPU:", torch.cuda.get_device_name(0))
     print("Safety-aware lane-only RL + episode-level prompt-ready evaluator; no real LLM call.")
     print(f"State dimension: {STATE_DIM}; policy actions: {POLICY_ACTION_DIM}; execution envelope: {ACTION_DIM}")
-    print("Architecture: safety-augmented observation, pre-policy mask, KEEP/LEFT/RIGHT policy, deterministic acceleration controller.")
+    print("Architecture: binary KEEP/CHANGE policy, conditional target-lane head, learned conditional acceleration, and emergency-only acceleration override.")
     print(f"Episode evaluator batch size: {EVALUATOR_BATCH_SIZE}; backend: {PromptBasedEvaluator.backend_name}")
     simulator = create_highway_simulator()
     simulator.reset(seed=SEED)
