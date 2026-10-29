@@ -3031,10 +3031,10 @@ def _get_valid_target_lane_mask(self):
           f"safe_adjacent_lanes={[int(c['target_lane']) for c in self._last_safe_lane_candidates]}")
     return mask
 
-def _safety_aware_lane_selector_and_controller(self, sampled_action, selected_target_lane=None):
-    """Recheck the learned target lane immediately before execution."""
+def _safety_aware_lane_selector_and_acceleration_filter(self, sampled_action, selected_target_lane=None):
+    """Recheck the target lane and preserve learned acceleration except for emergency braking."""
     action = np.asarray(sampled_action, dtype=np.float32).reshape(-1)
-    if action.size != 2: raise ValueError("Expected [acceleration placeholder, binary action]")
+    if action.size != 2: raise ValueError("Expected [normalized acceleration, binary KEEP/CHANGE action]")
     requested = int(np.clip(np.rint(float(action[1])), 0, 1))
     base, ego = self.env.unwrapped, self.env.unwrapped.vehicle
     current = int(ego.lane_index[2])
@@ -3111,7 +3111,7 @@ def _safety_aware_lane_selector_and_controller(self, sampled_action, selected_ta
 
 HighwaySimulator.get_valid_lane_action_mask = _safety_aware_lane_action_mask
 HighwaySimulator.get_valid_target_lane_mask = _get_valid_target_lane_mask
-HighwaySimulator.filter_ttc_action = _safety_aware_lane_selector_and_controller
+HighwaySimulator.filter_ttc_action = _safety_aware_lane_selector_and_acceleration_filter
 
 
 
@@ -4431,7 +4431,7 @@ def main():
     print("Selected DEVICE:", DEVICE)
     if torch.cuda.is_available():
         print("GPU:", torch.cuda.get_device_name(0))
-    print("Safety-aware lane-only RL + episode-level prompt-ready evaluator; no real LLM call.")
+    print("Hybrid RL with learned conditional acceleration + episode-level prompt-ready evaluator; no real LLM call.")
     print(f"State dimension: {STATE_DIM}; policy actions: {POLICY_ACTION_DIM}; execution envelope: {ACTION_DIM}")
     print("Architecture: binary KEEP/CHANGE policy, conditional target-lane head, learned conditional acceleration, and emergency-only acceleration override.")
     print(f"Episode evaluator batch size: {EVALUATOR_BATCH_SIZE}; backend: {PromptBasedEvaluator.backend_name}")
