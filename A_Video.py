@@ -254,13 +254,20 @@ the vehicle is not assigned to either side.
 # Simulator triggers a replacement of surrounding vehicle
 Traffic_relevant_range = 200
 
-# Surrounding-vehicle speed distribution (m/s).
+# Ego-relative surrounding-vehicle speed distribution (m/s).
+# Each new traffic vehicle is sampled relative to the current ego speed.
 TRAFFIC_SPEED_MIN = 15.0
 TRAFFIC_SPEED_MAX = 40.0
-# A front vehicle may be at most this much slower than the rear vehicle
-# in the same lane. The reciprocal constraint is enforced when spawning
-# the rear vehicle: rear_speed <= front_speed + tolerance.
-FRONT_REAR_SPEED_TOLERANCE = 5.0
+TRAFFIC_SPEED_MATCHED_PROB = 0.60
+TRAFFIC_SPEED_POSITION_CHALLENGE_PROB = 0.25
+TRAFFIC_SPEED_MATCHED_DELTA_MIN = -3.0
+TRAFFIC_SPEED_MATCHED_DELTA_MAX = 3.0
+TRAFFIC_FRONT_SLOW_DELTA_MIN = -8.0
+TRAFFIC_FRONT_SLOW_DELTA_MAX = -3.0
+TRAFFIC_REAR_FAST_DELTA_MIN = 3.0
+TRAFFIC_REAR_FAST_DELTA_MAX = 6.0
+TRAFFIC_SPEED_BROAD_DELTA_MIN = -8.0
+TRAFFIC_SPEED_BROAD_DELTA_MAX = 6.0
 
 # Lane changes are not intrinsically rewarded or penalized.
 LANE_CHANGE_COST = 0.0
@@ -896,17 +903,58 @@ class HighwaySimulator:
         ego_lane_index = self.env.unwrapped.vehicle.lane_index
         return (ego_lane_index[0], ego_lane_index[1], int(lane_id))
 
+    def _sample_surrounding_speed(self, ego_speed, side):
+        """Sample traffic speed relative to ego, with position-aware diversity.
+
+        Mixture:
+          60% speed-matched: delta-v in [-3, +3] m/s;
+          25% position-specific challenge: slower front or faster rear;
+          15% broad diversity: delta-v in [-8, +6] m/s.
+        The final absolute speed is clipped to simulator bounds.
+        """
+        ego_speed = float(ego_speed)
+        draw = random.random()
+
+        if draw < TRAFFIC_SPEED_MATCHED_PROB:
+            delta_v = random.uniform(
+                TRAFFIC_SPEED_MATCHED_DELTA_MIN,
+                TRAFFIC_SPEED_MATCHED_DELTA_MAX,
+            )
+            regime = "matched"
+        elif draw < TRAFFIC_SPEED_MATCHED_PROB + TRAFFIC_SPEED_POSITION_CHALLENGE_PROB:
+            if side == "front":
+                delta_v = random.uniform(
+                    TRAFFIC_FRONT_SLOW_DELTA_MIN,
+                    TRAFFIC_FRONT_SLOW_DELTA_MAX,
+                )
+            else:
+                delta_v = random.uniform(
+                    TRAFFIC_REAR_FAST_DELTA_MIN,
+                    TRAFFIC_REAR_FAST_DELTA_MAX,
+                )
+            regime = "position_challenge"
+        else:
+            delta_v = random.uniform(
+                TRAFFIC_SPEED_BROAD_DELTA_MIN,
+                TRAFFIC_SPEED_BROAD_DELTA_MAX,
+            )
+            regime = "broad"
+
+        requested_speed = ego_speed + delta_v
+        speed = float(np.clip(
+            requested_speed, TRAFFIC_SPEED_MIN, TRAFFIC_SPEED_MAX
+        ))
+        return speed, float(delta_v), regime
+
     def _spawn_slot_vehicle(self, lane_id, side):
-        """Spawn a replacement at the configured gap in the requested lane."""
+        """Spawn a replacement at the configured gap with ego-relative speed."""
         base_env = self.env.unwrapped
         ego = base_env.vehicle
         lane_index = self._lane_index_for_id(lane_id)
         # Compute s in the target lane's own parameterization for placement;
         # classification and distance comparisons use the shared road frame.
         ego_s_target_lane = self._lane_longitudinal_position(ego, lane_index)
-        # Randomized reference traffic gets a distinct independently sampled
-        # gap for every lane/side pair. The same rule is used for replacements,
-        # so traffic remains varied as vehicles pass or leave the relevant range.
+        # Keep the existing independent per-lane/per-side gap randomization.
         if self.randomize_traffic_gaps:
             if side == "front":
                 gap = random.uniform(
@@ -917,50 +965,28 @@ class HighwaySimulator:
         else:
             gap = self.traffic_front_gap if side == "front" else self.traffic_rear_gap
         longitudinal = ego_s_target_lane + gap if side == "front" else ego_s_target_lane - gap
-        # Sample each surrounding vehicle independently from [15, 60] m/s,
-        # while keeping front/rear speeds in each lane reasonably consistent.
-        # The constraint is asymmetric by design: front_speed must not be
-        # more than FRONT_REAR_SPEED_TOLERANCE below rear_speed.
-        other_side = "rear" if side == "front" else "front"
-        other_vehicle = next(
-            (
-                vehicle for vehicle in base_env.road.vehicles
-                if vehicle is not ego
-                and tuple(getattr(vehicle, "lane_index", ())) == tuple(lane_index)
-                and getattr(vehicle, "_arood_traffic_side", None) == other_side
-            ),
-            None,
-        )
-        if side == "front" and other_vehicle is not None:
-            # Front speed >= rear speed - tolerance.
-            speed_low = max(TRAFFIC_SPEED_MIN, float(other_vehicle.speed) - FRONT_REAR_SPEED_TOLERANCE,)
-            speed_high = TRAFFIC_SPEED_MAX
-        elif side == "rear" and other_vehicle is not None:
-            # Rear speed <= front speed + tolerance.
-            speed_low = TRAFFIC_SPEED_MIN
-            speed_high = min(TRAFFIC_SPEED_MAX, float(other_vehicle.speed) + FRONT_REAR_SPEED_TOLERANCE,)
-        else:
-            speed_low, speed_high = TRAFFIC_SPEED_MIN, TRAFFIC_SPEED_MAX
 
-        # Guard against tiny floating-point edge cases while preserving bounds.
-        speed_low = float(np.clip(speed_low, TRAFFIC_SPEED_MIN, TRAFFIC_SPEED_MAX))
-        speed_high = float(np.clip(max(speed_low, speed_high), speed_low, TRAFFIC_SPEED_MAX))
-        speed = random.uniform(speed_low, speed_high)
+        # Generate speed from ego speed rather than independently sampling
+        # the full [TRAFFIC_SPEED_MIN, TRAFFIC_SPEED_MAX] range. Do not apply
+        # the old front/rear pairwise speed constraint: it biased the intended
+        # ego-relative mixture and could override position-aware sampling.
+        speed, delta_v, speed_regime = self._sample_surrounding_speed(
+            ego_speed=float(ego.speed), side=side
+        )
         traffic_vehicle = Vehicle.make_on_lane(
             base_env.road, lane_index, longitudinal=longitudinal, speed=speed
         )
         traffic_vehicle._arood_traffic_side = side
+        traffic_vehicle._arood_speed_delta_from_ego = delta_v
+        traffic_vehicle._arood_speed_regime = speed_regime
         base_env.road.vehicles.append(traffic_vehicle)
-        paired_speed = (
-            float(other_vehicle.speed) if other_vehicle is not None else None
-        )
         print(
             "[TRAFFIC SPAWN]",
             f"lane={lane_id}", f"side={side}",
             f"gap={gap:.1f}m", f"range={self.TRAFFIC_RELEVANT_RANGE:.1f}m",
-            f"speed={speed:.2f}m/s",
-            f"sample_range=[{speed_low:.2f},{speed_high:.2f}]",
-            f"paired_{other_side}_speed={paired_speed}",
+            f"ego_speed={float(ego.speed):.2f}m/s",
+            f"speed={speed:.2f}m/s", f"delta_v_sample={delta_v:+.2f}m/s",
+            f"regime={speed_regime}",
             f"id={id(traffic_vehicle)}",
         )
         return traffic_vehicle
