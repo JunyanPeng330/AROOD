@@ -193,7 +193,9 @@ lane_keeping_weight = 0.20
 SPEED_LIMIT = 40.0
 INITIAL_PROGRESS_WEIGHT = 4.0
 INITIAL_COLLISION_PENALTY = 5.0
-# No off-road reward term: the policy chooses only among the three valid lanes.
+# Off-road is not a reward-shaping term: the lane-action mask restricts
+# policy lane choices to the three valid lanes. A physical off-road state is
+# still handled as a defensive episode terminal in the training loops.
 INITIAL_OFFROAD_PENALTY = 0.0
 
 # TTC thresholds are used by the safety shield, not reward shaping.
@@ -2793,7 +2795,8 @@ class HighwaySimulator:
         # that invalid value.
         self._sanitize_traffic_slot_speeds("pre_env_step")
         traffic_speeds_before = self._snapshot_managed_traffic_slots()
-        obs, env_reward, terminated, truncated, env_info = self.env.step(physical_action)
+        crashed_before_step = bool(getattr(ego, "crashed", False))
+        obs, env_reward, native_terminated, truncated, env_info = self.env.step(physical_action)
         # This check must run BEFORE post-step sanitization: it records the first
         # negative value and the vehicle's action/kinematics before any clamp or
         # slot replacement can obscure the cause.
@@ -2806,7 +2809,25 @@ class HighwaySimulator:
         speed_after = float(ego_after.speed)
         lane_after_env_update = int(ego_after.lane_index[2])
         position_after_env_update = np.asarray(ego_after.position, dtype=np.float64).copy()
-        collision = bool(getattr(ego_after, "crashed", False))
+
+        # Treat a collision as a penalized transition, not an episode terminal.
+        # highway-env normally keeps ego.crashed=True and reports terminated=True.
+        # Clear that transient simulator flag only after capturing the collision
+        # event, allowing the same episode and policy to continue from the
+        # post-impact position/speed on the next simulator update.
+        collision = bool(
+            getattr(ego_after, "crashed", False) and not crashed_before_step
+        )
+        ego_crashed_after_step = bool(getattr(ego_after, "crashed", False))
+        if collision:
+            try:
+                ego_after.crashed = False
+            except (AttributeError, TypeError):
+                raise RuntimeError(
+                    "Could not clear highway-env crash latch; collision continuation "
+                    "would otherwise repeatedly terminate the episode."
+                )
+        effective_terminated = bool(native_terminated and not collision)
 
         if lane_changed and lane_after_env_update != int(requested_target_lane_id):
             print(
@@ -2845,7 +2866,13 @@ class HighwaySimulator:
         info.update({
             "safety_violation": collision,
             "collision": collision,
-            "terminated": bool(terminated),
+            # "terminated" is the effective RL terminal flag. Native collision
+            # termination is retained separately for auditability.
+            "terminated": bool(effective_terminated),
+            "native_terminated": bool(native_terminated),
+            "collision_event": bool(collision),
+            "ego_crashed_after_step": bool(ego_crashed_after_step),
+            "collision_continuation_enabled": True,
             "truncated": bool(truncated),
             "env_reward": float(env_reward),
             "lane_action_id": lane_action_id,
@@ -2888,7 +2915,7 @@ class HighwaySimulator:
               f"executed_lane={int(ego_after.lane_index[2])}",
               f"accel={acceleration:.3f}",
               f"collision={collision}")
-        return next_state.copy(), float(env_reward), bool(terminated or truncated), info
+        return next_state.copy(), float(env_reward), bool(effective_terminated or truncated), info
 
     def get_lane_keeping_steering(
             self,
@@ -3396,7 +3423,7 @@ def construct_reward(reward_specification, embedding_model=None):
                 "lane_change_completed": bool(lane_change_completed),
                 "lane_change_cost_weight": float(lane_change_cost_weight),
                 "lane_change_cost": float(lane_change_cost),
-                "offroad_penalty": 0.0,
+                "offroad_penalty": 0.0,  # Deliberately omitted; off-road remains a terminal safeguard.
                 "total_reward": reward,
             })
         print(
