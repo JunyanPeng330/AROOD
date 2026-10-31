@@ -1788,6 +1788,24 @@ class HighwaySimulator:
                           for vehicle in road_vehicles_before}
         ego_crashed_before = bool(getattr(ego, "crashed", False))
         obs, env_reward, terminated, truncated, env_info = self.env.step(physical_action)
+        # Explicitly neutralize highway-env's collision terminal signal at the
+        # adapter boundary. Some highway-env versions still return terminated=True
+        # for ego.crashed even when crash_ends_episode=False is in the config.
+        # Preserve truncation/time-limit signals, and do not alter the collision
+        # state or the fixed collision penalty applied by the RL reward function.
+        native_terminated = bool(terminated)
+        native_truncated = bool(truncated)
+        native_termination_overridden = False
+        if bool(getattr(base_env.vehicle, "crashed", False)) and bool(terminated):
+            terminated = False
+            native_termination_overridden = True
+            print(
+                "[COLLISION TERMINATION OVERRIDE]",
+                "native_terminated=True",
+                "effective_terminated=False",
+                f"truncated={native_truncated}",
+                "reason=continue_episode_after_ego_collision",
+            )
         road_vehicles_after = list(getattr(base_env.road, "vehicles", []) or [])
         newly_crashed_vehicle_ids = [
             id(vehicle) for vehicle in road_vehicles_after
@@ -1853,6 +1871,9 @@ class HighwaySimulator:
             "newly_crashed_vehicle_count": int(len(newly_crashed_vehicle_ids)),
             "terminated": bool(terminated),
             "truncated": bool(truncated),
+            "native_terminated": native_terminated,
+            "native_truncated": native_truncated,
+            "native_termination_overridden": native_termination_overridden,
             "env_reward": float(env_reward),
             "lane_action_id": lane_action_id,
             "lane_action_index": lane_action_id,
@@ -1895,7 +1916,16 @@ class HighwaySimulator:
               f"accel={acceleration:.3f}",
               f"collision_state={collision}",
             f"collision_event={collision_event}")
-        return next_state.copy(), float(env_reward), bool(terminated or truncated), info
+        effective_done = bool(terminated or truncated)
+        print(
+            "[EPISODE END FLAGS]",
+            f"native_terminated={native_terminated}",
+            f"effective_terminated={bool(terminated)}",
+            f"native_truncated={native_truncated}",
+            f"effective_done={effective_done}",
+            f"collision={collision}",
+        )
+        return next_state.copy(), float(env_reward), effective_done, info
 
     def get_lane_keeping_steering(
             self,
