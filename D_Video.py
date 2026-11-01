@@ -3041,26 +3041,194 @@ def print_action_mask_counters(tag, counters):
 
 
 # ============================================================
+# Predictive current-lane rear-threat feasibility
+# ============================================================
+
+REAR_ESCAPE_PREDICTION_HORIZON = 2.0
+REAR_ESCAPE_PREDICTION_SAMPLES = 21
+REAR_ESCAPE_MIN_GAP = float(LANE_CHANGE_ACTIVE_ABORT_GAP)
+
+
+def _rear_escape_assessment(self, lane_ttc=None):
+    """Test whether maximum front-safe acceleration can preserve a rear gap.
+
+    This is a decision-support signal, not permission to violate adjacent-lane
+    safety constraints. Traffic vehicles are assumed to maintain constant
+    speed over the short prediction horizon (conservative acceleration
+    uncertainty can be added in a later experiment).
+    """
+    if lane_ttc is None:
+        lane_ttc = self._min_ttc_by_lane()
+
+    ego = self.env.unwrapped.vehicle
+    current_lane = int(ego.lane_index[2])
+    values = lane_ttc.get(current_lane, {})
+    rear_speed = values.get("rear_speed")
+    rear_gap = float(values.get("rear_gap", float("inf")))
+    rear_ttc = float(values.get("rear_ttc", float("inf")))
+    ego_speed = max(0.0, float(ego.speed))
+
+    result = {
+        "rear_threat": False,
+        "rear_escape_needed": False,
+        "rear_ttc": rear_ttc,
+        "rear_gap": rear_gap,
+        "rear_speed": rear_speed,
+        "max_front_safe_acceleration_mps2": 0.0,
+        "predicted_min_rear_gap_m": rear_gap,
+        "predicted_min_front_gap_m": float(values.get("front_gap", float("inf"))),
+        "prediction_horizon_s": float(REAR_ESCAPE_PREDICTION_HORIZON),
+        "reason": "no_imminent_rear_threat",
+    }
+
+    if rear_speed is None or float(rear_speed) <= ego_speed + 0.1 or rear_ttc > ttc_danger_threshold:
+        return result
+
+    result["rear_threat"] = True
+    front_speed = values.get("front_speed")
+    front_gap = float(values.get("front_gap", float("inf")))
+    rear_speed = float(rear_speed)
+    horizon = float(REAR_ESCAPE_PREDICTION_HORIZON)
+    times = np.linspace(0.0, horizon, int(REAR_ESCAPE_PREDICTION_SAMPLES))
+
+    # highway-env's continuous longitudinal action is physically bounded to
+    # approximately +/-5 m/s^2; MAX_PHYSICAL_ACCELERATION is a reward scale.
+    physical_accel_limit = float(min(
+        5.0, max(0.0, float(getattr(ego, "MAX_ACCELERATION", 5.0)))
+    ))
+    feasible_accelerations = []
+    best_rear_min_gap = -float("inf")
+    best_acceleration = 0.0
+    best_front_min_gap = front_gap
+
+    for acceleration in np.linspace(0.0, physical_accel_limit, 51):
+        ego_positions = ego_speed * times + 0.5 * acceleration * times ** 2
+        predicted_rear_gap = rear_gap + (ego_speed - rear_speed) * times + 0.5 * acceleration * times ** 2
+        min_rear_gap = float(np.min(predicted_rear_gap))
+
+        if front_speed is not None and np.isfinite(front_gap):
+            predicted_front_gap = (
+                front_gap
+                + (float(front_speed) - ego_speed) * times
+                - 0.5 * acceleration * times ** 2
+            )
+            min_front_gap = float(np.min(predicted_front_gap))
+            front_safe = min_front_gap >= float(MIN_FOLLOWING_GAP)
+        else:
+            min_front_gap = float("inf")
+            front_safe = True
+
+        if front_safe:
+            feasible_accelerations.append((float(acceleration), min_rear_gap, min_front_gap))
+            if min_rear_gap > best_rear_min_gap:
+                best_rear_min_gap = min_rear_gap
+                best_acceleration = float(acceleration)
+                best_front_min_gap = min_front_gap
+
+    # Zero acceleration should normally remain feasible unless the front gap
+    # is already below the minimum. In that case, avoid treating acceleration
+    # as safe and leave the acceleration decision to the ordinary front shield.
+    if feasible_accelerations:
+        max_front_safe_acceleration = max(item[0] for item in feasible_accelerations)
+        # Re-evaluate rear clearance using the strongest acceleration that
+        # remains front-safe, rather than choosing acceleration solely by rear gap.
+        chosen = max(item for item in feasible_accelerations if item[0] == max_front_safe_acceleration)
+        max_front_safe_acceleration, predicted_rear_min_gap, predicted_front_min_gap = chosen
+    else:
+        max_front_safe_acceleration = 0.0
+        predicted_rear_min_gap = rear_gap + (ego_speed - rear_speed) * horizon
+        predicted_front_min_gap = front_gap
+
+    escape_needed = predicted_rear_min_gap < REAR_ESCAPE_MIN_GAP
+    result.update({
+        "rear_escape_needed": bool(escape_needed),
+        "max_front_safe_acceleration_mps2": float(max_front_safe_acceleration),
+        "predicted_min_rear_gap_m": float(predicted_rear_min_gap),
+        "predicted_min_front_gap_m": float(predicted_front_min_gap),
+        "reason": (
+            "max_front_safe_acceleration_insufficient"
+            if escape_needed else "rear_threat_manageable_by_front_safe_acceleration"
+        ),
+    })
+    print(
+        "[REAR-ESCAPE FEASIBILITY]",
+        f"current_lane={current_lane}",
+        f"rear_ttc_s={rear_ttc:.3f}",
+        f"rear_gap_m={rear_gap:.3f}",
+        f"rear_speed_mps={rear_speed:.3f}",
+        f"ego_speed_mps={ego_speed:.3f}",
+        f"max_front_safe_accel_mps2={max_front_safe_acceleration:.3f}",
+        f"predicted_min_front_gap_m={predicted_front_min_gap:.3f}",
+        f"predicted_min_rear_gap_m={predicted_rear_min_gap:.3f}",
+        f"rear_escape_needed={escape_needed}",
+        f"horizon_s={horizon:.2f}",
+    )
+    return result
+
+
+def _select_safe_lane_with_rear_escape_priority(self, lane_ttc=None):
+    """Keep learned target ranking normally; prioritize rear clearance in escape cases."""
+    if lane_ttc is None:
+        lane_ttc = self._min_ttc_by_lane()
+    candidates = [
+        item for item in self._safe_lane_change_candidates(lane_ttc)
+        if int(item["target_lane"]) != int(self.env.unwrapped.vehicle.lane_index[2])
+    ]
+    if not candidates:
+        return None
+
+    assessment = self._rear_escape_assessment(lane_ttc)
+    if assessment["rear_escape_needed"]:
+        selected = max(
+            candidates,
+            key=lambda item: (
+                float(item.get("rear_ttc", float("inf"))),
+                float(item.get("rear_gap", float("inf"))),
+                float(item.get("front_ttc", float("inf"))),
+            ),
+        )
+        selected = dict(selected)
+        selected["selection_principle"] = "rear_escape_priority_then_front_rear_safety"
+        print(
+            "[REAR-ESCAPE TARGET PRIORITY]",
+            f"safe_targets={[int(c['target_lane']) for c in candidates]}",
+            f"selected={int(selected['target_lane'])}",
+            f"selected_rear_ttc={float(selected.get('rear_ttc', float('inf'))):.3f}",
+            f"selected_rear_gap={float(selected.get('rear_gap', float('inf'))):.3f}",
+        )
+        return selected
+
+    selected = max(candidates, key=lambda item: (item["utility"], -item["target_lane"]))
+    return selected
+
+
+# ============================================================
 # Non-intervening lane selector and prompt-ready episode evaluator
 # ============================================================
 
 def _safety_aware_lane_action_mask(self):
-    """Binary [KEEP, CHANGE] mask; CHANGE is allowed when any adjacent lane is safe."""
+    """Binary [KEEP, CHANGE] mask; rear-threat escape adds urgency, not unsafe permission."""
     if getattr(self, "_lane_change_active", False):
         self._last_safe_lane_candidates = []
         return np.asarray([True, False], dtype=bool)
-    ranked = self._safe_lane_change_candidates(self._min_ttc_by_lane())
+    lane_ttc = self._min_ttc_by_lane()
+    ranked = self._safe_lane_change_candidates(lane_ttc)
     current_lane = int(self.env.unwrapped.vehicle.lane_index[2])
     change_candidates = [c for c in ranked if int(c["target_lane"]) != current_lane]
+    assessment = self._rear_escape_assessment(lane_ttc)
     self._last_safe_lane_candidates = change_candidates
     mask = np.asarray([True, bool(change_candidates)], dtype=bool)
-    print("[BINARY SAFETY MASK]", f"mask={mask.tolist()}",
+    print("[BINARY SAFETY MASK]",
+          f"mask={mask.tolist()}",
           f"ranked_lanes={[int(c['target_lane']) for c in ranked]}",
-          f"valid_change_target_lanes={[int(c['target_lane']) for c in change_candidates]}")
+          f"valid_change_target_lanes={[int(c['target_lane']) for c in change_candidates]}",
+          f"rear_escape_needed={assessment['rear_escape_needed']}",
+          f"reason={assessment['reason']}",
+          "policy=KEEP_REMAINS_AVAILABLE;CHANGE_ENABLED_ONLY_FOR_HARD_SAFE_TARGETS")
     return mask
 
 def _get_valid_target_lane_mask(self):
-    """Mask every safe adjacent target lane; TTC is a safety filter, not a ranking rule."""
+    """Expose all hard-safe adjacent lanes; rear escape affects ranking, not admissibility."""
     mask = np.zeros(NUM_LANES, dtype=bool)
     current_lane = int(self.env.unwrapped.vehicle.lane_index[2])
     if getattr(self, "_lane_change_active", False):
@@ -3068,7 +3236,9 @@ def _get_valid_target_lane_mask(self):
         if 0 <= current_lane < NUM_LANES:
             mask[current_lane] = True
         return mask
-    ranked = self._safe_lane_change_candidates(self._min_ttc_by_lane())
+    lane_ttc = self._min_ttc_by_lane()
+    ranked = self._safe_lane_change_candidates(lane_ttc)
+    assessment = self._rear_escape_assessment(lane_ttc)
     self._last_safe_lane_candidates = [
         c for c in ranked if int(c["target_lane"]) != current_lane
     ]
@@ -3076,16 +3246,17 @@ def _get_valid_target_lane_mask(self):
         lane = int(c["target_lane"])
         if 0 <= lane < NUM_LANES:
             mask[lane] = True
-    # When no adjacent lane passes the hard safety checks, the current lane
-    # remains the fallback candidate and CHANGE is masked off.
-    print("[LANE RANKING CANDIDATES]", f"current_lane={current_lane}",
+    print("[LANE RANKING CANDIDATES]",
+          f"current_lane={current_lane}",
           f"candidate_lane_mask={mask.tolist()}",
           f"ranked_lanes={[int(c['target_lane']) for c in ranked]}",
-          f"safe_adjacent_lanes={[int(c['target_lane']) for c in self._last_safe_lane_candidates]}")
+          f"safe_adjacent_lanes={[int(c['target_lane']) for c in self._last_safe_lane_candidates]}",
+          f"rear_escape_needed={assessment['rear_escape_needed']}",
+          f"rear_escape_reason={assessment['reason']}")
     return mask
 
 def _safety_aware_lane_selector_and_acceleration_filter(self, sampled_action, selected_target_lane=None):
-    """Recheck the target lane and preserve learned acceleration except for emergency braking."""
+    """Recheck target safety and apply predictive rear-escape acceleration when needed."""
     action = np.asarray(sampled_action, dtype=np.float32).reshape(-1)
     if action.size != 2: raise ValueError("Expected [normalized acceleration, binary KEEP/CHANGE action]")
     requested = int(np.clip(np.rint(float(action[1])), 0, 1))
@@ -3094,6 +3265,7 @@ def _safety_aware_lane_selector_and_acceleration_filter(self, sampled_action, se
     metrics = self._min_ttc_by_lane()
     ranked = self._safe_lane_change_candidates(metrics)
     safe = {int(c["target_lane"]) for c in ranked if int(c["target_lane"]) != current}
+    assessment = self._rear_escape_assessment(metrics)
     selected = None if selected_target_lane is None else int(selected_target_lane)
     target, executed, blocked, reason = current, requested, False, "none"
     if requested == 1:
@@ -3105,7 +3277,6 @@ def _safety_aware_lane_selector_and_acceleration_filter(self, sampled_action, se
             blocked, reason, executed = True, "target_lane_failed_execution_time_safety_recheck", 0
         else: target = selected
     vals = metrics.get(target, {})
-    front_speed, front_gap = vals.get("front_speed"), float(vals.get("front_gap", 100.0))
     current_vals = metrics.get(current, {})
     print(
         "[MASK DEBUG][CURRENT LANE TRAFFIC]",
@@ -3116,16 +3287,25 @@ def _safety_aware_lane_selector_and_acceleration_filter(self, sampled_action, se
         f"current_rear_gap_m={float(current_vals.get('rear_gap', float('inf'))):.3f}",
     )
 
-    # The policy proposes acceleration after selecting KEEP/CHANGE and target lane.
-    # Routine speed matching must not overwrite learned acceleration.
     accel = float(np.clip(action[0], -1.0, 1.0))
-    cur = metrics.get(current, {})
-    emergency = (float(cur.get("front_ttc", float("inf"))) <= SAFETY_OVERRIDE_TTC
-                 or float(cur.get("front_gap", float("inf"))) <= MIN_FOLLOWING_GAP)
-    policy_acceleration_before_emergency = float(accel)
+    emergency = (float(current_vals.get("front_ttc", float("inf"))) <= SAFETY_OVERRIDE_TTC
+                 or float(current_vals.get("front_gap", float("inf"))) <= MIN_FOLLOWING_GAP)
+    policy_acceleration_before_override = float(accel)
+    intervention_reason = "none"
+
     if emergency:
         accel = min(accel, -0.5)
-    acceleration_overridden = abs(float(accel) - float(policy_acceleration_before_emergency)) > 1e-6
+        intervention_reason = "current_lane_front_emergency"
+    elif assessment["rear_escape_needed"] and requested == 0:
+        # While KEEP remains the policy's choice, use the strongest acceleration
+        # predicted to remain front-safe. Reassess at the next policy decision;
+        # this does not force a lane change or weaken target-lane TTC/gap checks.
+        physical_accel = float(assessment["max_front_safe_acceleration_mps2"])
+        normalized_accel = float(np.clip(physical_accel / 5.0, 0.0, 1.0))
+        accel = max(accel, normalized_accel)
+        intervention_reason = "rear_escape_buy_time_with_max_front_safe_acceleration"
+
+    acceleration_overridden = abs(float(accel) - float(policy_acceleration_before_override)) > 1e-6
     req_id = None
     if requested == 1:
         req_id = int(getattr(self, "_lane_request_trace_sequence", 0)) + 1
@@ -3142,12 +3322,16 @@ def _safety_aware_lane_selector_and_acceleration_filter(self, sampled_action, se
         "lane_request_direction": ("LEFT" if selected is not None and selected > current else "RIGHT" if selected is not None and selected < current else "NONE"),
         "lane_request_source_lane": current, "lane_request_target_lane": int(selected if selected is not None else current),
         "lane_request_decision": "TARGET_SELECTED" if requested == 1 and not blocked else ("REJECTED" if blocked else "KEEP"),
-        "target_selector_mode": "learned_lane_ranking_head_plus_execution_recheck",
-        "safety_filter_applied": bool(blocked or emergency), "overridden": bool(blocked or emergency),
+        "target_selector_mode": "rear_escape_priority_when_needed_plus_execution_recheck",
+        "safety_filter_applied": bool(blocked or emergency or acceleration_overridden),
+        "overridden": bool(blocked or emergency or acceleration_overridden),
         "emergency_braking": bool(emergency),
-        "policy_acceleration_before_emergency": policy_acceleration_before_emergency,
+        "rear_threat_detected": bool(assessment["rear_threat"]),
+        "rear_escape_needed": bool(assessment["rear_escape_needed"]),
+        "rear_escape_assessment": dict(assessment),
+        "policy_acceleration_before_override": policy_acceleration_before_override,
         "acceleration_overridden": bool(acceleration_overridden),
-        "intervention_reason": "current_lane_emergency" if emergency else ("unsafe_target_rejected" if blocked else "none"),
+        "intervention_reason": intervention_reason if not blocked else "unsafe_target_rejected",
         "sampled_action": action.copy(), "filtered_action": np.asarray([accel, executed], dtype=np.float32),
         "proposed_policy_acceleration": float(action[0]),
         "executed_acceleration": float(accel),
@@ -3156,12 +3340,17 @@ def _safety_aware_lane_selector_and_acceleration_filter(self, sampled_action, se
         "lane_change_candidate_front_ttc": float(vals.get("front_ttc", float("inf"))),
         "lane_change_candidate_rear_ttc": float(vals.get("rear_ttc", float("inf"))),
     }
-    print("[LEARNED TARGET CHECK]", f"requested={('KEEP','CHANGE')[requested]}",
-          f"selected={selected}", f"safe={sorted(safe)}", f"executed={('KEEP','CHANGE')[executed]}",
-          f"blocked={blocked}", f"reason={reason}")
+    print("[LEARNED TARGET CHECK]",
+          f"requested={('KEEP','CHANGE')[requested]}",
+          f"selected={selected}", f"safe={sorted(safe)}",
+          f"rear_escape_needed={assessment['rear_escape_needed']}",
+          f"executed={('KEEP','CHANGE')[executed]}",
+          f"accel={accel:+.3f}", f"blocked={blocked}", f"reason={reason}")
     return np.asarray([accel, executed], dtype=np.float32), info
 
 
+HighwaySimulator._rear_escape_assessment = _rear_escape_assessment
+HighwaySimulator._select_best_safe_lane_candidate = _select_safe_lane_with_rear_escape_priority
 HighwaySimulator.get_valid_lane_action_mask = _safety_aware_lane_action_mask
 HighwaySimulator.get_valid_target_lane_mask = _get_valid_target_lane_mask
 HighwaySimulator.filter_ttc_action = _safety_aware_lane_selector_and_acceleration_filter
