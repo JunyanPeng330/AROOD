@@ -841,7 +841,8 @@ class HighwaySimulator:
                         (front_gap-MIN_FOLLOWING_GAP)/max(comfortable_gap-MIN_FOLLOWING_GAP,1e-6),
                         0.0,1.0
                     ))
-                    expected_accel *= gap_factor
+                    if expected_accel > 0.0:
+                        expected_accel *= gap_factor
 
                 # Find the strongest nonnegative acceleration that keeps the
                 # predicted front gap above MIN_FOLLOWING_GAP for two seconds.
