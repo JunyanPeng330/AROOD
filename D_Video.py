@@ -295,7 +295,7 @@ VEHICLE_FEATURES = 7
 NUM_VEHICLE_ROWS = NUM_SURROUNDING_VEHICLES + 1
 VEHICLE_STATE_DIM = NUM_VEHICLE_ROWS * VEHICLE_FEATURES
 CONTEXT_DIM = 4
-SAFETY_FEATURES_PER_LANE = 6
+SAFETY_FEATURES_PER_LANE = 8  # six existing safety values + two acceleration-opportunity values
 SAFETY_FEATURES_DIM = NUM_LANES * SAFETY_FEATURES_PER_LANE
 STATE_DIM = VEHICLE_STATE_DIM + CONTEXT_DIM + SAFETY_FEATURES_DIM
 ACTION_DIM = 2  # execution action [normalized learned acceleration, binary KEEP/CHANGE]
@@ -712,8 +712,7 @@ def lane_policy_diagnostic(policy, state, valid_action_mask, sampled_action, pha
 class HighwaySimulator:
     """Highway-env wrapper with six managed traffic vehicles.
 
-    State is 53-D: seven 7-feature vehicle rows (ego + six traffic vehicles)
-    and four context values.
+    State includes seven 7-feature vehicle rows, four context values, and eight per-lane features: front/rear gaps, front/rear TTCs, front/rear speeds, expected acceleration, and maximum front-safe acceleration.
     """
 
     def __init__(self, state_dim=STATE_DIM, action_dim=ACTION_DIM,
@@ -804,15 +803,77 @@ class HighwaySimulator:
         safety=np.zeros(SAFETY_FEATURES_DIM,dtype=np.float32)
         try:
             metrics=self._min_ttc_by_lane()
+            # Existing six safety values are retained; two acceleration
+            # opportunity values are appended for each lane.
             keys=["front_gap","rear_gap","front_ttc","rear_ttc","front_speed","rear_speed"]
             scales=[100.0,100.0,10.0,10.0,40.0,40.0]
+            ego_speed=max(0.0,float(vehicle.speed))
+            prediction_times=np.linspace(0.0,2.0,21)
+            acceleration_limit=5.0  # highway-env ContinuousAction range
+
             for lane_id in range(NUM_LANES):
                 vals=metrics.get(lane_id,{})
+                offset=lane_id*SAFETY_FEATURES_PER_LANE
                 for j,(key,scale) in enumerate(zip(keys,scales)):
-                    value=vals.get(key,scale); value=float(value) if value is not None else scale
+                    value=vals.get(key,scale)
+                    value=float(value) if value is not None else scale
                     if not np.isfinite(value): value=scale*1.5
-                    safety[lane_id*SAFETY_FEATURES_PER_LANE+j]=np.clip(value/scale,-1.0,1.5)
-        except (AttributeError,KeyError,TypeError,ValueError,IndexError): pass
+                    safety[offset+j]=np.clip(value/scale,-1.0,1.5)
+
+                front_speed=vals.get("front_speed")
+                front_gap=float(vals.get("front_gap",float("inf")))
+                front_present=vals.get("front_vehicle_id") is not None
+
+                # Follow the front vehicle's speed where present; otherwise
+                # move toward the configured speed limit. Attenuate acceleration
+                # when the available front gap is small.
+                reference_speed=(
+                    float(front_speed) if front_present and front_speed is not None
+                    else float(SPEED_LIMIT)
+                )
+                expected_accel=float(np.clip(
+                    SPEED_MATCH_KV*(reference_speed-ego_speed),
+                    -acceleration_limit,acceleration_limit
+                ))
+                if front_present and np.isfinite(front_gap):
+                    comfortable_gap=MIN_FOLLOWING_GAP+DESIRED_TIME_HEADWAY*ego_speed
+                    gap_factor=float(np.clip(
+                        (front_gap-MIN_FOLLOWING_GAP)/max(comfortable_gap-MIN_FOLLOWING_GAP,1e-6),
+                        0.0,1.0
+                    ))
+                    expected_accel *= gap_factor
+
+                # Find the strongest nonnegative acceleration that keeps the
+                # predicted front gap above MIN_FOLLOWING_GAP for two seconds.
+                feasible=[]
+                for candidate_accel in np.linspace(0.0,acceleration_limit,51):
+                    if front_present and np.isfinite(front_gap) and front_speed is not None:
+                        predicted_gap=(
+                            front_gap+(float(front_speed)-ego_speed)*prediction_times
+                            -0.5*candidate_accel*prediction_times**2
+                        )
+                        front_safe=float(np.min(predicted_gap))>=MIN_FOLLOWING_GAP
+                    else:
+                        front_safe=True
+                    if front_safe:
+                        feasible.append(float(candidate_accel))
+                max_front_safe_accel=max(feasible) if feasible else 0.0
+
+                # Normalize both values by the simulator's +5 m/s^2 limit.
+                safety[offset+6]=float(np.clip(expected_accel/acceleration_limit,-1.0,1.0))
+                safety[offset+7]=float(np.clip(max_front_safe_accel/acceleration_limit,0.0,1.0))
+                print(
+                    "[LANE ACCELERATION OPPORTUNITY]",
+                    f"lane={lane_id}",
+                    f"ego_speed_mps={ego_speed:.2f}",
+                    f"front_speed_mps={front_speed}",
+                    f"front_gap_m={front_gap:.2f}",
+                    f"expected_accel_mps2={expected_accel:.3f}",
+                    f"max_front_safe_accel_mps2={max_front_safe_accel:.3f}",
+                    f"front_vehicle_present={front_present}",
+                )
+        except (AttributeError,KeyError,TypeError,ValueError,IndexError):
+            pass
         return np.nan_to_num(np.concatenate([state,safety]),nan=0.0,posinf=1.0,neginf=-1.0).astype(np.float32)
 
 
