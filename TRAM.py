@@ -331,8 +331,11 @@ TRAM_ENTROPY_COEF = 1e-3
 TRAM_META_BASELINE_MOMENTUM = 0.90
 TRAM_ATTENTION_ENABLED = os.environ.get("AROOD_TRAM_ATTENTION", "1").strip().lower() not in {"0", "false", "no", "off"}
 TRAM_RUN_TAG = "TRAM_Attention" if TRAM_ATTENTION_ENABLED else "TRAM_Fixed"
-TRAM_COMPONENT_NAMES = ("speed", "acceleration", "lane_utility", "persistence")
-TRAM_FIXED_WEIGHTS = np.asarray([0.45, 0.15, 0.25, 0.15], dtype=np.float32)
+# Exact reward terms shared with E_Video.py; unit weights reproduce its reward.
+TRAM_COMPONENT_NAMES = ("progress", "collision", "lane_change_cost")
+TRAM_FIXED_WEIGHTS = np.ones(3, dtype=np.float32)
+TRAM_COLLISION_WEIGHT_MIN = 0.5
+TRAM_COLLISION_WEIGHT_MAX = 2.5
 TRAM_MODEL_PATH = f"policy/{TRAM_RUN_TAG}_weights.pt"
 TRAM_WEIGHT_PLOT_PATH = f"figure/{TRAM_RUN_TAG}_weights.png"
 TRAM_META_BASELINE_INITIAL = 0.50
@@ -3111,9 +3114,11 @@ class TemporalRewardAttention(nn.Module):
             mean_weights * float(TRAM_DIRICHLET_CONCENTRATION)
         ).clamp_min(0.05)
         distribution = torch.distributions.Dirichlet(concentration)
-        if deterministic:
+        # First online transition reproduces E_Video.py exactly: [1, 1, 1].
+        if deterministic or previous_weights is None:
             sampled = mean_weights
-            log_prob, entropy = None, None
+            log_prob = distribution.log_prob(sampled).reshape(()) if not deterministic else None
+            entropy = distribution.entropy().mean() if not deterministic else None
         else:
             sample_np = self.rng.dirichlet(
                 concentration.detach().cpu().numpy().reshape(-1)
@@ -3126,7 +3131,16 @@ class TemporalRewardAttention(nn.Module):
             used = TRAM_ALPHA_SMOOTHING * previous + (1.0 - TRAM_ALPHA_SMOOTHING) * sampled
         else:
             used = sampled
-        used = used / used.sum(dim=-1, keepdim=True).clamp_min(1e-8)
+        used = used * float(len(TRAM_COMPONENT_NAMES))
+        collision_weight = used[:, 1].clamp(
+            min=TRAM_COLLISION_WEIGHT_MIN, max=TRAM_COLLISION_WEIGHT_MAX
+        )
+        other_weights = used[:, [0, 2]]
+        other_weights = other_weights / other_weights.sum(dim=-1, keepdim=True).clamp_min(1e-8)
+        other_weights = other_weights * (float(len(TRAM_COMPONENT_NAMES)) - collision_weight).unsqueeze(-1)
+        used = torch.stack(
+            [other_weights[:, 0], collision_weight, other_weights[:, 1]], dim=-1
+        )
         return used.reshape(-1), log_prob, entropy
 
     def update_from_episode(self, log_probabilities, entropies, episode_score, baseline):
@@ -4032,22 +4046,32 @@ def collect_reference_rollouts(simulator, policy, reward_function):
 
             current_speed = float(simulator.env.unwrapped.vehicle.speed)
             ego_acceleration = (current_speed - previous_speed_mps) * float(simulation_frequency)
-            lane_changed = bool(step_info.get("lane_change_completed_instantly", False)) if isinstance(step_info, dict) else False
-            components, matured_lane_utilities = calculate_tram_reward_components(
-                current_speed, ego_acceleration, lane_changed, speed_history, lane_utility_tracker
+            reward_safety_info = dict(safety_info or {})
+            reward_safety_info["lane_change_accepted"] = bool(
+                step_info.get("lane_change_completed_instantly", False)
+            ) if isinstance(step_info, dict) else False
+            reward_components = {}
+            reward = compute_reward(
+                reward_function=reward_function,
+                behavior_description="",
+                safety_violation=safety_violation,
+                action=np.asarray(
+                    step_info.get("filtered_policy_action", filtered_action)
+                    if isinstance(step_info, dict) else filtered_action,
+                    dtype=np.float32,
+                ),
+                lane_deviation=lane_deviation,
+                offroad=offroad,
+                min_ttc=min_ttc,
+                lane_change_allowed=True,
+                ego_speed=current_speed,
+                ego_acceleration_mps2=ego_acceleration,
+                safety_info=reward_safety_info,
+                policy_sampled_action=sampled_action,
+                reward_diagnostics=reward_components,
             )
-            speed_history.append(current_speed)
-            collision_penalty = float(INITIAL_COLLISION_PENALTY) if safety_violation else 0.0
-            reward = float(np.dot(TRAM_FIXED_WEIGHTS, components) - collision_penalty)
-            reward_components = {
-                name: float(value) for name, value in zip(TRAM_COMPONENT_NAMES, components.tolist())
-            }
-            reward_components.update({
-                "reward_weights": TRAM_FIXED_WEIGHTS.tolist(),
-                "collision_penalty": collision_penalty,
-                "lane_utility_matured": [float(v) for v in matured_lane_utilities],
-                "total_reward": reward,
-            })
+            reward_components["reward_weights"] = TRAM_FIXED_WEIGHTS.tolist()
+            reward_components["total_reward"] = float(reward)
 
             trajectory["states"].append(state.copy())
             trajectory["actions"].append(sampled_action.copy())
@@ -4269,7 +4293,8 @@ def train_pure_rl(simulator, policy, tram):
         f"history={TRAM_HISTORY_LEN}",
         f"d_model={TRAM_D_MODEL}",
         f"heads={TRAM_NUM_HEADS}",
-        f"fixed_weights={TRAM_FIXED_WEIGHTS.tolist()}",
+        f"initial_component_weights={TRAM_FIXED_WEIGHTS.tolist()}",
+        f"collision_weight_bounds=[{TRAM_COLLISION_WEIGHT_MIN}, {TRAM_COLLISION_WEIGHT_MAX}]",
         "OOD_detector=disabled",
     )
 
@@ -4306,7 +4331,7 @@ def train_pure_rl(simulator, policy, tram):
         speed_history = deque(maxlen=TRAM_HISTORY_LEN)
         component_history = deque(maxlen=TRAM_HISTORY_LEN)
         lane_utility_tracker = LaneChangeUtilityTracker(SPEED_LIMIT)
-        previous_attention_weights = torch.as_tensor(TRAM_FIXED_WEIGHTS, dtype=torch.float32, device=DEVICE)
+        previous_attention_weights = None  # First attention output is exactly [1, 1, 1].
         attention_log_probabilities = []
         attention_entropies = []
         attention_weights_episode = []
@@ -4407,12 +4432,30 @@ def train_pure_rl(simulator, policy, tram):
             episode_speed_samples.append(current_speed_mps)
             ego_acceleration_mps2 = (current_speed_mps - previous_speed_mps) * float(simulation_frequency)
             lane_changed = bool(step_info.get("lane_change_completed_instantly", False)) if isinstance(step_info, dict) else False
-            components, matured_lane_utilities = calculate_tram_reward_components(
-                current_speed_mps, ego_acceleration_mps2, lane_changed, speed_history, lane_utility_tracker
+            reward_safety_info = dict(safety_info or {})
+            reward_safety_info["lane_change_accepted"] = bool(lane_changed)
+            reward_components = {}
+            base_reward = compute_reward(
+                reward_function=reward_function,
+                behavior_description="",
+                safety_violation=safety_violation,
+                action=executed_action,
+                lane_deviation=lane_deviation,
+                offroad=offroad,
+                min_ttc=min_ttc,
+                lane_change_allowed=True,
+                ego_speed=current_speed_mps,
+                ego_acceleration_mps2=ego_acceleration_mps2,
+                safety_info=reward_safety_info,
+                policy_sampled_action=sampled_action,
+                reward_diagnostics=reward_components,
             )
-            speed_history.append(current_speed_mps)
-            component_history.append(components.copy())
-
+            attention_components = np.asarray([
+                float(reward_components["progress_reward"]),
+                float(reward_components["collision_penalty"]),
+                float(reward_components["lane_change_cost"]),
+            ], dtype=np.float32)
+            component_history.append(attention_components)
             if TRAM_ATTENTION_ENABLED:
                 alpha_tensor, alpha_log_prob, alpha_entropy = tram.get_weights(
                     list(component_history), previous_weights=previous_attention_weights,
@@ -4426,17 +4469,20 @@ def train_pure_rl(simulator, policy, tram):
             previous_attention_weights = alpha_tensor.detach()
             alpha_values = alpha_tensor.detach().cpu().numpy().astype(float)
             attention_weights_episode.append(alpha_values.tolist())
-
-            collision_penalty = float(INITIAL_COLLISION_PENALTY) if safety_violation else 0.0
-            reward = float(np.dot(alpha_values, components) - collision_penalty)
-            reward_components = {
-                name: float(value) for name, value in zip(TRAM_COMPONENT_NAMES, components.tolist())
-            }
+            progress_term = float(reward_components["progress_reward"])
+            collision_term = float(reward_components["collision_penalty"])
+            lane_change_term = float(reward_components["lane_change_cost"])
+            reward = float(
+                alpha_values[0] * progress_term
+                - alpha_values[1] * collision_term
+                - alpha_values[2] * lane_change_term
+            )
             reward_components.update({
                 "reward_weights": alpha_values.tolist(),
-                "collision_penalty": collision_penalty,
-                "lane_change_completed": bool(lane_changed),
-                "lane_utility_matured": [float(v) for v in matured_lane_utilities],
+                "unweighted_evideo_reward": float(base_reward),
+                "weighted_progress_reward": float(alpha_values[0] * progress_term),
+                "weighted_collision_penalty": float(alpha_values[1] * collision_term),
+                "weighted_lane_change_cost": float(alpha_values[2] * lane_change_term),
                 "total_reward": reward,
             })
 
@@ -4676,7 +4722,7 @@ def train_pure_rl(simulator, policy, tram):
         )
         print(
             "[TRAM EPISODE UPDATE]",
-            f"weights={np.round(mean_attention_weights, 3).tolist()}",
+            f"weights(progress,collision,lane_change_cost)={np.round(mean_attention_weights, 3).tolist()}",
             f"meta_score={episode_meta_score:.4f}",
             f"lane_change_efficiency={lane_efficiency:.3f}",
             f"meta_loss={tram_loss}",
