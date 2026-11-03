@@ -3570,10 +3570,12 @@ def calculate_min_ttc(simulator):
 
 
 def construct_reward(reward_specification, embedding_model=None):
-    """Reward measured acceleration below the speed limit and max acceleration at/above it.
+    """Reward measured acceleration, with a proportional cost for executed lane changes.
 
-    Collision penalty remains a separate term. Lane changes carry no reward
-    cost, and TTC/gap remain independent safety constraints rather than reward terms.
+    Below the speed limit, use measured longitudinal acceleration. At/above the
+    speed limit, use MAX_PHYSICAL_ACCELERATION. An executed CHANGE action incurs
+    -0.5 * abs(acceleration_reward); KEEP incurs no lane-change cost.
+    Collision penalty remains separate. TTC/gap remain safety constraints only.
     """
     def reward_function(
         behavior_description, safety_violation, action, lane_deviation, offroad,
@@ -3590,14 +3592,28 @@ def construct_reward(reward_specification, embedding_model=None):
             acceleration_reward = actual_acceleration_reward
             reward_mode = "measured_acceleration_below_speed_limit"
 
+        # action is the executed hybrid action: [normalized acceleration,
+        # 0=KEEP / 1=CHANGE]. A rejected request is expected to be represented
+        # as KEEP by the execution/safety layer and therefore is not charged.
+        executed_action = np.asarray(action, dtype=np.float32).reshape(-1)
+        lane_change_chosen = bool(
+            executed_action.size >= 2
+            and int(np.clip(np.rint(float(executed_action[1])), 0, 1)) == 1
+        )
+        lane_change_cost_coefficient = 0.5
+        lane_change_cost = (
+            -lane_change_cost_coefficient * abs(float(acceleration_reward))
+            if lane_change_chosen else 0.0
+        )
+
         collision_penalty = (
             max(0.0, float(reward_specification.get("safety_weight", INITIAL_COLLISION_PENALTY)))
             if bool(safety_violation) else 0.0
         )
-        reward = float(acceleration_reward - collision_penalty)
+        reward = float(acceleration_reward + lane_change_cost - collision_penalty)
         if reward_diagnostics is not None:
             reward_diagnostics.update({
-                "reward_objective": "piecewise_acceleration_minus_collision_penalty",
+                "reward_objective": "piecewise_acceleration_plus_lane_change_cost_minus_collision_penalty",
                 "reward_mode": reward_mode,
                 "speed_limit_reached": speed_limit_reached,
                 "ego_speed_mps": float(ego_speed),
@@ -3605,23 +3621,26 @@ def construct_reward(reward_specification, embedding_model=None):
                 "actual_acceleration_mps2": actual_acceleration_reward,
                 "max_physical_acceleration_mps2": float(MAX_PHYSICAL_ACCELERATION),
                 "acceleration_reward": float(acceleration_reward),
+                "lane_change_chosen": lane_change_chosen,
+                "lane_change_cost_coefficient": lane_change_cost_coefficient,
+                "lane_change_cost": float(lane_change_cost),
                 "collision_penalty": float(collision_penalty),
                 "safety_penalty": float(collision_penalty),
-                "lane_change_cost": 0.0,
                 "offroad_penalty": 0.0,  # Off-road remains a terminal safeguard, not a reward term.
                 "total_reward": reward,
             })
         print(
             f"[REWARD DEBUG] mode={reward_mode}, "
+            f"action={'CHANGE' if lane_change_chosen else 'KEEP'}, "
             f"acceleration_reward={acceleration_reward:+.3f}m/s^2, "
             f"actual_acceleration={actual_acceleration_reward:+.3f}m/s^2, "
+            f"lane_change_cost={lane_change_cost:+.3f}, "
             f"speed={ego_speed:.2f}m/s, speed_limit={SPEED_LIMIT:.2f}m/s, "
             f"collision_penalty={collision_penalty:.3f}, total={reward:+.3f}"
         )
         print("[TTC REWARD] disabled; TTC/gap are used only by the independent safety shield.")
         return reward
     return reward_function
-
 
 def compute_reward(
     reward_function,
