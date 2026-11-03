@@ -232,16 +232,16 @@ SAFETY_OVERRIDE_REWARD_PENALTY = 1.0  # Applied only for emergency TTC braking, 
 LANE_REJECTION_REWARD_PENALTY = 0.05  # Small signal when an unsafe lane-change request is rejected
 SHIELD_ACCEL_INTERVENTION_WEIGHT = 0.15  # Modest cost for routine acceleration overrides
 
-# Traffic scenario diversity for training.
-# Randomized traffic gaps create varied lane-change opportunities.
-
-REFERENCE_GAP_MIN = 20.0
-REFERENCE_GAP_MAX = 200.0
-RANDOMIZED_FRONT_GAP_MIN = 20.0
-RANDOMIZED_FRONT_GAP_MAX = 200.0
-RANDOMIZED_REAR_GAP_MIN = 20.0
-RANDOMIZED_REAR_GAP_MAX = 200.0
-TRAFFIC_SPEED_VARIATION = 10.0
+# Full-world traffic configuration. The six-slot representation is ONLY the
+# ego observation; it does not constrain the number of vehicles on the road.
+# highway-v0 creates and evolves a normal multi-vehicle traffic population.
+TRAFFIC_VEHICLES_COUNT = 30       # total vehicles in the road, including ego
+TRAFFIC_INITIAL_SPACING = 2.0     # native highway-env traffic spacing factor
+TRAFFIC_SPEED_MIN = 10.0          # m/s; all generated traffic speeds are positive
+TRAFFIC_SPEED_MAX = 40.0          # m/s; heterogeneous speeds around highway flow
+TRAFFIC_SPEED_STD = 7.0           # m/s; diverse initial traffic speeds
+TRAFFIC_SPEED_VARIATION = TRAFFIC_SPEED_STD
+TRAFFIC_RELEVANT_RANGE = 200.0    # observation/safety diagnostic range only
 
 
 
@@ -253,23 +253,9 @@ In _maintain_six_vehicle_traffic(), it calculates the absolute longitudinal dist
 the vehicle is not assigned to either side.
 - Missing slot: _spawn_slot_vehicle(lane_id, side) creates a replacement for that slot.
 '''
-# Simulator triggers a replacement of surrounding vehicle
-Traffic_relevant_range = 200
-
-# Ego-relative surrounding-vehicle speed distribution (m/s).
-# Each new traffic vehicle is sampled relative to the current ego speed.
-TRAFFIC_SPEED_MIN = 15.0
-TRAFFIC_SPEED_MAX = 45.0
-TRAFFIC_SPEED_MATCHED_PROB = 0.60
-TRAFFIC_SPEED_POSITION_CHALLENGE_PROB = 0.25
-TRAFFIC_SPEED_MATCHED_DELTA_MIN = -3.0
-TRAFFIC_SPEED_MATCHED_DELTA_MAX = 3.0
-TRAFFIC_FRONT_SLOW_DELTA_MIN = -8.0
-TRAFFIC_FRONT_SLOW_DELTA_MAX = -3.0
-TRAFFIC_REAR_FAST_DELTA_MIN = 3.0
-TRAFFIC_REAR_FAST_DELTA_MAX = 6.0
-TRAFFIC_SPEED_BROAD_DELTA_MIN = -8.0
-TRAFFIC_SPEED_BROAD_DELTA_MAX = 6.0
+# The full road population is maintained by highway-env. This range is used
+# only when selecting local neighbors for diagnostics; vehicles are never
+# deleted/replaced merely because they leave an ego-relative observation slot.
 
 # Lane changes are not intrinsically rewarded or penalized.
 LANE_CHANGE_COST = 0.0
@@ -290,7 +276,7 @@ MAX_PHYSICAL_ACCELERATION = 8.0  # m/s^2
 
 
 NUM_LANES = 3
-NUM_SURROUNDING_VEHICLES = 6
+NUM_SURROUNDING_VEHICLES = 6  # fixed ego observation slots: front/rear x 3 lanes
 VEHICLE_FEATURES = 7
 NUM_VEHICLE_ROWS = NUM_SURROUNDING_VEHICLES + 1
 VEHICLE_STATE_DIM = NUM_VEHICLE_ROWS * VEHICLE_FEATURES
@@ -710,10 +696,11 @@ def lane_policy_diagnostic(policy, state, valid_action_mask, sampled_action, pha
 
 
 class HighwaySimulator:
-    """Highway-env wrapper with six managed traffic vehicles.
+    """Highway-env wrapper with a full traffic world and six ego-relative slots.
 
-    State is 53-D: seven 7-feature vehicle rows (ego + six traffic vehicles)
-    and four context values.
+    The simulator contains many vehicles. The policy state remains fixed-size:
+    ego + nearest front/rear vehicle in each of the three lanes, plus context
+    and lane-safety features.
     """
 
     def __init__(self, state_dim=STATE_DIM, action_dim=ACTION_DIM,
@@ -730,9 +717,7 @@ class HighwaySimulator:
         self.max_steps = max_steps
         self.step_count = 0
         self.render_mode = render_mode
-        self.vehicles_count = NUM_SURROUNDING_VEHICLES
-        self.traffic_front_gap = 45.0
-        self.traffic_rear_gap = 45.0
+        self.vehicles_count = TRAFFIC_VEHICLES_COUNT
         self.randomize_traffic_gaps = False
         self.env = gym.make(
             "highway-v0",
@@ -740,7 +725,7 @@ class HighwaySimulator:
             config={
                 "observation": {
                     "type": "Kinematics",
-                    "vehicles_count": NUM_VEHICLE_ROWS,
+                    "vehicles_count": TRAFFIC_VEHICLES_COUNT,
                     "features": ["presence", "x", "y", "vx", "vy", "cos_h", "sin_h"],
                     "absolute": False,
                     "normalize": True,
@@ -752,7 +737,8 @@ class HighwaySimulator:
                 },
 
                 "lanes_count": 3,
-                "vehicles_count": NUM_SURROUNDING_VEHICLES,
+                "vehicles_count": TRAFFIC_VEHICLES_COUNT,
+                "initial_spacing": TRAFFIC_INITIAL_SPACING,
                 "duration": max_steps,
                 "offroad_terminal": False,
 
@@ -772,16 +758,65 @@ class HighwaySimulator:
 
 
     def _encode_state(self, obs):
-        obs = np.asarray(obs, dtype=np.float32)
-
-
+        # Do not use highway-env's globally-nearest six vehicles: that can omit
+        # an entire lane. Build the six fixed slots from the complete road state.
+        base_env = self.env.unwrapped
+        ego = base_env.vehicle
+        ego_lane = int(ego.lane_index[2])
+        ego_s = self._road_longitudinal_position(ego)
+        ego_speed = max(0.0, float(ego.speed))
+        ego_heading = float(ego.heading)
+        ego_velocity = np.asarray(getattr(ego, "velocity", [ego_speed, 0.0]), dtype=float)
+        c, s = np.cos(ego_heading), np.sin(ego_heading)
         rows = np.zeros((NUM_VEHICLE_ROWS, VEHICLE_FEATURES), dtype=np.float32)
-        if obs.ndim != 2 or obs.shape[1] < VEHICLE_FEATURES:
-            raise ValueError(f"Unexpected Highway observation shape: {obs.shape}")
-        n = min(NUM_VEHICLE_ROWS, obs.shape[0])
-        rows[:n] = obs[:n, :VEHICLE_FEATURES]
-        if n < NUM_VEHICLE_ROWS:
-            print("[OBSERVATION WARNING]", f"expected {NUM_VEHICLE_ROWS} rows, got {n}")
+        rows[0] = np.asarray([1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0], dtype=np.float32)
+
+        nearest = {(lane, side): None
+                   for lane in range(NUM_LANES) for side in ("front", "rear")}
+        for other in list(base_env.road.vehicles):
+            if other is ego or bool(getattr(other, "crashed", False)):
+                continue
+            try:
+                lane_id = int(other.lane_index[2])
+                if lane_id not in range(NUM_LANES):
+                    continue
+                other_s = self._road_longitudinal_position(other)
+                signed_gap = other_s - ego_s
+                if abs(signed_gap) < 1e-6:
+                    continue
+                side = "front" if signed_gap > 0.0 else "rear"
+                key = (lane_id, side)
+                if nearest[key] is None or abs(signed_gap) < nearest[key][0]:
+                    nearest[key] = (abs(signed_gap), other, signed_gap)
+            except (AttributeError, TypeError, ValueError, IndexError, KeyError):
+                continue
+
+        # Observation row order is deterministic: lane 0 front/rear, lane 1
+        # front/rear, lane 2 front/rear. Missing neighbors remain zero-presence.
+        row_index = 1
+        for lane_id in range(NUM_LANES):
+            for side in ("front", "rear"):
+                item = nearest[(lane_id, side)]
+                if item is not None:
+                    _, other, signed_gap = item
+                    rel_world = np.asarray(other.position, dtype=float) - np.asarray(ego.position, dtype=float)
+                    rel_x = c * rel_world[0] + s * rel_world[1]
+                    rel_y = -s * rel_world[0] + c * rel_world[1]
+                    other_velocity = np.asarray(getattr(other, "velocity", [0.0, 0.0]), dtype=float)
+                    rel_velocity = other_velocity - ego_velocity
+                    rel_vx = c * rel_velocity[0] + s * rel_velocity[1]
+                    rel_vy = -s * rel_velocity[0] + c * rel_velocity[1]
+                    heading_delta = float(other.heading) - ego_heading
+                    rows[row_index] = np.asarray([
+                        1.0,
+                        np.clip(rel_x / 100.0, -1.0, 1.0),
+                        np.clip(rel_y / 12.0, -1.0, 1.0),
+                        np.clip(rel_vx / 20.0, -1.0, 1.0),
+                        np.clip(rel_vy / 20.0, -1.0, 1.0),
+                        np.cos(heading_delta),
+                        np.sin(heading_delta),
+                    ], dtype=np.float32)
+                row_index += 1
 
         #print("copy the raw_obs to rows:", rows)
 
@@ -819,32 +854,26 @@ class HighwaySimulator:
 
 
     def reset(self, seed=None, randomize_traffic_gaps=False):
-
+        # highway-env generates and manages the complete multi-vehicle scene.
+        # randomize_traffic_gaps is retained for call compatibility; traffic
+        # diversity comes from native vehicle generation and dynamics.
         if seed is None:
             obs, info = self.env.reset()
         else:
             obs, info = self.env.reset(seed=seed)
 
-        # In randomized reference scenarios, each lane/side slot samples its
-        # own gap during spawning (and when that slot is replenished). Keep the
-        # configured distribution-shift gaps untouched when randomization is off.
         self.randomize_traffic_gaps = bool(randomize_traffic_gaps)
-        if self.randomize_traffic_gaps:
-            self.traffic_front_gap = random.uniform(
-                RANDOMIZED_FRONT_GAP_MIN, RANDOMIZED_FRONT_GAP_MAX)
-            self.traffic_rear_gap = random.uniform(
-                RANDOMIZED_REAR_GAP_MIN, RANDOMIZED_REAR_GAP_MAX)
-        print("[TRAFFIC SCENARIO]",
-              f"front_gap_range={RANDOMIZED_FRONT_GAP_MIN:.1f}-{RANDOMIZED_FRONT_GAP_MAX:.1f}m",
-              f"rear_gap_range={RANDOMIZED_REAR_GAP_MIN:.1f}-{RANDOMIZED_REAR_GAP_MAX:.1f}m",
-              f"gap_sampling={'independent_per_lane_and_side' if self.randomize_traffic_gaps else 'configured_baseline_setting'}",
-              f"speed_variation=±{TRAFFIC_SPEED_VARIATION:.1f}m/s",
-              f"randomized={self.randomize_traffic_gaps}")
-
         self.step_count = 0
         base_env = self.env.unwrapped
-        self._initialize_six_vehicle_traffic()
+        self._sanitize_traffic_slot_speeds("reset")
         obs = base_env.observation_type.observe()
+        print("[TRAFFIC SCENARIO]",
+              f"world_vehicle_count={len(base_env.road.vehicles)}",
+              f"configured_vehicle_count={TRAFFIC_VEHICLES_COUNT}",
+              f"initial_speed_range={TRAFFIC_SPEED_MIN:.1f}-{TRAFFIC_SPEED_MAX:.1f}m/s",
+              f"speed_std={TRAFFIC_SPEED_STD:.1f}m/s",
+              "traffic_management=native_highway_env",
+              "ego_observation=nearest_front_rear_per_lane")
 
         # Store the target lane once at the beginning of this episode.
         # Do NOT recalculate it at every time step.
@@ -883,12 +912,11 @@ class HighwaySimulator:
 
 
 
-    # All vehicles are projected onto the same reference lane coordinate.
-    # In highway-v0, the three lanes share the same road segment and longitudinal
-    # axis; using one reference lane avoids comparing independently projected s
-    # values from different lane geometries.
-    TRAFFIC_RELEVANT_RANGE = Traffic_relevant_range  # metres ahead/behind; farther vehicles are recycled
-    TRAFFIC_CROSSING_EPSILON = 0.5  # metres; avoids unstable front/rear classification at ego
+    # All vehicles are projected onto one shared road-longitudinal coordinate.
+    # This range is diagnostic only; the full world population is never recycled
+    # according to ego-relative observation slots.
+    TRAFFIC_RELEVANT_RANGE = TRAFFIC_RELEVANT_RANGE
+    TRAFFIC_CROSSING_EPSILON = 0.5
 
     def _lane_longitudinal_position(self, vehicle, lane_index):
         lane = self.env.unwrapped.road.network.get_lane(lane_index)
@@ -994,7 +1022,7 @@ class HighwaySimulator:
         return traffic_vehicle
 
     def _initialize_six_vehicle_traffic(self):
-        """Start with exactly one front and one rear vehicle in each lane."""
+        """Legacy six-slot initializer; no longer called by the full-world simulator."""
         base_env = self.env.unwrapped
         ego = base_env.vehicle
         base_env.road.vehicles = [vehicle for vehicle in base_env.road.vehicles if vehicle is ego]
@@ -1004,13 +1032,10 @@ class HighwaySimulator:
         self._assert_traffic_invariant("initialized")
 
     def _maintain_six_vehicle_traffic(self):
-        """Maintain nearest in-range front/rear neighbors in every lane.
+        """Legacy slot manager; intentionally unused in full-world traffic mode.
 
-        A vehicle qualifies only when its lane is valid, it is within the
-        longitudinal relevance range, and it is strictly on one side of ego.
-        When it crosses ego, leaves range, changes into an invalid lane, or
-        becomes a duplicate in a slot, it is removed/reclassified and the
-        missing slot is immediately replenished.
+        Do not call this method: it deletes vehicles outside the six observation
+        slots, which is precisely the coupling removed in the new design.
         """
         road = self.env.unwrapped.road
         ego = self.env.unwrapped.vehicle
@@ -2607,7 +2632,7 @@ class HighwaySimulator:
 
 
     def _sanitize_traffic_slot_speeds(self, where):
-        """Prevent managed traffic-slot vehicles from retaining negative/non-finite speed.
+        """Prevent any simulated vehicle from retaining negative/non-finite speed.
 
         highway-env updates surrounding vehicles during env.step(). A traffic
         vehicle that acquires a negative scalar speed must be clamped immediately
@@ -2617,8 +2642,6 @@ class HighwaySimulator:
         ego = base_env.vehicle
         for traffic_vehicle in list(base_env.road.vehicles):
             if traffic_vehicle is ego:
-                continue
-            if getattr(traffic_vehicle, "_arood_traffic_side", None) not in ("front", "rear"):
                 continue
             try:
                 raw_speed = float(traffic_vehicle.speed)
@@ -2788,11 +2811,7 @@ class HighwaySimulator:
         policy_dt = 1.0 / float(base_env.config["policy_frequency"])
         physical_action = np.asarray([acceleration, 0.0], dtype=np.float32)
 
-        # Sanitize managed traffic before the native update, then again
-        # immediately after it. The post-update pass is essential because
-        # highway-env may integrate a slot vehicle into a negative speed during
-        # this very update; slot maintenance and safety evaluation must never see
-        # that invalid value.
+        # Enforce the nonnegative-speed invariant for every non-ego vehicle.
         self._sanitize_traffic_slot_speeds("pre_env_step")
         traffic_speeds_before = self._snapshot_managed_traffic_slots()
         crashed_before_step = bool(getattr(ego, "crashed", False))
@@ -2857,10 +2876,10 @@ class HighwaySimulator:
                   f"speed={speed_after:.3f}")
 
         self.step_count += 1
-        self._maintain_six_vehicle_traffic()
+        # No slot maintenance/replacement: every traffic vehicle remains part
+        # of the native simulation, whether or not it is currently observed.
         obs = base_env.observation_type.observe()
         next_state = self._encode_state(obs)
-        self._assert_traffic_invariant("instant_step")
 
         info = dict(env_info or {})
         info.update({
