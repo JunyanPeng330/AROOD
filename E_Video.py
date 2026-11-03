@@ -245,14 +245,8 @@ TRAFFIC_RELEVANT_RANGE = 200.0    # observation/safety diagnostic range only
 
 
 
-'''
-In _maintain_six_vehicle_traffic(), it calculates the absolute longitudinal distance between each vehicle and ego.
-- Within 120 m: the vehicle can qualify for a front or rear slot.
-- Beyond 120 m: the vehicle is excluded from slot selection and removed from the managed traffic list.
-- Crossing the ego: if the longitudinal separation is within the 0.5 m crossing tolerance,
-the vehicle is not assigned to either side.
-- Missing slot: _spawn_slot_vehicle(lane_id, side) creates a replacement for that slot.
-'''
+# The old six-vehicle slot manager remains only as unused legacy code. The
+# active simulator never deletes or respawns vehicles based on observation slots.
 # The full road population is maintained by highway-env. This range is used
 # only when selecting local neighbors for diagnostics; vehicles are never
 # deleted/replaced merely because they leave an ego-relative observation slot.
@@ -2549,13 +2543,13 @@ class HighwaySimulator:
 
 
     def _snapshot_managed_traffic_slots(self):
-        """Capture managed-slot vehicle state immediately around one native env.step()."""
+        """Capture every non-ego traffic vehicle around one native env.step()."""
         base_env = self.env.unwrapped
         ego = getattr(base_env, "vehicle", None)
         snapshot = {}
         for vehicle in list(getattr(getattr(base_env, "road", None), "vehicles", [])):
             side = getattr(vehicle, "_arood_traffic_side", None)
-            if vehicle is ego or side not in ("front", "rear"):
+            if vehicle is ego:
                 continue
             try:
                 speed = float(vehicle.speed)
@@ -2616,7 +2610,7 @@ class HighwaySimulator:
             return
 
         report = {
-            "event": "FIRST_NEGATIVE_MANAGED_TRAFFIC_SPEED",
+            "event": "FIRST_NEGATIVE_WORLD_TRAFFIC_SPEED",
             "phase": getattr(self, "_trace_phase", None),
             "episode": getattr(self, "_trace_episode", None),
             "simulator_step": int(getattr(self, "step_count", 0)),
@@ -2625,7 +2619,7 @@ class HighwaySimulator:
             "env_info": repr(env_info),
             "incident_count_in_first_observed_step": len(incidents),
             "incidents": incidents,
-            "note": "Captured immediately after env.step and before post-step sanitization or slot maintenance.",
+            "note": "Captured immediately after env.step and before post-step sanitization; all world traffic is monitored.",
         }
 
         path = NEGATIVE_SPEED_FIRST_TRANSITION_PATH
