@@ -423,7 +423,8 @@ def record_episode_start(simulator, phase, episode_number, initial_state):
         "policy_frequency_hz": int(policy_frequency),
         "simulation_frequency_hz": int(simulation_frequency),
         "num_lanes": int(NUM_LANES),
-        "managed_surrounding_vehicle_slots": int(NUM_SURROUNDING_VEHICLES),
+        "world_vehicle_count": int(TRAFFIC_VEHICLES_COUNT),
+        "ego_observation_slots": int(NUM_SURROUNDING_VEHICLES),
         "speed_limit_mps": float(SPEED_LIMIT),
         "initial_state": np.asarray(initial_state, dtype=np.float32).tolist(),
         "vehicles": snapshot_simulator_vehicles(simulator),
@@ -865,6 +866,24 @@ class HighwaySimulator:
         self.randomize_traffic_gaps = bool(randomize_traffic_gaps)
         self.step_count = 0
         base_env = self.env.unwrapped
+
+        # Give the native multi-vehicle scene a heterogeneous initial speed
+        # distribution. This is applied to the whole traffic population once
+        # per reset; thereafter highway-env vehicle dynamics evolve speeds
+        # independently. The lower bound is strictly nonnegative.
+        for traffic_vehicle in list(base_env.road.vehicles):
+            if traffic_vehicle is base_env.vehicle:
+                continue
+            sampled_speed = float(np.clip(
+                np.random.normal(
+                    loc=0.5 * (TRAFFIC_SPEED_MIN + TRAFFIC_SPEED_MAX),
+                    scale=TRAFFIC_SPEED_STD,
+                ),
+                TRAFFIC_SPEED_MIN,
+                TRAFFIC_SPEED_MAX,
+            ))
+            traffic_vehicle.speed = sampled_speed
+
         self._sanitize_traffic_slot_speeds("reset")
         obs = base_env.observation_type.observe()
         print("[TRAFFIC SCENARIO]",
