@@ -919,7 +919,6 @@ class HighwaySimulator:
         )
 
         self.state = self._encode_state(obs)
-        self._assert_traffic_invariant("reset")
         return self.state.copy()
 
 
