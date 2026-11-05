@@ -3570,9 +3570,11 @@ def calculate_min_ttc(simulator):
 
 
 def construct_reward(reward_specification, embedding_model=None):
-    """Reward normalized longitudinal acceleration and penalize collisions.
+    """Reward normalized acceleration and relative speed, with a collision penalty.
 
-    Acceleration is clipped to [-5, 5] m/s^2 and linearly mapped to [-1, 1].
+    Acceleration is clipped to the configured physical range and mapped to [-1, 1].
+    Speed reward is intentionally unbounded:
+        (current_speed - speed_limit) / speed_limit
     The collision penalty preserves the previous safety_weight behavior.
     TTC/gap remain independent safety constraints, not reward terms.
     """
@@ -3591,6 +3593,10 @@ def construct_reward(reward_specification, embedding_model=None):
             raise ValueError(
                 "acceleration_max_mps2 must be greater than acceleration_min_mps2."
             )
+        speed_limit = float(reward_specification.get("speed_limit_mps", SPEED_LIMIT))
+        if not np.isfinite(speed_limit) or speed_limit <= 0.0:
+            raise ValueError("speed_limit_mps must be a finite positive value.")
+
         raw_acceleration = float(ego_acceleration_mps2)
         clipped_acceleration = float(np.clip(
             raw_acceleration, acceleration_min, acceleration_max
@@ -3600,19 +3606,27 @@ def construct_reward(reward_specification, embedding_model=None):
             2.0 * (clipped_acceleration - acceleration_min)
             / (acceleration_max - acceleration_min) - 1.0
         )
+
+        current_speed = float(ego_speed)
+        # Exact user-specified formula: deliberately no clipping or normalization.
+        speed_reward = float((current_speed - speed_limit) / speed_limit)
+
         collision_penalty = (
             max(0.0, float(reward_specification.get("safety_weight", INITIAL_COLLISION_PENALTY)))
             if bool(safety_violation) else 0.0
         )
-        reward = float(acceleration_reward - collision_penalty)
+        reward = float(acceleration_reward + speed_reward - collision_penalty)
         if reward_diagnostics is not None:
             reward_diagnostics.update({
-                "reward_objective": "normalized_acceleration_minus_collision_penalty",
+                "reward_objective": "normalized_acceleration_plus_unbounded_speed_minus_collision_penalty",
                 "acceleration_reward": acceleration_reward,
                 "ego_acceleration_mps2": raw_acceleration,
                 "clipped_acceleration_mps2": clipped_acceleration,
                 "acceleration_min_mps2": float(acceleration_min),
                 "acceleration_max_mps2": float(acceleration_max),
+                "speed_reward": speed_reward,
+                "ego_speed_mps": current_speed,
+                "speed_limit_mps": speed_limit,
                 "safety_penalty": float(collision_penalty),
                 "collision_penalty": float(collision_penalty),
                 "offroad_penalty": 0.0,  # Off-road remains a terminal safeguard, not a reward term.
@@ -3622,6 +3636,8 @@ def construct_reward(reward_specification, embedding_model=None):
             f"[REWARD DEBUG] acceleration_reward={acceleration_reward:+.3f}, "
             f"acceleration={raw_acceleration:+.3f}m/s^2 "
             f"(clipped={clipped_acceleration:+.3f}), "
+            f"speed_reward={speed_reward:+.3f} "
+            f"(speed={current_speed:.3f}m/s, limit={speed_limit:.3f}m/s), "
             f"collision_penalty={collision_penalty:.3f}, total={reward:+.3f}"
         )
         print("[TTC REWARD] disabled; TTC/gap are used only by the independent safety shield.")
@@ -3749,14 +3765,16 @@ def build_fixed_reward_function():
     reward_specification = {
         "name": "pure_rl_episode_adaptive_reward",
         "target_behavior": (
-            "Reward positive longitudinal acceleration using acceleration normalized from [-5, 5] m/s^2 "
-            "to [-1, 1], and apply the existing penalty when a collision/safety violation occurs. "
-            "Do not include a speed/progress reward or lane-change reward/cost. Do not add an off-road "
+            "Reward longitudinal acceleration using acceleration normalized from [-5, 5] m/s^2 "
+            "to [-1, 1], add the unbounded relative-speed reward (current_speed - speed_limit) / "
+            "speed_limit, and apply the existing penalty when a collision/safety violation occurs. "
+            "Do not include a progress reward or lane-change reward/cost. Do not add an off-road "
             "reward penalty. TTC and minimum-gap checks remain independent safety constraints."
         ),
         "safety_weight": INITIAL_COLLISION_PENALTY,
         "acceleration_min_mps2": -5.0,
         "acceleration_max_mps2": 5.0,
+        "speed_limit_mps": float(SPEED_LIMIT),
     }
     reward_function = construct_reward(reward_specification)
     # The closure and evaluator share this mutable specification. Only the
