@@ -3608,8 +3608,9 @@ def construct_reward(reward_specification, embedding_model=None):
         )
 
         current_speed = float(ego_speed)
-        # Exact user-specified formula: deliberately no clipping or normalization.
-        speed_reward = float((current_speed - speed_limit) / speed_limit)
+        # Relative-speed reward, bounded to [-1, 1].
+        raw_speed_reward = (current_speed - speed_limit) / speed_limit
+        speed_reward = float(np.clip(raw_speed_reward, -1.0, 1.0))
 
         collision_penalty = (
             max(0.0, float(reward_specification.get("safety_weight", INITIAL_COLLISION_PENALTY)))
@@ -3618,13 +3619,13 @@ def construct_reward(reward_specification, embedding_model=None):
         reward = float(acceleration_reward + speed_reward - collision_penalty)
         if reward_diagnostics is not None:
             reward_diagnostics.update({
-                "reward_objective": "normalized_acceleration_plus_unbounded_speed_minus_collision_penalty",
+                "reward_objective": "normalized_acceleration_plus_clipped_speed_minus_collision_penalty",
                 "acceleration_reward": acceleration_reward,
                 "ego_acceleration_mps2": raw_acceleration,
                 "clipped_acceleration_mps2": clipped_acceleration,
                 "acceleration_min_mps2": float(acceleration_min),
                 "acceleration_max_mps2": float(acceleration_max),
-                "speed_reward": speed_reward,
+                "speed_reward": speed_reward,\n                "raw_speed_reward": float(raw_speed_reward),
                 "ego_speed_mps": current_speed,
                 "speed_limit_mps": speed_limit,
                 "safety_penalty": float(collision_penalty),
@@ -3766,8 +3767,8 @@ def build_fixed_reward_function():
         "name": "pure_rl_episode_adaptive_reward",
         "target_behavior": (
             "Reward longitudinal acceleration using acceleration normalized from [-5, 5] m/s^2 "
-            "to [-1, 1], add the unbounded relative-speed reward (current_speed - speed_limit) / "
-            "speed_limit, and apply the existing penalty when a collision/safety violation occurs. "
+            "to [-1, 1], add the relative-speed reward clipped to [-1, 1] from (current_speed - "
+            "speed_limit) / speed_limit, and apply the existing penalty when a collision/safety violation occurs. "
             "Do not include a progress reward or lane-change reward/cost. Do not add an off-road "
             "reward penalty. TTC and minimum-gap checks remain independent safety constraints."
         ),
