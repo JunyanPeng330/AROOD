@@ -286,7 +286,7 @@ MIN_FOLLOWING_GAP = 10.0      # metres
 SPEED_MATCH_KV = 0.5         # 1/second
 SPEED_MATCH_KD = 0.08        # 1/second^2
 
-MAX_PHYSICAL_ACCELERATION = 8.0  # m/s^2
+MAX_PHYSICAL_ACCELERATION = 5.0  # m/s^2
 
 
 NUM_LANES = 3
