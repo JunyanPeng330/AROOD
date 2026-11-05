@@ -3570,10 +3570,10 @@ def calculate_min_ttc(simulator):
 
 
 def construct_reward(reward_specification, embedding_model=None):
-    """Reward normalized forward progress, penalize collisions, and expose a configurable lane-change cost.
+    """Reward normalized longitudinal acceleration and penalize collisions.
 
-    The lane-change cost is charged only when a lane change completes. Its
-    configured default is zero, preserving the existing reward behavior.
+    Acceleration is clipped to [-5, 5] m/s^2 and linearly mapped to [-1, 1].
+    The collision penalty preserves the previous safety_weight behavior.
     TTC/gap remain independent safety constraints, not reward terms.
     """
     def reward_function(
@@ -3581,45 +3581,48 @@ def construct_reward(reward_specification, embedding_model=None):
         min_ttc, lane_change_allowed=True, ego_speed=0.0, ego_acceleration_mps2=0.0,
         safety_info=None, policy_sampled_action=None, reward_diagnostics=None,
     ):
-        target_speed = max(
-            1e-6, float(reward_specification.get("target_speed", SPEED_LIMIT))
+        acceleration_min = float(
+            reward_specification.get("acceleration_min_mps2", -MAX_PHYSICAL_ACCELERATION)
         )
-        ego_speed = max(0.0, float(ego_speed))
-        # Normalized speed is a direct per-step proxy for sustained forward progress.
-        progress_reward = float((ego_speed - target_speed)/target_speed)      #float(np.clip(ego_speed / target_speed, 0.0, 1.0))
+        acceleration_max = float(
+            reward_specification.get("acceleration_max_mps2", MAX_PHYSICAL_ACCELERATION)
+        )
+        if not acceleration_max > acceleration_min:
+            raise ValueError(
+                "acceleration_max_mps2 must be greater than acceleration_min_mps2."
+            )
+        raw_acceleration = float(ego_acceleration_mps2)
+        clipped_acceleration = float(np.clip(
+            raw_acceleration, acceleration_min, acceleration_max
+        ))
+        # Linear mapping: -5 m/s^2 -> -1, 0 -> 0, +5 m/s^2 -> +1.
+        acceleration_reward = float(
+            2.0 * (clipped_acceleration - acceleration_min)
+            / (acceleration_max - acceleration_min) - 1.0
+        )
         collision_penalty = (
             max(0.0, float(reward_specification.get("safety_weight", INITIAL_COLLISION_PENALTY)))
             if bool(safety_violation) else 0.0
         )
-        # Charge only a completed lane change, never a rejected request or KEEP.
-        lane_change_completed = bool(
-            isinstance(safety_info, dict) and safety_info.get("lane_change_accepted", False)
-        )
-        lane_change_cost_weight = max(
-            0.0, float(reward_specification.get("lane_change_cost", LANE_CHANGE_COST))
-        )
-        lane_change_cost = lane_change_cost_weight if lane_change_completed else 0.0
-        reward = float(progress_reward - collision_penalty - lane_change_cost)
+        reward = float(acceleration_reward - collision_penalty)
         if reward_diagnostics is not None:
             reward_diagnostics.update({
-                "reward_objective": "normalized_forward_progress_minus_collision_and_lane_change_cost",
-                "progress_reward": progress_reward,
-                "speed_reward": progress_reward,
-                "ego_speed_mps": float(ego_speed),
-                "target_speed_mps": float(target_speed),
+                "reward_objective": "normalized_acceleration_minus_collision_penalty",
+                "acceleration_reward": acceleration_reward,
+                "ego_acceleration_mps2": raw_acceleration,
+                "clipped_acceleration_mps2": clipped_acceleration,
+                "acceleration_min_mps2": float(acceleration_min),
+                "acceleration_max_mps2": float(acceleration_max),
                 "safety_penalty": float(collision_penalty),
                 "collision_penalty": float(collision_penalty),
-                "lane_change_completed": bool(lane_change_completed),
-                "lane_change_cost_weight": float(lane_change_cost_weight),
-                "lane_change_cost": float(lane_change_cost),
-                "offroad_penalty": 0.0,  # Deliberately omitted; off-road remains a terminal safeguard.
+                "offroad_penalty": 0.0,  # Off-road remains a terminal safeguard, not a reward term.
                 "total_reward": reward,
             })
         print(
-            f"[REWARD DEBUG] progress_reward={progress_reward:.3f}, "
-            f"speed={ego_speed:.2f}m/s, target_speed={target_speed:.2f}m/s, "
-            f"collision_penalty={collision_penalty:.3f}, "
-            f"lane_change_cost={lane_change_cost:.3f}, total={reward:.3f}"
+            f"[REWARD DEBUG] acceleration_reward={acceleration_reward:+.3f}, "
+            f"acceleration={raw_acceleration:+.3f}m/s^2 "
+            f"(clipped={clipped_acceleration:+.3f}), "
+            f"collision_penalty={collision_penalty:.3f}, total={reward:+.3f}"
         )
         print("[TTC REWARD] disabled; TTC/gap are used only by the independent safety shield.")
         return reward
@@ -3746,14 +3749,14 @@ def build_fixed_reward_function():
     reward_specification = {
         "name": "pure_rl_episode_adaptive_reward",
         "target_behavior": (
-            "Reward sustained forward progress using normalized ego speed, with a strong penalty for collisions. "
-            "A configurable lane-change cost is charged only when a lane change completes; its initial "
-            "weight is zero. Do not add an off-road penalty. TTC and minimum-gap checks remain independent "
-            "safety constraints; the learned policy chooses among all safe adjacent lanes."
+            "Reward positive longitudinal acceleration using acceleration normalized from [-5, 5] m/s^2 "
+            "to [-1, 1], and apply the existing penalty when a collision/safety violation occurs. "
+            "Do not include a speed/progress reward or lane-change reward/cost. Do not add an off-road "
+            "reward penalty. TTC and minimum-gap checks remain independent safety constraints."
         ),
         "safety_weight": INITIAL_COLLISION_PENALTY,
-        "target_speed": SPEED_LIMIT,
-        "lane_change_cost": float(LANE_CHANGE_COST),
+        "acceleration_min_mps2": -5.0,
+        "acceleration_max_mps2": 5.0,
     }
     reward_function = construct_reward(reward_specification)
     # The closure and evaluator share this mutable specification. Only the
