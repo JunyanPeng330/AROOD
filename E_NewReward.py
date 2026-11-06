@@ -3211,38 +3211,59 @@ def _select_safe_lane_with_rear_escape_priority(self, lane_ttc=None):
 # ============================================================
 
 def _safety_aware_lane_action_mask(self):
-    """Binary [KEEP, CHANGE] mask; rear-threat escape adds urgency, not unsafe permission."""
+    """Binary [KEEP, CHANGE] mask; emergency may bypass cooldown, never target safety."""
     if getattr(self, "_lane_change_active", False):
         self._last_safe_lane_candidates = []
         return np.asarray([True, False], dtype=bool)
     lane_ttc = self._min_ttc_by_lane()
     ranked = self._safe_lane_change_candidates(lane_ttc)
     current_lane = int(self.env.unwrapped.vehicle.lane_index[2])
+    current_vals = lane_ttc.get(current_lane, {})
+    emergency = (
+        float(current_vals.get("front_ttc", float("inf"))) <= SAFETY_OVERRIDE_TTC
+        or float(current_vals.get("front_gap", float("inf"))) <= MIN_FOLLOWING_GAP
+    )
     change_candidates = [c for c in ranked if int(c["target_lane"]) != current_lane]
     assessment = self._rear_escape_assessment(lane_ttc)
     self._last_safe_lane_candidates = change_candidates
     cooldown_active = int(getattr(self, "_lane_change_cooldown", 0)) > 0
-    mask = np.asarray([True, bool(change_candidates) and not cooldown_active], dtype=bool)
+    cooldown_blocks_change = cooldown_active and not emergency
+    mask = np.asarray([True, bool(change_candidates) and not cooldown_blocks_change], dtype=bool)
     print("[BINARY SAFETY MASK]",
           f"mask={mask.tolist()}",
           f"cooldown_remaining={int(getattr(self, '_lane_change_cooldown', 0))}",
+          f"emergency={emergency}",
+          f"cooldown_bypassed={bool(cooldown_active and emergency and change_candidates)}",
           f"ranked_lanes={[int(c['target_lane']) for c in ranked]}",
           f"valid_change_target_lanes={[int(c['target_lane']) for c in change_candidates]}",
           f"rear_escape_needed={assessment['rear_escape_needed']}",
           f"reason={assessment['reason']}",
-          "policy=KEEP_REMAINS_AVAILABLE;CHANGE_ENABLED_ONLY_FOR_HARD_SAFE_TARGETS")
+          "policy=KEEP_REMAINS_AVAILABLE;EMERGENCY_BYPASSES_COOLDOWN_ONLY_FOR_HARD_SAFE_TARGETS")
     return mask
 
 def _get_valid_target_lane_mask(self):
-    """Expose all hard-safe adjacent lanes; rear escape affects ranking, not admissibility."""
+    """Expose hard-safe adjacent lanes; emergency may bypass cooldown, not safety checks."""
     mask = np.zeros(NUM_LANES, dtype=bool)
     current_lane = int(self.env.unwrapped.vehicle.lane_index[2])
-    if getattr(self, "_lane_change_active", False) or int(getattr(self, "_lane_change_cooldown", 0)) > 0:
+    if getattr(self, "_lane_change_active", False):
         self._last_safe_lane_candidates = []
         if 0 <= current_lane < NUM_LANES:
             mask[current_lane] = True
         return mask
+
     lane_ttc = self._min_ttc_by_lane()
+    current_vals = lane_ttc.get(current_lane, {})
+    emergency = (
+        float(current_vals.get("front_ttc", float("inf"))) <= SAFETY_OVERRIDE_TTC
+        or float(current_vals.get("front_gap", float("inf"))) <= MIN_FOLLOWING_GAP
+    )
+    cooldown_active = int(getattr(self, "_lane_change_cooldown", 0)) > 0
+    if cooldown_active and not emergency:
+        self._last_safe_lane_candidates = []
+        if 0 <= current_lane < NUM_LANES:
+            mask[current_lane] = True
+        return mask
+
     ranked = self._safe_lane_change_candidates(lane_ttc)
     assessment = self._rear_escape_assessment(lane_ttc)
     self._last_safe_lane_candidates = [
@@ -3257,6 +3278,9 @@ def _get_valid_target_lane_mask(self):
           f"candidate_lane_mask={mask.tolist()}",
           f"ranked_lanes={[int(c['target_lane']) for c in ranked]}",
           f"safe_adjacent_lanes={[int(c['target_lane']) for c in self._last_safe_lane_candidates]}",
+          f"cooldown_remaining={int(getattr(self, '_lane_change_cooldown', 0))}",
+          f"emergency={emergency}",
+          f"cooldown_bypassed={bool(cooldown_active and emergency)}",
           f"rear_escape_needed={assessment['rear_escape_needed']}",
           f"rear_escape_reason={assessment['reason']}")
     return mask
@@ -3269,13 +3293,19 @@ def _safety_aware_lane_selector_and_acceleration_filter(self, sampled_action, se
     base, ego = self.env.unwrapped, self.env.unwrapped.vehicle
     current = int(ego.lane_index[2])
     metrics = self._min_ttc_by_lane()
+    current_vals = metrics.get(current, {})
+    emergency = (
+        float(current_vals.get("front_ttc", float("inf"))) <= SAFETY_OVERRIDE_TTC
+        or float(current_vals.get("front_gap", float("inf"))) <= MIN_FOLLOWING_GAP
+    )
     ranked = self._safe_lane_change_candidates(metrics)
     safe = {int(c["target_lane"]) for c in ranked if int(c["target_lane"]) != current}
     assessment = self._rear_escape_assessment(metrics)
     selected = None if selected_target_lane is None else int(selected_target_lane)
     target, executed, blocked, reason = current, requested, False, "none"
     if requested == 1:
-        if int(getattr(self, "_lane_change_cooldown", 0)) > 0:
+        cooldown_active = int(getattr(self, "_lane_change_cooldown", 0)) > 0
+        if cooldown_active and not emergency:
             blocked, reason, executed = True, "lane_change_cooldown", 0
         elif selected is None or selected < 0 or selected >= min(int(base.config["lanes_count"]), NUM_LANES):
             blocked, reason, executed = True, "no_valid_target_lane_selected", 0
@@ -3283,9 +3313,11 @@ def _safety_aware_lane_selector_and_acceleration_filter(self, sampled_action, se
             blocked, reason, executed = True, "no_safe_adjacent_target_or_invalid_target", 0
         elif selected not in safe:
             blocked, reason, executed = True, "target_lane_failed_execution_time_safety_recheck", 0
-        else: target = selected
+        else:
+            target = selected
+            if cooldown_active and emergency:
+                reason = "emergency_cooldown_bypass"
     vals = metrics.get(target, {})
-    current_vals = metrics.get(current, {})
     print(
         "[MASK DEBUG][CURRENT LANE TRAFFIC]",
         f"current_lane={current}",
@@ -3296,8 +3328,6 @@ def _safety_aware_lane_selector_and_acceleration_filter(self, sampled_action, se
     )
 
     accel = float(np.clip(action[0], -1.0, 1.0))
-    emergency = (float(current_vals.get("front_ttc", float("inf"))) <= SAFETY_OVERRIDE_TTC
-                 or float(current_vals.get("front_gap", float("inf"))) <= MIN_FOLLOWING_GAP)
     policy_acceleration_before_override = float(accel)
     intervention_reason = "none"
 
