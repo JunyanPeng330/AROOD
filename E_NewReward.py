@@ -271,8 +271,9 @@ TRAFFIC_REAR_FAST_DELTA_MAX = 6.0
 TRAFFIC_SPEED_BROAD_DELTA_MIN = -8.0
 TRAFFIC_SPEED_BROAD_DELTA_MAX = 6.0
 
-# Lane changes are not intrinsically rewarded or penalized.
-LANE_CHANGE_COST = 0.0
+# Dynamic lane-change cost coefficient: cost = coefficient * abs(acceleration_reward).
+# Applied only when a lane change is actually completed.
+LANE_CHANGE_COST = 0.5
 
 # Instantaneous lane changes complete within the current policy transition.
 # This cooldown constant is retained for legacy helper paths only; the active
@@ -334,8 +335,8 @@ EVALUATOR_BATCH_SIZE = 10
 EVALUATOR_MIN_EPISODES = 10
 EVALUATOR_MAX_SAFETY_WEIGHT = 3.0
 EVALUATOR_MIN_SAFETY_WEIGHT = 0.5
-# Lane-change frequency is monitored diagnostically. A tiny cost is applied
-# only when a lane change completes; rejected requests are not charged this cost.
+# Lane-change frequency is monitored diagnostically. The dynamic lane-change cost
+# is applied only when a lane change completes; rejected requests are not charged.
 
 
 reward_path = 'figure/Re_E_' + '4.png'
@@ -3570,12 +3571,13 @@ def calculate_min_ttc(simulator):
 
 
 def construct_reward(reward_specification, embedding_model=None):
-    """Reward normalized acceleration and relative speed, with a collision penalty.
+    """Reward normalized acceleration and clipped relative speed, with lane-change and collision costs.
 
     Acceleration is clipped to the configured physical range and mapped to [-1, 1].
-    Speed reward is intentionally unbounded:
-        (current_speed - speed_limit) / speed_limit
-    The collision penalty preserves the previous safety_weight behavior.
+    Speed reward is clipped to [-1, 1]:
+        clip((current_speed - speed_limit) / speed_limit, -1, 1)
+    A completed lane change incurs 0.5 * abs(acceleration_reward).
+    Rejected or incomplete lane-change requests incur no lane-change cost.
     TTC/gap remain independent safety constraints, not reward terms.
     """
     def reward_function(
@@ -3612,15 +3614,31 @@ def construct_reward(reward_specification, embedding_model=None):
         raw_speed_reward = (current_speed - speed_limit) / speed_limit
         speed_reward = float(np.clip(raw_speed_reward, -1.0, 1.0))
 
+        lane_change_completed = bool(
+            (safety_info or {}).get("lane_change_accepted", False)
+        )
+        lane_change_cost_scale = max(
+            0.0, float(reward_specification.get("lane_change_cost_scale", LANE_CHANGE_COST))
+        )
+        lane_change_cost = (
+            lane_change_cost_scale * abs(acceleration_reward)
+            if lane_change_completed else 0.0
+        )
+
         collision_penalty = (
             max(0.0, float(reward_specification.get("safety_weight", INITIAL_COLLISION_PENALTY)))
             if bool(safety_violation) else 0.0
         )
-        reward = float(acceleration_reward + speed_reward - collision_penalty)
+        reward = float(
+            acceleration_reward + speed_reward - lane_change_cost - collision_penalty
+        )
         if reward_diagnostics is not None:
             reward_diagnostics.update({
-                "reward_objective": "normalized_acceleration_plus_clipped_speed_minus_collision_penalty",
+                "reward_objective": "normalized_acceleration_plus_clipped_speed_minus_dynamic_lane_change_cost_minus_collision_penalty",
                 "acceleration_reward": acceleration_reward,
+                "lane_change_completed": lane_change_completed,
+                "lane_change_cost_scale": lane_change_cost_scale,
+                "lane_change_cost": float(lane_change_cost),
                 "ego_acceleration_mps2": raw_acceleration,
                 "clipped_acceleration_mps2": clipped_acceleration,
                 "acceleration_min_mps2": float(acceleration_min),
@@ -3640,6 +3658,8 @@ def construct_reward(reward_specification, embedding_model=None):
             f"(clipped={clipped_acceleration:+.3f}), "
             f"speed_reward={speed_reward:+.3f} "
             f"(speed={current_speed:.3f}m/s, limit={speed_limit:.3f}m/s), "
+            f"lane_change_completed={lane_change_completed}, "
+            f"lane_change_cost={lane_change_cost:.3f}, "
             f"collision_penalty={collision_penalty:.3f}, total={reward:+.3f}"
         )
         print("[TTC REWARD] disabled; TTC/gap are used only by the independent safety shield.")
@@ -3769,11 +3789,13 @@ def build_fixed_reward_function():
         "target_behavior": (
             "Reward longitudinal acceleration using acceleration normalized from [-5, 5] m/s^2 "
             "to [-1, 1], add the relative-speed reward clipped to [-1, 1] from (current_speed - "
-            "speed_limit) / speed_limit, and apply the existing penalty when a collision/safety violation occurs. "
-            "Do not include a progress reward or lane-change reward/cost. Do not add an off-road "
-            "reward penalty. TTC and minimum-gap checks remain independent safety constraints."
+            "speed_limit) / speed_limit, apply a lane-change cost equal to 0.5 times the absolute "
+            "acceleration reward only when a lane change is completed, and apply the existing penalty "
+            "when a collision/safety violation occurs. Do not include a progress reward. Do not add an "
+            "off-road reward penalty. TTC and minimum-gap checks remain independent safety constraints."
         ),
         "safety_weight": INITIAL_COLLISION_PENALTY,
+        "lane_change_cost_scale": LANE_CHANGE_COST,
         "acceleration_min_mps2": -5.0,
         "acceleration_max_mps2": 5.0,
         "speed_limit_mps": float(SPEED_LIMIT),
