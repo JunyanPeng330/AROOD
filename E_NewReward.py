@@ -275,10 +275,9 @@ TRAFFIC_SPEED_BROAD_DELTA_MAX = 6.0
 # Applied only when a lane change is actually completed.
 LANE_CHANGE_COST = 0.5
 
-# Instantaneous lane changes complete within the current policy transition.
-# This cooldown constant is retained for legacy helper paths only; the active
-# instantaneous step path clears maneuver state immediately after relocation.
-LANE_CHANGE_COOLDOWN_STEPS = 0
+# Number of policy steps for which another lane change is disabled
+# after an instantaneous lane change has completed.
+LANE_CHANGE_COOLDOWN_STEPS = 5
 
 
 # Speed-matching controller
@@ -2740,7 +2739,7 @@ class HighwaySimulator:
                     self._lane_change_source_index = None
                     self._lane_change_started_step = None
                     self._lane_change_stable_steps = 0
-                    self._lane_change_cooldown = 0
+                    self._lane_change_cooldown = int(LANE_CHANGE_COOLDOWN_STEPS)
                     self._active_lane_maneuver_id = None
                     self._active_lane_request_trace_id = None
                     lane_changed = True
@@ -2798,6 +2797,11 @@ class HighwaySimulator:
         traffic_speeds_before = self._snapshot_managed_traffic_slots()
         crashed_before_step = bool(getattr(ego, "crashed", False))
         obs, env_reward, native_terminated, truncated, env_info = self.env.step(physical_action)
+        # Count down once per subsequent policy transition. Do not decrement
+        # on the transition that completes the lane change, so the configured
+        # cooldown covers five full future policy decisions.
+        if not lane_changed and int(getattr(self, "_lane_change_cooldown", 0)) > 0:
+            self._lane_change_cooldown -= 1
         # This check must run BEFORE post-step sanitization: it records the first
         # negative value and the vehicle's action/kinematics before any clamp or
         # slot replacement can obscure the cause.
@@ -3218,9 +3222,11 @@ def _safety_aware_lane_action_mask(self):
     change_candidates = [c for c in ranked if int(c["target_lane"]) != current_lane]
     assessment = self._rear_escape_assessment(lane_ttc)
     self._last_safe_lane_candidates = change_candidates
-    mask = np.asarray([True, bool(change_candidates)], dtype=bool)
+    cooldown_active = int(getattr(self, "_lane_change_cooldown", 0)) > 0
+    mask = np.asarray([True, bool(change_candidates) and not cooldown_active], dtype=bool)
     print("[BINARY SAFETY MASK]",
           f"mask={mask.tolist()}",
+          f"cooldown_remaining={int(getattr(self, '_lane_change_cooldown', 0))}",
           f"ranked_lanes={[int(c['target_lane']) for c in ranked]}",
           f"valid_change_target_lanes={[int(c['target_lane']) for c in change_candidates]}",
           f"rear_escape_needed={assessment['rear_escape_needed']}",
@@ -3232,7 +3238,7 @@ def _get_valid_target_lane_mask(self):
     """Expose all hard-safe adjacent lanes; rear escape affects ranking, not admissibility."""
     mask = np.zeros(NUM_LANES, dtype=bool)
     current_lane = int(self.env.unwrapped.vehicle.lane_index[2])
-    if getattr(self, "_lane_change_active", False):
+    if getattr(self, "_lane_change_active", False) or int(getattr(self, "_lane_change_cooldown", 0)) > 0:
         self._last_safe_lane_candidates = []
         if 0 <= current_lane < NUM_LANES:
             mask[current_lane] = True
@@ -3270,7 +3276,9 @@ def _safety_aware_lane_selector_and_acceleration_filter(self, sampled_action, se
     selected = None if selected_target_lane is None else int(selected_target_lane)
     target, executed, blocked, reason = current, requested, False, "none"
     if requested == 1:
-        if selected is None or selected < 0 or selected >= min(int(base.config["lanes_count"]), NUM_LANES):
+        if int(getattr(self, "_lane_change_cooldown", 0)) > 0:
+            blocked, reason, executed = True, "lane_change_cooldown", 0
+        elif selected is None or selected < 0 or selected >= min(int(base.config["lanes_count"]), NUM_LANES):
             blocked, reason, executed = True, "no_valid_target_lane_selected", 0
         elif selected == current:
             blocked, reason, executed = True, "no_safe_adjacent_target_or_invalid_target", 0
