@@ -1190,7 +1190,7 @@ class HighwaySimulator:
         if values.get("rear_vehicle_id") is not None and rear_gap < LANE_CHANGE_MIN_GAP:
             reasons.append("candidate_rear_gap_below_minimum")
 
-
+        return reasons
 
     def _safe_lane_change_candidates(self, lane_ttc=None):
         """Return every adjacent lane that passes the hard safety checks.
@@ -1250,7 +1250,7 @@ class HighwaySimulator:
                 "is_current_lane": True,
             }]
 
-
+        return selected_candidates
 
     def _select_best_safe_lane_candidate(self, lane_ttc=None):
         """Choose the highest-utility safe target lane, or None if none is safe."""
@@ -1258,13 +1258,14 @@ class HighwaySimulator:
         if not candidates:
             return None
         selected = max(candidates, key=lambda item: (item["utility"], -item["target_lane"]))
-
+        return selected
 
     def get_valid_lane_action_mask(self):
         """Two-action mask: [KEEP, CHANGE]; CHANGE is valid if any safe target exists."""
         vehicle = self.env.unwrapped.vehicle
         if self._lane_change_active:
             mask = np.array([True, False], dtype=bool)
+            return mask
 
         lane_ttc = self._min_ttc_by_lane()
         candidates = self._safe_lane_change_candidates(lane_ttc)
@@ -1273,7 +1274,7 @@ class HighwaySimulator:
             if int(item["target_lane"]) != int(vehicle.lane_index[2])
         ]
         mask = np.array([True, bool(safe_adjacent)], dtype=bool)
-
+        return mask
 
     def _min_ttc_by_lane(self):
         """Return one dynamic front/rear neighbor per lane and its TTC.
@@ -2872,7 +2873,7 @@ class HighwaySimulator:
         )
         print(
             "[TTC RISK]",
-            f"step={self.step_count + 1}",
+            f"step={self.step_count}",
             f"current_lane={int(ego_after.lane_index[2])}",
             f"current_lane_max_risk={float(current_lane_risk.get('lane_risk', 0.0)):.3f}",
             f"lanes=({lane_risk_summary})",
@@ -2929,7 +2930,7 @@ class HighwaySimulator:
             },
         })
         self.state = next_state
-
+        return next_state.copy(), float(env_reward), bool(effective_terminated or truncated), info
 
     def get_lane_keeping_steering(
             self,
@@ -3232,6 +3233,7 @@ def _safety_aware_lane_action_mask(self):
     assessment = self._rear_escape_assessment(lane_ttc)
     self._last_safe_lane_candidates = change_candidates
     mask = np.asarray([True, bool(change_candidates)], dtype=bool)
+    return mask
 
 
 def _get_valid_target_lane_mask(self):
@@ -3253,6 +3255,7 @@ def _get_valid_target_lane_mask(self):
         lane = int(c["target_lane"])
         if 0 <= lane < NUM_LANES:
             mask[lane] = True
+    return mask
 
 
 def _safety_aware_lane_selector_and_acceleration_filter(self, sampled_action, selected_target_lane=None):
@@ -3279,6 +3282,7 @@ def _safety_aware_lane_selector_and_acceleration_filter(self, sampled_action, se
     vals = metrics.get(target, {})
     current_vals = metrics.get(current, {})
 
+    accel = float(np.clip(action[0], -1.0, 1.0))
     emergency = (float(current_vals.get("front_ttc", float("inf"))) <= SAFETY_OVERRIDE_TTC
                  or float(current_vals.get("front_gap", float("inf"))) <= MIN_FOLLOWING_GAP)
     policy_acceleration_before_override = float(accel)
@@ -3331,7 +3335,7 @@ def _safety_aware_lane_selector_and_acceleration_filter(self, sampled_action, se
         "lane_change_candidate_front_ttc": float(vals.get("front_ttc", float("inf"))),
         "lane_change_candidate_rear_ttc": float(vals.get("rear_ttc", float("inf"))),
     }
-
+    return np.asarray([accel, executed], dtype=np.float32), info
 
 
 HighwaySimulator._rear_escape_assessment = _rear_escape_assessment
@@ -3538,10 +3542,7 @@ def calculate_min_ttc(simulator):
         }
         for lane_id in sorted(relevant_lane_ids)
     }
-
-
-
-
+    return min_ttc, sum(np.isfinite(v) for v in values)
 
 
 def construct_reward(reward_specification, embedding_model=None):
