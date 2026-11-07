@@ -1317,8 +1317,15 @@ class HighwaySimulator:
         # A real current-lane rear emergency can bypass the benefit threshold,
         # but never the hard safety checks applied to the destination lane.
         rear_assessment = self._rear_escape_assessment(lane_ttc)
+        current_front_ttc = float(current_values.get("front_ttc", float("inf")))
+        current_front_gap = float(current_values.get("front_gap", float("inf")))
+        current_front_emergency = (
+            current_front_ttc <= SAFETY_OVERRIDE_TTC
+            or current_front_gap <= MIN_FOLLOWING_GAP
+        )
         emergency_benefit_override = bool(
             rear_assessment.get("rear_escape_needed", False)
+            or current_front_emergency
         )
 
         for candidate_lane in (current_lane - 1, current_lane + 1):
@@ -1357,7 +1364,7 @@ class HighwaySimulator:
                 "current_efficiency_score": float(current_profile["efficiency_score"]),
                 "current_stability_score": float(current_profile["stability_score"]),
                 "prediction_horizon_s": float(BENEFIT_PREDICTION_HORIZON_SECONDS),
-                "benefit_threshold_bypassed_for_rear_emergency": emergency_benefit_override,
+                "benefit_threshold_bypassed_for_emergency": emergency_benefit_override,
                 "front_gap": float(values.get("front_gap", float("inf"))),
                 "rear_gap": float(values.get("rear_gap", float("inf"))),
                 "front_ttc": float(values.get("front_ttc", float("inf"))),
@@ -1388,7 +1395,7 @@ class HighwaySimulator:
                 "current_efficiency_score": float(current_profile["efficiency_score"]),
                 "current_stability_score": float(current_profile["stability_score"]),
                 "prediction_horizon_s": float(BENEFIT_PREDICTION_HORIZON_SECONDS),
-                "benefit_threshold_bypassed_for_rear_emergency": False,
+                "benefit_threshold_bypassed_for_emergency": False,
                 "front_gap": float(current_values.get("front_gap", float("inf"))),
                 "rear_gap": float(current_values.get("rear_gap", float("inf"))),
                 "front_ttc": float(current_values.get("front_ttc", float("inf"))),
