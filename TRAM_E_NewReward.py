@@ -339,11 +339,11 @@ EVALUATOR_MIN_SAFETY_WEIGHT = 0.5
 # is applied only when a lane change completes; rejected requests are not charged.
 
 
-reward_path = 'figure/Re_E_new_' + '4.png'
-plot_path = 'figure/plot_E_new_' + '4.txt'
-MODEL_PATH = 'policy/E_new_' + '4.pt'
-EPISODE_TRAJECTORY_PATH = 'figure/episode_trajectories_E_new_' + '4.jsonl'
-TRAJECTORY_RECORDING_ENABLED = os.environ.get("AROOD_RECORD_TRAJECTORIES_E_new_", "4").strip().lower() not in {"0", "false", "no", "off"}
+reward_path = 'figure/Re_TRAM_E_NewReward.png'
+plot_path = 'figure/plot_TRAM_E_NewReward.txt'
+MODEL_PATH = 'policy/TRAM_E_NewReward.pt'
+EPISODE_TRAJECTORY_PATH = 'figure/episode_trajectories_TRAM_E_NewReward.jsonl'
+TRAJECTORY_RECORDING_ENABLED = os.environ.get("AROOD_RECORD_TRAJECTORIES_TRAM_E_NewReward", "1").strip().lower() not in {"0", "false", "no", "off"}
 
 
 # ============================================================
@@ -3655,7 +3655,7 @@ class TemporalRewardAttention(nn.Module):
             component_history = component_history[:, -self.history_length:, :]
             sequence_length = self.history_length
         x = self.input_projection(component_history)
-        x = x + self.position_embedding[:, -sequence_length:, :]
+        x = x + self.position_embedding[:, :sequence_length, :]
         x = self.encoder(x)
         context = self.output_norm(x[:, -1, :])
         # alpha > 1 gives a well-defined, non-degenerate simplex distribution.
@@ -3698,7 +3698,7 @@ class TRAMRewardController:
         tensor = torch.as_tensor(sequence, dtype=torch.float32, device=DEVICE).unsqueeze(0)
         alpha = self.model(tensor)
         distribution = torch.distributions.Dirichlet(alpha)
-        sampled = distribution.rsample()
+        sampled = distribution.sample()
         log_prob = distribution.log_prob(sampled).squeeze(0)
         entropy = distribution.entropy().squeeze(0)
 
