@@ -3531,17 +3531,6 @@ def calculate_min_ttc(simulator):
         values.append(float(lane_values["rear_ttc"]))
 
     min_ttc = min(values, default=float("inf"))
-    lane_details = {
-        lane_id: {
-            "front_vehicle_id": lane_ttc.get(lane_id, {}).get("front_vehicle_id"),
-            "front_ttc_s": lane_ttc.get(lane_id, {}).get("front_ttc", float("inf")),
-            "front_gap_m": lane_ttc.get(lane_id, {}).get("front_gap", float("inf")),
-            "rear_vehicle_id": lane_ttc.get(lane_id, {}).get("rear_vehicle_id"),
-            "rear_ttc_s": lane_ttc.get(lane_id, {}).get("rear_ttc", float("inf")),
-            "rear_gap_m": lane_ttc.get(lane_id, {}).get("rear_gap", float("inf")),
-        }
-        for lane_id in sorted(relevant_lane_ids)
-    }
     return min_ttc, sum(np.isfinite(v) for v in values)
 
 
