@@ -3705,7 +3705,9 @@ class TRAMRewardController:
         # Small positive floor prevents any one existing component from being
         # completely switched off. Renormalization preserves sum(weights)=1.
         weights = TRAM_WEIGHT_FLOOR + (1.0 - 3.0 * TRAM_WEIGHT_FLOOR) * sampled
-        weights = weights / weights.sum()
+        # Preserve the baseline reward scale: equal weights are (1, 1, 1),
+        # not (1/3, 1/3, 1/3). Thus the adaptive weights sum to three.
+        weights = 3.0 * weights / weights.sum()
         self.episode_log_probs.append(log_prob)
         self.episode_entropies.append(entropy)
         self.episode_weights.append(weights.detach().cpu().numpy())
