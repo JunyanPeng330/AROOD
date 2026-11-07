@@ -238,25 +238,36 @@ SHIELD_ACCEL_INTERVENTION_WEIGHT = 0.15  # Modest cost for routine acceleration 
 # Randomized traffic gaps create varied lane-change opportunities.
 
 REFERENCE_GAP_MIN = 20.0
-REFERENCE_GAP_MAX = 200.0
+REFERENCE_GAP_MAX = 1000.0
 RANDOMIZED_FRONT_GAP_MIN = 20.0
-RANDOMIZED_FRONT_GAP_MAX = 200.0
+RANDOMIZED_FRONT_GAP_MAX = 1000.0
 RANDOMIZED_REAR_GAP_MIN = 20.0
-RANDOMIZED_REAR_GAP_MAX = 200.0
+RANDOMIZED_REAR_GAP_MAX = 1000.0
 TRAFFIC_SPEED_VARIATION = 10.0
 
+# A lane change is beneficial only when its expected combined utility improves
+# meaningfully over staying in the current lane across a physical-time horizon.
+# The weights are explicit experiment parameters and sum to one.
+BENEFIT_PREDICTION_HORIZON_SECONDS = 5.0
+BENEFIT_PREDICTION_SAMPLES = 11
+BENEFIT_SAFETY_WEIGHT = 0.40
+BENEFIT_EFFICIENCY_WEIGHT = 0.40
+BENEFIT_STABILITY_WEIGHT = 0.20
+BENEFIT_MIN_UTILITY_IMPROVEMENT = 0.05
+BENEFIT_SAFETY_GAP_REFERENCE = 50.0
+
 
 
 '''
-In _maintain_six_vehicle_traffic(), it calculates the absolute longitudinal distance between each vehicle and ego.
-- Within 120 m: the vehicle can qualify for a front or rear slot.
-- Beyond 120 m: the vehicle is excluded from slot selection and removed from the managed traffic list.
-- Crossing the ego: if the longitudinal separation is within the 0.5 m crossing tolerance,
-the vehicle is not assigned to either side.
-- Missing slot: _spawn_slot_vehicle(lane_id, side) creates a replacement for that slot.
+The six-slot traffic manager maintains the nearest front and rear vehicle in
+each of the three lanes. A vehicle can qualify for a slot when it is within
+1,000 m longitudinally of ego. Vehicles outside that range are excluded and
+their missing slots are replenished. The six slots remain an observation
+abstraction; the range expansion does not increase the number of observed
+vehicles.
 '''
-# Simulator triggers a replacement of surrounding vehicle
-Traffic_relevant_range = 200
+# Simulator relevance / recycling range, in metres.
+Traffic_relevant_range = 1000
 
 # Ego-relative surrounding-vehicle speed distribution (m/s).
 # Each new traffic vehicle is sampled relative to the current ego speed.
@@ -768,6 +779,12 @@ class HighwaySimulator:
                     "type": "Kinematics",
                     "vehicles_count": NUM_VEHICLE_ROWS,
                     "features": ["presence", "x", "y", "vx", "vy", "cos_h", "sin_h"],
+                    "features_range": {
+                        "x": [-1000.0, 1000.0],
+                        "y": [-12.0, 12.0],
+                        "vx": [-40.0, 40.0],
+                        "vy": [-10.0, 10.0],
+                    },
                     "absolute": False,
                     "normalize": True,
                     "order": "sorted",
@@ -844,7 +861,7 @@ class HighwaySimulator:
 
 
 
-    def reset(self, seed=None, randomize_traffic_gaps=False):
+    def reset(self, seed=None, randomize_traffic_gaps=True):
 
         if seed is None:
             obs, info = self.env.reset()
@@ -865,6 +882,7 @@ class HighwaySimulator:
               f"rear_gap_range={RANDOMIZED_REAR_GAP_MIN:.1f}-{RANDOMIZED_REAR_GAP_MAX:.1f}m",
               f"gap_sampling={'independent_per_lane_and_side' if self.randomize_traffic_gaps else 'configured_baseline_setting'}",
               f"speed_variation=±{TRAFFIC_SPEED_VARIATION:.1f}m/s",
+              f"relevance_range={self.TRAFFIC_RELEVANT_RANGE:.1f}m",
               f"randomized={self.randomize_traffic_gaps}")
 
         self.step_count = 0
@@ -1192,8 +1210,92 @@ class HighwaySimulator:
 
         return reasons
 
+    def _lane_benefit_utility(self, lane_values):
+        """Estimate safety, efficiency, and stability over a physical-time horizon.
+
+        Traffic vehicles are assumed to maintain constant speed during this
+        short-horizon estimate. This is a lane-ranking signal, not a safety
+        shield: immediate TTC and minimum-gap constraints are checked separately.
+        """
+        ego = self.env.unwrapped.vehicle
+        ego_speed = max(0.0, float(ego.speed))
+        horizon = float(BENEFIT_PREDICTION_HORIZON_SECONDS)
+        sample_count = max(2, int(BENEFIT_PREDICTION_SAMPLES))
+        times = np.linspace(0.0, horizon, sample_count)
+
+        front_speed_raw = lane_values.get("front_speed")
+        rear_speed_raw = lane_values.get("rear_speed")
+        front_gap = float(lane_values.get("front_gap", float("inf")))
+        rear_gap = float(lane_values.get("rear_gap", float("inf")))
+        front_present = front_speed_raw is not None and np.isfinite(front_gap)
+        rear_present = rear_speed_raw is not None and np.isfinite(rear_gap)
+        front_speed = float(front_speed_raw) if front_present else SPEED_LIMIT
+        rear_speed = float(rear_speed_raw) if rear_present else ego_speed
+
+        safety_series = []
+        efficiency_series = []
+        gap_reference = max(1.0, float(BENEFIT_SAFETY_GAP_REFERENCE))
+        headway = max(0.1, float(DESIRED_TIME_HEADWAY))
+        following_gap = max(0.0, float(MIN_FOLLOWING_GAP))
+        speed_reference = max(1.0, float(SPEED_LIMIT))
+
+        for elapsed in times:
+            predicted_front_gap = (
+                max(0.0, front_gap + (front_speed - ego_speed) * float(elapsed))
+                if front_present else float("inf")
+            )
+            predicted_rear_gap = (
+                max(0.0, rear_gap + (ego_speed - rear_speed) * float(elapsed))
+                if rear_present else float("inf")
+            )
+
+            front_safety = (
+                float(np.clip(predicted_front_gap / gap_reference, 0.0, 1.0))
+                if front_present else 1.0
+            )
+            rear_safety = (
+                float(np.clip(predicted_rear_gap / gap_reference, 0.0, 1.0))
+                if rear_present else 1.0
+            )
+            safety_series.append(min(front_safety, rear_safety))
+
+            # Estimate the speed that can be sustained behind the front vehicle
+            # while preserving the desired time headway.
+            if front_present:
+                sustainable_speed = front_speed + max(
+                    0.0, predicted_front_gap - following_gap
+                ) / headway
+            else:
+                sustainable_speed = speed_reference
+            efficiency_series.append(
+                float(np.clip(sustainable_speed / speed_reference, 0.0, 1.0))
+            )
+
+        safety_score = float(np.mean(safety_series))
+        efficiency_score = float(np.mean(efficiency_series))
+
+        # Stability rewards a lane whose predicted safety/efficiency profile
+        # does not fluctuate sharply over the evaluation horizon.
+        profile_variation = (
+            float(np.std(safety_series)) + float(np.std(efficiency_series))
+        ) / 2.0
+        stability_score = float(np.clip(1.0 - profile_variation, 0.0, 1.0))
+
+        utility = (
+            BENEFIT_SAFETY_WEIGHT * safety_score
+            + BENEFIT_EFFICIENCY_WEIGHT * efficiency_score
+            + BENEFIT_STABILITY_WEIGHT * stability_score
+        )
+        return {
+            "utility": float(utility),
+            "safety_score": safety_score,
+            "efficiency_score": efficiency_score,
+            "stability_score": stability_score,
+            "prediction_horizon_s": horizon,
+        }
+
     def _safe_lane_change_candidates(self, lane_ttc=None):
-        """Return every adjacent lane that passes the hard safety checks.
+        """Return adjacent lanes that are safe and meaningfully beneficial.
 
         TTC and minimum-gap thresholds determine admissibility only. They do not
         rank lanes or require an adjacent lane to have a larger front TTC than
@@ -1208,7 +1310,16 @@ class HighwaySimulator:
         available_lanes = base_env.road.network.graph[start_node][end_node]
         valid_ids = set(range(len(available_lanes)))
         current_lane = int(current_lane)
+        current_values = lane_ttc.get(current_lane, {})
+        current_profile = self._lane_benefit_utility(current_values)
         safe_adjacent = []
+
+        # A real current-lane rear emergency can bypass the benefit threshold,
+        # but never the hard safety checks applied to the destination lane.
+        rear_assessment = self._rear_escape_assessment(lane_ttc)
+        emergency_benefit_override = bool(
+            rear_assessment.get("rear_escape_needed", False)
+        )
 
         for candidate_lane in (current_lane - 1, current_lane + 1):
             if candidate_lane not in valid_ids or candidate_lane not in lane_ttc:
@@ -1219,34 +1330,72 @@ class HighwaySimulator:
             )
             if reasons:
                 continue
+
             values = lane_ttc[candidate_lane]
+            candidate_profile = self._lane_benefit_utility(values)
+            utility_improvement = (
+                float(candidate_profile["utility"])
+                - float(current_profile["utility"])
+            )
+
+            if (
+                not emergency_benefit_override
+                and utility_improvement < BENEFIT_MIN_UTILITY_IMPROVEMENT
+            ):
+                continue
+
             safe_adjacent.append({
                 "target_lane": int(candidate_lane),
-                "utility": float(values.get("front_ttc", float("inf"))),
+                "utility": float(utility_improvement),
+                "candidate_utility": float(candidate_profile["utility"]),
+                "current_lane_utility": float(current_profile["utility"]),
+                "utility_improvement": float(utility_improvement),
+                "candidate_safety_score": float(candidate_profile["safety_score"]),
+                "candidate_efficiency_score": float(candidate_profile["efficiency_score"]),
+                "candidate_stability_score": float(candidate_profile["stability_score"]),
+                "current_safety_score": float(current_profile["safety_score"]),
+                "current_efficiency_score": float(current_profile["efficiency_score"]),
+                "current_stability_score": float(current_profile["stability_score"]),
+                "prediction_horizon_s": float(BENEFIT_PREDICTION_HORIZON_SECONDS),
+                "benefit_threshold_bypassed_for_rear_emergency": emergency_benefit_override,
                 "front_gap": float(values.get("front_gap", float("inf"))),
                 "rear_gap": float(values.get("rear_gap", float("inf"))),
                 "front_ttc": float(values.get("front_ttc", float("inf"))),
                 "rear_ttc": float(values.get("rear_ttc", float("inf"))),
                 "front_speed": values.get("front_speed"),
                 "rear_speed": values.get("rear_speed"),
-                "selection_principle": "hard_safety_checks_only_rl_selects_strategy",
+                "selection_principle": (
+                    "emergency_safe_lane_selection"
+                    if emergency_benefit_override
+                    else "persistent_safety_efficiency_stability_improvement"
+                ),
                 "is_current_lane": False,
             })
 
         if safe_adjacent:
             selected_candidates = safe_adjacent
         else:
-            values = lane_ttc.get(current_lane, {})
             selected_candidates = [{
                 "target_lane": current_lane,
-                "utility": float(values.get("front_ttc", float("inf"))),
-                "front_gap": float(values.get("front_gap", float("inf"))),
-                "rear_gap": float(values.get("rear_gap", float("inf"))),
-                "front_ttc": float(values.get("front_ttc", float("inf"))),
-                "rear_ttc": float(values.get("rear_ttc", float("inf"))),
-                "front_speed": values.get("front_speed"),
-                "rear_speed": values.get("rear_speed"),
-                "selection_principle": "current_lane_fallback_no_safe_adjacent",
+                "utility": 0.0,
+                "candidate_utility": float(current_profile["utility"]),
+                "current_lane_utility": float(current_profile["utility"]),
+                "utility_improvement": 0.0,
+                "candidate_safety_score": float(current_profile["safety_score"]),
+                "candidate_efficiency_score": float(current_profile["efficiency_score"]),
+                "candidate_stability_score": float(current_profile["stability_score"]),
+                "current_safety_score": float(current_profile["safety_score"]),
+                "current_efficiency_score": float(current_profile["efficiency_score"]),
+                "current_stability_score": float(current_profile["stability_score"]),
+                "prediction_horizon_s": float(BENEFIT_PREDICTION_HORIZON_SECONDS),
+                "benefit_threshold_bypassed_for_rear_emergency": False,
+                "front_gap": float(current_values.get("front_gap", float("inf"))),
+                "rear_gap": float(current_values.get("rear_gap", float("inf"))),
+                "front_ttc": float(current_values.get("front_ttc", float("inf"))),
+                "rear_ttc": float(current_values.get("rear_ttc", float("inf"))),
+                "front_speed": current_values.get("front_speed"),
+                "rear_speed": current_values.get("rear_speed"),
+                "selection_principle": "current_lane_fallback_no_beneficial_safe_adjacent",
                 "is_current_lane": True,
             }]
 
@@ -1939,7 +2088,9 @@ class HighwaySimulator:
                           f"rear_gap_m={candidate_rear_gap:.3f}",
                           f"front_ttc_s={candidate_front_ttc:.3f}",
                           f"rear_ttc_s={candidate_rear_ttc:.3f}",
-                          f"utility={selected_candidate['utility']:.3f}")
+                          f"utility_improvement={selected_candidate.get('utility_improvement', selected_candidate['utility']):.3f}",
+                           f"candidate_utility={selected_candidate.get('candidate_utility', 0.0):.3f}",
+                           f"benefit_horizon_s={selected_candidate.get('prediction_horizon_s', BENEFIT_PREDICTION_HORIZON_SECONDS):.1f}s")
 
             lane_change_blocked = bool(lane_change_rejection_reasons)
             if lane_change_blocked:
@@ -3213,7 +3364,13 @@ def _select_safe_lane_with_rear_escape_priority(self, lane_ttc=None):
         )
         return selected
 
-    selected = max(candidates, key=lambda item: (item["utility"], -item["target_lane"]))
+    selected = max(
+        candidates,
+        key=lambda item: (
+            float(item.get("utility_improvement", item["utility"])),
+            -int(item["target_lane"]),
+        ),
+    )
     return selected
 
 
