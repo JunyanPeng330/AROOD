@@ -3710,8 +3710,10 @@ class TRAMRewardController:
         weights = 3.0 * weights / weights.sum()
         self.episode_log_probs.append(log_prob)
         self.episode_entropies.append(entropy)
-        self.episode_weights.append(weights.detach().cpu().numpy())
-        return weights.detach().cpu().numpy().astype(np.float32)
+        # Remove the batch dimension: callers expect exactly three scalar weights.
+        weights_array = weights.detach().cpu().numpy().reshape(3).astype(np.float32)
+        self.episode_weights.append(weights_array.copy())
+        return weights_array
 
     def finish_episode(self, external_score):
         if not self.episode_log_probs:
