@@ -1,0 +1,629 @@
+[TTC REWARD] disabled; TTC/gap are used only by the independent safety shield.
+[TTC RISK] step=197 current_lane=1 current_lane_max_risk=0.000 lanes=(L0:F=infs/0.00,R=67.99s/0.00,MAX=0.00 | L1:F=infs/0.00,R=61.16s/0.00,MAX=0.00 | L2:F=infs/0.00,R=1690.01s/0.00,MAX=0.00)
+[REWARD DEBUG] acceleration_reward=-0.304, acceleration=-1.520m/s^2 (clipped=-1.520), speed_reward=-0.543 (speed=18.294m/s, limit=40.000m/s), collision_penalty=0.000, total=-0.847
+[TTC REWARD] disabled; TTC/gap are used only by the independent safety shield.
+[TTC RISK] step=198 current_lane=1 current_lane_max_risk=0.000 lanes=(L0:F=infs/0.00,R=67.68s/0.00,MAX=0.00 | L1:F=infs/0.00,R=60.78s/0.00,MAX=0.00 | L2:F=infs/0.00,R=1580.42s/0.00,MAX=0.00)
+[REWARD DEBUG] acceleration_reward=-0.112, acceleration=-0.558m/s^2 (clipped=-0.558), speed_reward=-0.544 (speed=18.256m/s, limit=40.000m/s), collision_penalty=0.000, total=-0.655
+[TTC REWARD] disabled; TTC/gap are used only by the independent safety shield.
+[TTC RISK] step=199 current_lane=1 current_lane_max_risk=0.000 lanes=(L0:F=infs/0.00,R=68.79s/0.00,MAX=0.00 | L1:F=infs/0.00,R=62.24s/0.00,MAX=0.00 | L2:F=infs/0.00,R=2308.76s/0.00,MAX=0.00)
+[REWARD DEBUG] acceleration_reward=+0.544, acceleration=+2.718m/s^2 (clipped=+2.718), speed_reward=-0.539 (speed=18.438m/s, limit=40.000m/s), collision_penalty=0.000, total=+0.005
+[TTC REWARD] disabled; TTC/gap are used only by the independent safety shield.
+[TTC RISK] step=200 current_lane=1 current_lane_max_risk=0.000 lanes=(L0:F=infs/0.00,R=68.64s/0.00,MAX=0.00 | L1:F=infs/0.00,R=62.07s/0.00,MAX=0.00 | L2:F=infs/0.00,R=2240.36s/0.00,MAX=0.00)
+[REWARD DEBUG] acceleration_reward=-0.036, acceleration=-0.180m/s^2 (clipped=-0.180), speed_reward=-0.539 (speed=18.426m/s, limit=40.000m/s), collision_penalty=0.000, total=-0.575
+[TTC REWARD] disabled; TTC/gap are used only by the independent safety shield.
+[REFERENCE COLLECTION] episode=79/100 steps=200 return=-42.270
+[REFERENCE EPISODE LEFT COUNTERS] requested=0 mask_allowed=0 target_selected=0 completed=0
+[REFERENCE EPISODE RIGHT COUNTERS] requested=0 mask_allowed=0 target_selected=0 completed=0
+[REFERENCE EPISODE ACTION OPPORTUNITIES] steps=200 change_valid=0 (0.0%) only_keep=200 (100.0%)
+[TRAFFIC SCENARIO] front_gap_range=20.0-1000.0m rear_gap_range=20.0-1000.0m gap_sampling=independent_per_lane_and_side speed_variation=±10.0m/s relevance_range=1000.0m randomized=True
+[TRAFFIC SPAWN] lane=0 side=front gap=332.7m range=1000.0m ego_speed=25.00m/s speed=23.60m/s delta_v_sample=-1.40m/s regime=matched id=1908443393424
+[TRAFFIC SPAWN] lane=0 side=rear gap=263.0m range=1000.0m ego_speed=25.00m/s speed=23.74m/s delta_v_sample=-1.26m/s regime=matched id=1908442128336
+[TRAFFIC SPAWN] lane=1 side=front gap=396.5m range=1000.0m ego_speed=25.00m/s speed=18.24m/s delta_v_sample=-6.76m/s regime=position_challenge id=1908442993488
+[TRAFFIC SPAWN] lane=1 side=rear gap=868.0m range=1000.0m ego_speed=25.00m/s speed=23.96m/s delta_v_sample=-1.04m/s regime=matched id=1908442877840
+[TRAFFIC SPAWN] lane=2 side=front gap=586.1m range=1000.0m ego_speed=25.00m/s speed=26.58m/s delta_v_sample=+1.58m/s regime=matched id=1908442996176
+[TRAFFIC SPAWN] lane=2 side=rear gap=508.3m range=1000.0m ego_speed=25.00m/s speed=24.99m/s delta_v_sample=-0.01m/s regime=matched id=1908444966352
+[TARGET LANE] ('0', '1', 1) initial_position= [204.694   4.   ]
+[TTC RISK] step=1 current_lane=1 current_lane_max_risk=0.000 lanes=(L0:F=215.57s/0.00,R=infs/0.00,MAX=0.00 | L1:F=56.81s/0.00,R=infs/0.00,MAX=0.00 | L2:F=infs/0.00,R=infs/0.00,MAX=0.00)
+[REWARD DEBUG] acceleration_reward=+0.374, acceleration=+1.871m/s^2 (clipped=+1.871), speed_reward=-0.372 (speed=25.125m/s, limit=40.000m/s), collision_penalty=0.000, total=+0.002
+[TTC REWARD] disabled; TTC/gap are used only by the independent safety shield.
+[TTC RISK] step=2 current_lane=1 current_lane_max_risk=0.000 lanes=(L0:F=227.80s/0.00,R=infs/0.00,MAX=0.00 | L1:F=57.42s/0.00,R=infs/0.00,MAX=0.00 | L2:F=infs/0.00,R=infs/0.00,MAX=0.00)
+[REWARD DEBUG] acceleration_reward=-0.246, acceleration=-1.231m/s^2 (clipped=-1.231), speed_reward=-0.374 (speed=25.043m/s, limit=40.000m/s), collision_penalty=0.000, total=-0.620
+[TTC REWARD] disabled; TTC/gap are used only by the independent safety shield.
+[TTC RISK] step=3 current_lane=1 current_lane_max_risk=0.000 lanes=(L0:F=242.11s/0.00,R=infs/0.00,MAX=0.00 | L1:F=58.09s/0.00,R=infs/0.00,MAX=0.00 | L2:F=infs/0.00,R=14273.86s/0.00,MAX=0.00)
+[REWARD DEBUG] acceleration_reward=-0.256, acceleration=-1.281m/s^2 (clipped=-1.281), speed_reward=-0.376 (speed=24.957m/s, limit=40.000m/s), collision_penalty=0.000, total=-0.632
+[TTC REWARD] disabled; TTC/gap are used only by the independent safety shield.
+[TTC RISK] step=4 current_lane=1 current_lane_max_risk=0.000 lanes=(L0:F=205.57s/0.00,R=infs/0.00,MAX=0.00 | L1:F=56.02s/0.00,R=infs/0.00,MAX=0.00 | L2:F=infs/0.00,R=infs/0.00,MAX=0.00)
+[REWARD DEBUG] acceleration_reward=+0.720, acceleration=+3.600m/s^2 (clipped=+3.600), speed_reward=-0.370 (speed=25.197m/s, limit=40.000m/s), collision_penalty=0.000, total=+0.350
+[TTC REWARD] disabled; TTC/gap are used only by the independent safety shield.
+[TTC RISK] step=5 current_lane=1 current_lane_max_risk=0.000 lanes=(L0:F=211.77s/0.00,R=infs/0.00,MAX=0.00 | L1:F=56.33s/0.00,R=infs/0.00,MAX=0.00 | L2:F=infs/0.00,R=infs/0.00,MAX=0.00)
+[REWARD DEBUG] acceleration_reward=-0.141, acceleration=-0.707m/s^2 (clipped=-0.707), speed_reward=-0.371 (speed=25.150m/s, limit=40.000m/s), collision_penalty=0.000, total=-0.513
+[TTC REWARD] disabled; TTC/gap are used only by the independent safety shield.
+[TTC RISK] step=6 current_lane=1 current_lane_max_risk=0.000 lanes=(L0:F=204.15s/0.00,R=infs/0.00,MAX=0.00 | L1:F=55.80s/0.00,R=infs/0.00,MAX=0.00 | L2:F=infs/0.00,R=infs/0.00,MAX=0.00)
+[REWARD DEBUG] acceleration_reward=+0.172, acceleration=+0.858m/s^2 (clipped=+0.858), speed_reward=-0.370 (speed=25.207m/s, limit=40.000m/s), collision_penalty=0.000, total=-0.198
+[TTC REWARD] disabled; TTC/gap are used only by the independent safety shield.
+[TTC RISK] step=7 current_lane=1 current_lane_max_risk=0.000 lanes=(L0:F=197.81s/0.00,R=infs/0.00,MAX=0.00 | L1:F=55.33s/0.00,R=infs/0.00,MAX=0.00 | L2:F=infs/0.00,R=infs/0.00,MAX=0.00)
+[REWARD DEBUG] acceleration_reward=+0.152, acceleration=+0.762m/s^2 (clipped=+0.762), speed_reward=-0.369 (speed=25.258m/s, limit=40.000m/s), collision_penalty=0.000, total=-0.216
+[TTC REWARD] disabled; TTC/gap are used only by the independent safety shield.
+[TTC RISK] step=8 current_lane=1 current_lane_max_risk=0.000 lanes=(L0:F=209.09s/0.00,R=infs/0.00,MAX=0.00 | L1:F=55.98s/0.00,R=infs/0.00,MAX=0.00 | L2:F=infs/0.00,R=infs/0.00,MAX=0.00)
+[REWARD DEBUG] acceleration_reward=-0.269, acceleration=-1.346m/s^2 (clipped=-1.346), speed_reward=-0.371 (speed=25.168m/s, limit=40.000m/s), collision_penalty=0.000, total=-0.640
+[TTC REWARD] disabled; TTC/gap are used only by the independent safety shield.
+[TTC RISK] step=9 current_lane=1 current_lane_max_risk=0.000 lanes=(L0:F=226.35s/0.00,R=infs/0.00,MAX=0.00 | L1:F=56.90s/0.00,R=infs/0.00,MAX=0.00 | L2:F=infs/0.00,R=infs/0.00,MAX=0.00)
+[REWARD DEBUG] acceleration_reward=-0.359, acceleration=-1.795m/s^2 (clipped=-1.795), speed_reward=-0.374 (speed=25.049m/s, limit=40.000m/s), collision_penalty=0.000, total=-0.733
+[TTC REWARD] disabled; TTC/gap are used only by the independent safety shield.
+[TTC RISK] step=10 current_lane=1 current_lane_max_risk=0.000 lanes=(L0:F=275.48s/0.00,R=infs/0.00,MAX=0.00 | L1:F=59.07s/0.00,R=infs/0.00,MAX=0.00 | L2:F=infs/0.00,R=2495.76s/0.00,MAX=0.00)
+[REWARD DEBUG] acceleration_reward=-0.774, acceleration=-3.868m/s^2 (clipped=-3.868), speed_reward=-0.380 (speed=24.791m/s, limit=40.000m/s), collision_penalty=0.000, total=-1.154
+[TTC REWARD] disabled; TTC/gap are used only by the independent safety shield.
+[TTC RISK] step=11 current_lane=1 current_lane_max_risk=0.000 lanes=(L0:F=277.03s/0.00,R=infs/0.00,MAX=0.00 | L1:F=59.07s/0.00,R=infs/0.00,MAX=0.00 | L2:F=infs/0.00,R=2412.72s/0.00,MAX=0.00)
+[REWARD DEBUG] acceleration_reward=-0.021, acceleration=-0.104m/s^2 (clipped=-0.104), speed_reward=-0.380 (speed=24.784m/s, limit=40.000m/s), collision_penalty=0.000, total=-0.401
+[TTC REWARD] disabled; TTC/gap are used only by the independent safety shield.
+[TTC RISK] step=12 current_lane=1 current_lane_max_risk=0.000 lanes=(L0:F=280.64s/0.00,R=infs/0.00,MAX=0.00 | L1:F=59.14s/0.00,R=infs/0.00,MAX=0.00 | L2:F=infs/0.00,R=2246.51s/0.00,MAX=0.00)
+[REWARD DEBUG] acceleration_reward=-0.046, acceleration=-0.231m/s^2 (clipped=-0.231), speed_reward=-0.381 (speed=24.768m/s, limit=40.000m/s), collision_penalty=0.000, total=-0.427
+[TTC REWARD] disabled; TTC/gap are used only by the independent safety shield.
+[TTC RISK] step=13 current_lane=1 current_lane_max_risk=0.000 lanes=(L0:F=266.86s/0.00,R=infs/0.00,MAX=0.00 | L1:F=58.54s/0.00,R=infs/0.00,MAX=0.00 | L2:F=infs/0.00,R=3063.89s/0.00,MAX=0.00)
+[REWARD DEBUG] acceleration_reward=+0.179, acceleration=+0.897m/s^2 (clipped=+0.897), speed_reward=-0.379 (speed=24.828m/s, limit=40.000m/s), collision_penalty=0.000, total=-0.200
+[TTC REWARD] disabled; TTC/gap are used only by the independent safety shield.
+[TTC RISK] step=14 current_lane=1 current_lane_max_risk=0.000 lanes=(L0:F=296.08s/0.00,R=infs/0.00,MAX=0.00 | L1:F=59.56s/0.00,R=infs/0.00,MAX=0.00 | L2:F=infs/0.00,R=1764.25s/0.00,MAX=0.00)
+[REWARD DEBUG] acceleration_reward=-0.363, acceleration=-1.815m/s^2 (clipped=-1.815), speed_reward=-0.382 (speed=24.707m/s, limit=40.000m/s), collision_penalty=0.000, total=-0.745
+[TTC REWARD] disabled; TTC/gap are used only by the independent safety shield.
+[TTC RISK] step=15 current_lane=1 current_lane_max_risk=0.000 lanes=(L0:F=254.17s/0.00,R=infs/0.00,MAX=0.00 | L1:F=57.87s/0.00,R=infs/0.00,MAX=0.00 | L2:F=infs/0.00,R=4848.80s/0.00,MAX=0.00)
+[REWARD DEBUG] acceleration_reward=+0.544, acceleration=+2.722m/s^2 (clipped=+2.722), speed_reward=-0.378 (speed=24.889m/s, limit=40.000m/s), collision_penalty=0.000, total=+0.167
+[TTC REWARD] disabled; TTC/gap are used only by the independent safety shield.
+[TTC RISK] step=16 current_lane=1 current_lane_max_risk=0.000 lanes=(L0:F=227.94s/0.00,R=infs/0.00,MAX=0.00 | L1:F=56.55s/0.00,R=infs/0.00,MAX=0.00 | L2:F=infs/0.00,R=infs/0.00,MAX=0.00)
+[REWARD DEBUG] acceleration_reward=+0.442, acceleration=+2.210m/s^2 (clipped=+2.210), speed_reward=-0.374 (speed=25.036m/s, limit=40.000m/s), collision_penalty=0.000, total=+0.068
+[TTC REWARD] disabled; TTC/gap are used only by the independent safety shield.
+[TTC RISK] step=17 current_lane=1 current_lane_max_risk=0.000 lanes=(L0:F=189.23s/0.00,R=infs/0.00,MAX=0.00 | L1:F=54.16s/0.00,R=infs/0.00,MAX=0.00 | L2:F=infs/0.00,R=infs/0.00,MAX=0.00)
+[REWARD DEBUG] acceleration_reward=+0.877, acceleration=+4.385m/s^2 (clipped=+4.385), speed_reward=-0.367 (speed=25.328m/s, limit=40.000m/s), collision_penalty=0.000, total=+0.510
+[TTC REWARD] disabled; TTC/gap are used only by the independent safety shield.
+[TTC RISK] step=18 current_lane=1 current_lane_max_risk=0.000 lanes=(L0:F=174.65s/0.00,R=infs/0.00,MAX=0.00 | L1:F=53.02s/0.00,R=infs/0.00,MAX=0.00 | L2:F=infs/0.00,R=infs/0.00,MAX=0.00)
+[REWARD DEBUG] acceleration_reward=+0.430, acceleration=+2.149m/s^2 (clipped=+2.149), speed_reward=-0.363 (speed=25.472m/s, limit=40.000m/s), collision_penalty=0.000, total=+0.067
+[TTC REWARD] disabled; TTC/gap are used only by the independent safety shield.
+[TTC RISK] step=19 current_lane=1 current_lane_max_risk=0.000 lanes=(L0:F=209.85s/0.00,R=infs/0.00,MAX=0.00 | L1:F=55.35s/0.00,R=infs/0.00,MAX=0.00 | L2:F=infs/0.00,R=infs/0.00,MAX=0.00)
+[REWARD DEBUG] acceleration_reward=-0.941, acceleration=-4.706m/s^2 (clipped=-4.706), speed_reward=-0.371 (speed=25.158m/s, limit=40.000m/s), collision_penalty=0.000, total=-1.312
+[TTC REWARD] disabled; TTC/gap are used only by the independent safety shield.
+[TTC RISK] step=20 current_lane=1 current_lane_max_risk=0.000 lanes=(L0:F=206.36s/0.00,R=infs/0.00,MAX=0.00 | L1:F=55.08s/0.00,R=infs/0.00,MAX=0.00 | L2:F=infs/0.00,R=infs/0.00,MAX=0.00)
+[REWARD DEBUG] acceleration_reward=+0.077, acceleration=+0.386m/s^2 (clipped=+0.386), speed_reward=-0.370 (speed=25.184m/s, limit=40.000m/s), collision_penalty=0.000, total=-0.293
+[TTC REWARD] disabled; TTC/gap are used only by the independent safety shield.
+[TTC RISK] step=21 current_lane=1 current_lane_max_risk=0.000 lanes=(L0:F=245.74s/0.00,R=infs/0.00,MAX=0.00 | L1:F=57.10s/0.00,R=infs/0.00,MAX=0.00 | L2:F=infs/0.00,R=8077.89s/0.00,MAX=0.00)
+[REWARD DEBUG] acceleration_reward=-0.760, acceleration=-3.801m/s^2 (clipped=-3.801), speed_reward=-0.377 (speed=24.930m/s, limit=40.000m/s), collision_penalty=0.000, total=-1.137
+[TTC REWARD] disabled; TTC/gap are used only by the independent safety shield.
+[TTC RISK] step=22 current_lane=1 current_lane_max_risk=0.000 lanes=(L0:F=284.29s/0.00,R=infs/0.00,MAX=0.00 | L1:F=58.61s/0.00,R=infs/0.00,MAX=0.00 | L2:F=infs/0.00,R=2077.19s/0.00,MAX=0.00)
+[REWARD DEBUG] acceleration_reward=-0.540, acceleration=-2.700m/s^2 (clipped=-2.700), speed_reward=-0.381 (speed=24.750m/s, limit=40.000m/s), collision_penalty=0.000, total=-0.921
+[TTC REWARD] disabled; TTC/gap are used only by the independent safety shield.
+[TTC RISK] step=23 current_lane=1 current_lane_max_risk=0.000 lanes=(L0:F=304.65s/0.00,R=infs/0.00,MAX=0.00 | L1:F=59.24s/0.00,R=infs/0.00,MAX=0.00 | L2:F=infs/0.00,R=1577.12s/0.00,MAX=0.00)
+[REWARD DEBUG] acceleration_reward=-0.230, acceleration=-1.152m/s^2 (clipped=-1.152), speed_reward=-0.383 (speed=24.673m/s, limit=40.000m/s), collision_penalty=0.000, total=-0.614
+[TTC REWARD] disabled; TTC/gap are used only by the independent safety shield.
+[TTC RISK] step=24 current_lane=1 current_lane_max_risk=0.000 lanes=(L0:F=264.60s/0.00,R=infs/0.00,MAX=0.00 | L1:F=57.73s/0.00,R=infs/0.00,MAX=0.00 | L2:F=infs/0.00,R=3192.22s/0.00,MAX=0.00)
+[REWARD DEBUG] acceleration_reward=+0.484, acceleration=+2.422m/s^2 (clipped=+2.422), speed_reward=-0.379 (speed=24.835m/s, limit=40.000m/s), collision_penalty=0.000, total=+0.105
+[TTC REWARD] disabled; TTC/gap are used only by the independent safety shield.
+[TTC RISK] step=25 current_lane=1 current_lane_max_risk=0.000 lanes=(L0:F=236.04s/0.00,R=infs/0.00,MAX=0.00 | L1:F=56.39s/0.00,R=infs/0.00,MAX=0.00 | L2:F=infs/0.00,R=54810.68s/0.00,MAX=0.00)
+[REWARD DEBUG] acceleration_reward=+0.445, acceleration=+2.227m/s^2 (clipped=+2.227), speed_reward=-0.375 (speed=24.983m/s, limit=40.000m/s), collision_penalty=0.000, total=+0.070
+[TTC REWARD] disabled; TTC/gap are used only by the independent safety shield.
+[TTC RISK] step=26 current_lane=1 current_lane_max_risk=0.000 lanes=(L0:F=268.36s/0.00,R=infs/0.00,MAX=0.00 | L1:F=57.75s/0.00,R=infs/0.00,MAX=0.00 | L2:F=infs/0.00,R=2867.01s/0.00,MAX=0.00)
+[REWARD DEBUG] acceleration_reward=-0.499, acceleration=-2.496m/s^2 (clipped=-2.496), speed_reward=-0.380 (speed=24.817m/s, limit=40.000m/s), collision_penalty=0.000, total=-0.879
+[TTC REWARD] disabled; TTC/gap are used only by the independent safety shield.
+[TTC RISK] step=27 current_lane=1 current_lane_max_risk=0.000 lanes=(L0:F=328.13s/0.00,R=infs/0.00,MAX=0.00 | L1:F=59.69s/0.00,R=infs/0.00,MAX=0.00 | L2:F=infs/0.00,R=1269.06s/0.00,MAX=0.00)
+[REWARD DEBUG] acceleration_reward=-0.663, acceleration=-3.316m/s^2 (clipped=-3.316), speed_reward=-0.385 (speed=24.596m/s, limit=40.000m/s), collision_penalty=0.000, total=-1.048
+[TTC REWARD] disabled; TTC/gap are used only by the independent safety shield.
+[TTC RISK] step=28 current_lane=1 current_lane_max_risk=0.000 lanes=(L0:F=412.00s/0.00,R=infs/0.00,MAX=0.00 | L1:F=61.58s/0.00,R=infs/0.00,MAX=0.00 | L2:F=infs/0.00,R=840.88s/0.00,MAX=0.00)
+[REWARD DEBUG] acceleration_reward=-0.606, acceleration=-3.029m/s^2 (clipped=-3.029), speed_reward=-0.390 (speed=24.394m/s, limit=40.000m/s), collision_penalty=0.000, total=-0.996
+[TTC REWARD] disabled; TTC/gap are used only by the independent safety shield.
+[TTC RISK] step=29 current_lane=1 current_lane_max_risk=0.000 lanes=(L0:F=305.17s/0.00,R=infs/0.00,MAX=0.00 | L1:F=58.87s/0.00,R=infs/0.00,MAX=0.00 | L2:F=infs/0.00,R=1560.84s/0.00,MAX=0.00)
+[REWARD DEBUG] acceleration_reward=+0.828, acceleration=+4.142m/s^2 (clipped=+4.142), speed_reward=-0.383 (speed=24.670m/s, limit=40.000m/s), collision_penalty=0.000, total=+0.445
+[TTC REWARD] disabled; TTC/gap are used only by the independent safety shield.
+[TTC RISK] step=30 current_lane=1 current_lane_max_risk=0.000 lanes=(L0:F=237.19s/0.00,R=infs/0.00,MAX=0.00 | L1:F=56.14s/0.00,R=infs/0.00,MAX=0.00 | L2:F=infs/0.00,R=28947.80s/0.00,MAX=0.00)
+[REWARD DEBUG] acceleration_reward=+0.915, acceleration=+4.576m/s^2 (clipped=+4.576), speed_reward=-0.376 (speed=24.975m/s, limit=40.000m/s), collision_penalty=0.000, total=+0.540
+[TTC REWARD] disabled; TTC/gap are used only by the independent safety shield.
+[TTC RISK] step=31 current_lane=1 current_lane_max_risk=0.000 lanes=(L0:F=289.31s/0.00,R=infs/0.00,MAX=0.00 | L1:F=58.21s/0.00,R=infs/0.00,MAX=0.00 | L2:F=infs/0.00,R=1901.93s/0.00,MAX=0.00)
+[REWARD DEBUG] acceleration_reward=-0.742, acceleration=-3.708m/s^2 (clipped=-3.708), speed_reward=-0.382 (speed=24.728m/s, limit=40.000m/s), collision_penalty=0.000, total=-1.123
+[TTC REWARD] disabled; TTC/gap are used only by the independent safety shield.
+[TTC RISK] step=32 current_lane=1 current_lane_max_risk=0.000 lanes=(L0:F=286.45s/0.00,R=infs/0.00,MAX=0.00 | L1:F=58.05s/0.00,R=infs/0.00,MAX=0.00 | L2:F=infs/0.00,R=1983.94s/0.00,MAX=0.00)
+[REWARD DEBUG] acceleration_reward=+0.033, acceleration=+0.164m/s^2 (clipped=+0.164), speed_reward=-0.382 (speed=24.739m/s, limit=40.000m/s), collision_penalty=0.000, total=-0.349
+[TTC REWARD] disabled; TTC/gap are used only by the independent safety shield.
+[TTC RISK] step=33 current_lane=1 current_lane_max_risk=0.000 lanes=(L0:F=267.82s/0.00,R=infs/0.00,MAX=0.00 | L1:F=57.29s/0.00,R=infs/0.00,MAX=0.00 | L2:F=infs/0.00,R=2874.76s/0.00,MAX=0.00)
+[REWARD DEBUG] acceleration_reward=+0.236, acceleration=+1.179m/s^2 (clipped=+1.179), speed_reward=-0.380 (speed=24.818m/s, limit=40.000m/s), collision_penalty=0.000, total=-0.144
+[TTC REWARD] disabled; TTC/gap are used only by the independent safety shield.
+[TTC RISK] step=34 current_lane=1 current_lane_max_risk=0.000 lanes=(L0:F=242.06s/0.00,R=infs/0.00,MAX=0.00 | L1:F=56.12s/0.00,R=infs/0.00,MAX=0.00 | L2:F=infs/0.00,R=10860.66s/0.00,MAX=0.00)
+[REWARD DEBUG] acceleration_reward=+0.386, acceleration=+1.931m/s^2 (clipped=+1.931), speed_reward=-0.376 (speed=24.946m/s, limit=40.000m/s), collision_penalty=0.000, total=+0.010
+[TTC REWARD] disabled; TTC/gap are used only by the independent safety shield.
+[TTC RISK] step=35 current_lane=1 current_lane_max_risk=0.000 lanes=(L0:F=272.48s/0.00,R=infs/0.00,MAX=0.00 | L1:F=57.34s/0.00,R=infs/0.00,MAX=0.00 | L2:F=infs/0.00,R=2562.03s/0.00,MAX=0.00)
+[REWARD DEBUG] acceleration_reward=-0.450, acceleration=-2.251m/s^2 (clipped=-2.251), speed_reward=-0.380 (speed=24.796m/s, limit=40.000m/s), collision_penalty=0.000, total=-0.830
+[TTC REWARD] disabled; TTC/gap are used only by the independent safety shield.
+[TTC RISK] step=36 current_lane=1 current_lane_max_risk=0.000 lanes=(L0:F=266.33s/0.00,R=infs/0.00,MAX=0.00 | L1:F=57.03s/0.00,R=infs/0.00,MAX=0.00 | L2:F=infs/0.00,R=2973.82s/0.00,MAX=0.00)
+[REWARD DEBUG] acceleration_reward=+0.082, acceleration=+0.408m/s^2 (clipped=+0.408), speed_reward=-0.379 (speed=24.823m/s, limit=40.000m/s), collision_penalty=0.000, total=-0.298
+[TTC REWARD] disabled; TTC/gap are used only by the independent safety shield.
+[TTC RISK] step=37 current_lane=1 current_lane_max_risk=0.000 lanes=(L0:F=269.53s/0.00,R=infs/0.00,MAX=0.00 | L1:F=57.09s/0.00,R=infs/0.00,MAX=0.00 | L2:F=infs/0.00,R=2735.39s/0.00,MAX=0.00)
+[REWARD DEBUG] acceleration_reward=-0.044, acceleration=-0.221m/s^2 (clipped=-0.221), speed_reward=-0.380 (speed=24.809m/s, limit=40.000m/s), collision_penalty=0.000, total=-0.424
+[TTC REWARD] disabled; TTC/gap are used only by the independent safety shield.
+[TTC RISK] step=38 current_lane=1 current_lane_max_risk=0.000 lanes=(L0:F=354.21s/0.00,R=infs/0.00,MAX=0.00 | L1:F=59.64s/0.00,R=infs/0.00,MAX=0.00 | L2:F=infs/0.00,R=1066.09s/0.00,MAX=0.00)
+[REWARD DEBUG] acceleration_reward=-0.864, acceleration=-4.320m/s^2 (clipped=-4.320), speed_reward=-0.387 (speed=24.521m/s, limit=40.000m/s), collision_penalty=0.000, total=-1.251
+[TTC REWARD] disabled; TTC/gap are used only by the independent safety shield.
+[TTC RISK] step=39 current_lane=1 current_lane_max_risk=0.000 lanes=(L0:F=356.78s/0.00,R=infs/0.00,MAX=0.00 | L1:F=59.64s/0.00,R=infs/0.00,MAX=0.00 | L2:F=infs/0.00,R=1050.94s/0.00,MAX=0.00)
+[REWARD DEBUG] acceleration_reward=-0.020, acceleration=-0.102m/s^2 (clipped=-0.102), speed_reward=-0.387 (speed=24.514m/s, limit=40.000m/s), collision_penalty=0.000, total=-0.407
+[TTC REWARD] disabled; TTC/gap are used only by the independent safety shield.
+[TTC RISK] step=40 current_lane=1 current_lane_max_risk=0.000 lanes=(L0:F=530.35s/0.00,R=infs/0.00,MAX=0.00 | L1:F=62.54s/0.00,R=infs/0.00,MAX=0.00 | L2:F=infs/0.00,R=648.02s/0.00,MAX=0.00)
+[REWARD DEBUG] acceleration_reward=-0.893, acceleration=-4.464m/s^2 (clipped=-4.464), speed_reward=-0.395 (speed=24.216m/s, limit=40.000m/s), collision_penalty=0.000, total=-1.287
+[TTC REWARD] disabled; TTC/gap are used only by the independent safety shield.
+[TTC RISK] step=41 current_lane=1 current_lane_max_risk=0.000 lanes=(L0:F=952.23s/0.00,R=infs/0.00,MAX=0.00 | L1:F=65.44s/0.00,R=44823.96s/0.00,MAX=0.00 | L2:F=infs/0.00,R=480.33s/0.00,MAX=0.00)
+[REWARD DEBUG] acceleration_reward=-0.813, acceleration=-4.064m/s^2 (clipped=-4.064), speed_reward=-0.401 (speed=23.945m/s, limit=40.000m/s), collision_penalty=0.000, total=-1.214
+[TTC REWARD] disabled; TTC/gap are used only by the independent safety shield.
+[TTC RISK] step=42 current_lane=1 current_lane_max_risk=0.000 lanes=(L0:F=1203.44s/0.00,R=infs/0.00,MAX=0.00 | L1:F=66.20s/0.00,R=9574.55s/0.00,MAX=0.00 | L2:F=infs/0.00,R=449.74s/0.00,MAX=0.00)
+[REWARD DEBUG] acceleration_reward=-0.213, acceleration=-1.066m/s^2 (clipped=-1.066), speed_reward=-0.403 (speed=23.874m/s, limit=40.000m/s), collision_penalty=0.000, total=-0.616
+[TTC REWARD] disabled; TTC/gap are used only by the independent safety shield.
+[TTC RISK] step=43 current_lane=1 current_lane_max_risk=0.000 lanes=(L0:F=1160.15s/0.00,R=infs/0.00,MAX=0.00 | L1:F=66.02s/0.00,R=10770.33s/0.00,MAX=0.00 | L2:F=infs/0.00,R=453.74s/0.00,MAX=0.00)
+[REWARD DEBUG] acceleration_reward=+0.030, acceleration=+0.151m/s^2 (clipped=+0.151), speed_reward=-0.403 (speed=23.884m/s, limit=40.000m/s), collision_penalty=0.000, total=-0.373
+[TTC REWARD] disabled; TTC/gap are used only by the independent safety shield.
+[TTC RISK] step=44 current_lane=1 current_lane_max_risk=0.000 lanes=(L0:F=2730.28s/0.00,R=14739.34s/0.00,MAX=0.00 | L1:F=67.88s/0.00,R=3590.50s/0.00,MAX=0.00 | L2:F=infs/0.00,R=396.23s/0.00,MAX=0.00)
+[REWARD DEBUG] acceleration_reward=-0.482, acceleration=-2.410m/s^2 (clipped=-2.410), speed_reward=-0.407 (speed=23.724m/s, limit=40.000m/s), collision_penalty=0.000, total=-0.889
+[TTC REWARD] disabled; TTC/gap are used only by the independent safety shield.
+[TTC RISK] step=45 current_lane=1 current_lane_max_risk=0.000 lanes=(L0:F=infs/0.00,R=1217.88s/0.00,MAX=0.00 | L1:F=70.34s/0.00,R=1977.11s/0.00,MAX=0.00 | L2:F=infs/0.00,R=342.99s/0.00,MAX=0.00)
+[REWARD DEBUG] acceleration_reward=-0.590, acceleration=-2.951m/s^2 (clipped=-2.951), speed_reward=-0.412 (speed=23.527m/s, limit=40.000m/s), collision_penalty=0.000, total=-1.002
+[TTC REWARD] disabled; TTC/gap are used only by the independent safety shield.
+[TTC RISK] step=46 current_lane=1 current_lane_max_risk=0.000 lanes=(L0:F=infs/0.00,R=882.42s/0.00,MAX=0.00 | L1:F=71.37s/0.00,R=1666.75s/0.00,MAX=0.00 | L2:F=infs/0.00,R=324.86s/0.00,MAX=0.00)
+[REWARD DEBUG] acceleration_reward=-0.244, acceleration=-1.222m/s^2 (clipped=-1.222), speed_reward=-0.414 (speed=23.445m/s, limit=40.000m/s), collision_penalty=0.000, total=-0.658
+[TTC REWARD] disabled; TTC/gap are used only by the independent safety shield.
+[TTC RISK] step=47 current_lane=1 current_lane_max_risk=0.000 lanes=(L0:F=infs/0.00,R=576.05s/0.00,MAX=0.00 | L1:F=73.53s/0.00,R=1279.09s/0.00,MAX=0.00 | L2:F=infs/0.00,R=294.81s/0.00,MAX=0.00)
+[REWARD DEBUG] acceleration_reward=-0.472, acceleration=-2.360m/s^2 (clipped=-2.360), speed_reward=-0.418 (speed=23.288m/s, limit=40.000m/s), collision_penalty=0.000, total=-0.890
+[TTC REWARD] disabled; TTC/gap are used only by the independent safety shield.
+[TTC RISK] step=48 current_lane=1 current_lane_max_risk=0.000 lanes=(L0:F=infs/0.00,R=470.65s/0.00,MAX=0.00 | L1:F=74.97s/0.00,R=1112.26s/0.00,MAX=0.00 | L2:F=infs/0.00,R=278.19s/0.00,MAX=0.00)
+[REWARD DEBUG] acceleration_reward=-0.304, acceleration=-1.522m/s^2 (clipped=-1.522), speed_reward=-0.420 (speed=23.187m/s, limit=40.000m/s), collision_penalty=0.000, total=-0.725
+[TTC REWARD] disabled; TTC/gap are used only by the independent safety shield.
+[TTC RISK] step=49 current_lane=1 current_lane_max_risk=0.000 lanes=(L0:F=infs/0.00,R=400.75s/0.00,MAX=0.00 | L1:F=76.40s/0.00,R=989.28s/0.00,MAX=0.00 | L2:F=infs/0.00,R=263.99s/0.00,MAX=0.00)
+[REWARD DEBUG] acceleration_reward=-0.290, acceleration=-1.450m/s^2 (clipped=-1.450), speed_reward=-0.423 (speed=23.090m/s, limit=40.000m/s), collision_penalty=0.000, total=-0.713
+[TTC REWARD] disabled; TTC/gap are used only by the independent safety shield.
+[TTC RISK] step=50 current_lane=1 current_lane_max_risk=0.000 lanes=(L0:F=infs/0.00,R=382.58s/0.00,MAX=0.00 | L1:F=76.82s/0.00,R=955.56s/0.00,MAX=0.00 | L2:F=infs/0.00,R=259.72s/0.00,MAX=0.00)
+[REWARD DEBUG] acceleration_reward=-0.092, acceleration=-0.462m/s^2 (clipped=-0.462), speed_reward=-0.424 (speed=23.059m/s, limit=40.000m/s), collision_penalty=0.000, total=-0.516
+[TTC REWARD] disabled; TTC/gap are used only by the independent safety shield.
+[TTC RISK] step=51 current_lane=1 current_lane_max_risk=0.000 lanes=(L0:F=infs/0.00,R=321.49s/0.00,MAX=0.00 | L1:F=78.87s/0.00,R=835.94s/0.00,MAX=0.00 | L2:F=infs/0.00,R=243.35s/0.00,MAX=0.00)
+[REWARD DEBUG] acceleration_reward=-0.389, acceleration=-1.943m/s^2 (clipped=-1.943), speed_reward=-0.427 (speed=22.930m/s, limit=40.000m/s), collision_penalty=0.000, total=-0.815
+[TTC REWARD] disabled; TTC/gap are used only by the independent safety shield.
+[TTC RISK] step=52 current_lane=1 current_lane_max_risk=0.000 lanes=(L0:F=infs/0.00,R=442.79s/0.00,MAX=0.00 | L1:F=75.24s/0.00,R=1064.74s/0.00,MAX=0.00 | L2:F=infs/0.00,R=272.70s/0.00,MAX=0.00)
+[REWARD DEBUG] acceleration_reward=+0.667, acceleration=+3.337m/s^2 (clipped=+3.337), speed_reward=-0.421 (speed=23.152m/s, limit=40.000m/s), collision_penalty=0.000, total=+0.246
+[TTC REWARD] disabled; TTC/gap are used only by the independent safety shield.
+[TTC RISK] step=53 current_lane=1 current_lane_max_risk=0.000 lanes=(L0:F=infs/0.00,R=318.33s/0.00,MAX=0.00 | L1:F=78.87s/0.00,R=829.61s/0.00,MAX=0.00 | L2:F=infs/0.00,R=242.32s/0.00,MAX=0.00)
+[REWARD DEBUG] acceleration_reward=-0.691, acceleration=-3.454m/s^2 (clipped=-3.454), speed_reward=-0.427 (speed=22.922m/s, limit=40.000m/s), collision_penalty=0.000, total=-1.118
+[TTC REWARD] disabled; TTC/gap are used only by the independent safety shield.
+[TTC RISK] step=54 current_lane=1 current_lane_max_risk=0.000 lanes=(L0:F=infs/0.00,R=232.82s/0.00,MAX=0.00 | L1:F=84.21s/0.00,R=643.84s/0.00,MAX=0.00 | L2:F=infs/0.00,R=211.53s/0.00,MAX=0.00)
+[REWARD DEBUG] acceleration_reward=-0.902, acceleration=-4.511m/s^2 (clipped=-4.511), speed_reward=-0.434 (speed=22.621m/s, limit=40.000m/s), collision_penalty=0.000, total=-1.337
+[TTC REWARD] disabled; TTC/gap are used only by the independent safety shield.
+[TTC RISK] step=55 current_lane=1 current_lane_max_risk=0.000 lanes=(L0:F=infs/0.00,R=281.86s/0.00,MAX=0.00 | L1:F=80.56s/0.00,R=753.21s/0.00,MAX=0.00 | L2:F=infs/0.00,R=230.43s/0.00,MAX=0.00)
+[REWARD DEBUG] acceleration_reward=+0.586, acceleration=+2.928m/s^2 (clipped=+2.928), speed_reward=-0.430 (speed=22.816m/s, limit=40.000m/s), collision_penalty=0.000, total=+0.156
+[TTC REWARD] disabled; TTC/gap are used only by the independent safety shield.
+[TTC RISK] step=56 current_lane=1 current_lane_max_risk=0.000 lanes=(L0:F=infs/0.00,R=257.40s/0.00,MAX=0.00 | L1:F=82.06s/0.00,R=699.73s/0.00,MAX=0.00 | L2:F=infs/0.00,R=221.44s/0.00,MAX=0.00)
+[REWARD DEBUG] acceleration_reward=-0.263, acceleration=-1.315m/s^2 (clipped=-1.315), speed_reward=-0.432 (speed=22.729m/s, limit=40.000m/s), collision_penalty=0.000, total=-0.695
+[TTC REWARD] disabled; TTC/gap are used only by the independent safety shield.
+[TTC RISK] step=57 current_lane=1 current_lane_max_risk=0.000 lanes=(L0:F=infs/0.00,R=212.20s/0.00,MAX=0.00 | L1:F=86.13s/0.00,R=595.82s/0.00,MAX=0.00 | L2:F=infs/0.00,R=202.14s/0.00,MAX=0.00)
+[REWARD DEBUG] acceleration_reward=-0.646, acceleration=-3.231m/s^2 (clipped=-3.231), speed_reward=-0.437 (speed=22.513m/s, limit=40.000m/s), collision_penalty=0.000, total=-1.083
+[TTC REWARD] disabled; TTC/gap are used only by the independent safety shield.
+[TTC RISK] step=58 current_lane=1 current_lane_max_risk=0.000 lanes=(L0:F=infs/0.00,R=207.94s/0.00,MAX=0.00 | L1:F=86.56s/0.00,R=585.76s/0.00,MAX=0.00 | L2:F=infs/0.00,R=200.08s/0.00,MAX=0.00)
+[REWARD DEBUG] acceleration_reward=-0.074, acceleration=-0.371m/s^2 (clipped=-0.371), speed_reward=-0.438 (speed=22.488m/s, limit=40.000m/s), collision_penalty=0.000, total=-0.512
+[TTC REWARD] disabled; TTC/gap are used only by the independent safety shield.
+[TTC RISK] step=59 current_lane=1 current_lane_max_risk=0.000 lanes=(L0:F=infs/0.00,R=208.21s/0.00,MAX=0.00 | L1:F=86.46s/0.00,R=586.49s/0.00,MAX=0.00 | L2:F=infs/0.00,R=200.17s/0.00,MAX=0.00)
+[REWARD DEBUG] acceleration_reward=+0.006, acceleration=+0.030m/s^2 (clipped=+0.030), speed_reward=-0.438 (speed=22.490m/s, limit=40.000m/s), collision_penalty=0.000, total=-0.432
+[TTC REWARD] disabled; TTC/gap are used only by the independent safety shield.
+[TTC RISK] step=60 current_lane=1 current_lane_max_risk=0.000 lanes=(L0:F=infs/0.00,R=178.53s/0.00,MAX=0.00 | L1:F=90.82s/0.00,R=514.08s/0.00,MAX=0.00 | L2:F=infs/0.00,R=184.78s/0.00,MAX=0.00)
+[REWARD DEBUG] acceleration_reward=-0.622, acceleration=-3.112m/s^2 (clipped=-3.112), speed_reward=-0.443 (speed=22.283m/s, limit=40.000m/s), collision_penalty=0.000, total=-1.065
+[TTC REWARD] disabled; TTC/gap are used only by the independent safety shield.
+[TTC RISK] step=61 current_lane=1 current_lane_max_risk=0.000 lanes=(L0:F=infs/0.00,R=184.24s/0.00,MAX=0.00 | L1:F=89.74s/0.00,R=528.37s/0.00,MAX=0.00 | L2:F=infs/0.00,R=187.89s/0.00,MAX=0.00)
+[REWARD DEBUG] acceleration_reward=+0.137, acceleration=+0.685m/s^2 (clipped=+0.685), speed_reward=-0.442 (speed=22.329m/s, limit=40.000m/s), collision_penalty=0.000, total=-0.305
+[TTC REWARD] disabled; TTC/gap are used only by the independent safety shield.
+[TTC RISK] step=62 current_lane=1 current_lane_max_risk=0.000 lanes=(L0:F=infs/0.00,R=193.74s/0.00,MAX=0.00 | L1:F=88.17s/0.00,R=551.83s/0.00,MAX=0.00 | L2:F=infs/0.00,R=192.87s/0.00,MAX=0.00)
+[REWARD DEBUG] acceleration_reward=+0.209, acceleration=+1.046m/s^2 (clipped=+1.046), speed_reward=-0.440 (speed=22.398m/s, limit=40.000m/s), collision_penalty=0.000, total=-0.231
+[TTC REWARD] disabled; TTC/gap are used only by the independent safety shield.
+[TTC RISK] step=63 current_lane=1 current_lane_max_risk=0.000 lanes=(L0:F=infs/0.00,R=186.35s/0.00,MAX=0.00 | L1:F=89.24s/0.00,R=533.80s/0.00,MAX=0.00 | L2:F=infs/0.00,R=188.96s/0.00,MAX=0.00)
+[REWARD DEBUG] acceleration_reward=-0.158, acceleration=-0.791m/s^2 (clipped=-0.791), speed_reward=-0.441 (speed=22.346m/s, limit=40.000m/s), collision_penalty=0.000, total=-0.599
+[TTC REWARD] disabled; TTC/gap are used only by the independent safety shield.
+[TTC RISK] step=64 current_lane=1 current_lane_max_risk=0.000 lanes=(L0:F=infs/0.00,R=236.99s/0.00,MAX=0.00 | L1:F=83.12s/0.00,R=654.42s/0.00,MAX=0.00 | L2:F=infs/0.00,R=212.91s/0.00,MAX=0.00)
+[REWARD DEBUG] acceleration_reward=+0.896, acceleration=+4.478m/s^2 (clipped=+4.478), speed_reward=-0.434 (speed=22.644m/s, limit=40.000m/s), collision_penalty=0.000, total=+0.462
+[TTC REWARD] disabled; TTC/gap are used only by the independent safety shield.
+[TTC RISK] step=65 current_lane=1 current_lane_max_risk=0.000 lanes=(L0:F=infs/0.00,R=211.81s/0.00,MAX=0.00 | L1:F=85.58s/0.00,R=595.68s/0.00,MAX=0.00 | L2:F=infs/0.00,R=201.67s/0.00,MAX=0.00)
+[REWARD DEBUG] acceleration_reward=-0.390, acceleration=-1.951m/s^2 (clipped=-1.951), speed_reward=-0.437 (speed=22.514m/s, limit=40.000m/s), collision_penalty=0.000, total=-0.827
+[TTC REWARD] disabled; TTC/gap are used only by the independent safety shield.
+[TTC RISK] step=66 current_lane=1 current_lane_max_risk=0.000 lanes=(L0:F=infs/0.00,R=187.30s/0.00,MAX=0.00 | L1:F=88.85s/0.00,R=536.39s/0.00,MAX=0.00 | L2:F=infs/0.00,R=189.37s/0.00,MAX=0.00)
+[REWARD DEBUG] acceleration_reward=-0.480, acceleration=-2.402m/s^2 (clipped=-2.402), speed_reward=-0.441 (speed=22.354m/s, limit=40.000m/s), collision_penalty=0.000, total=-0.922
+[TTC REWARD] disabled; TTC/gap are used only by the independent safety shield.
+[TTC RISK] step=67 current_lane=1 current_lane_max_risk=0.000 lanes=(L0:F=infs/0.00,R=215.32s/0.00,MAX=0.00 | L1:F=85.04s/0.00,R=604.22s/0.00,MAX=0.00 | L2:F=infs/0.00,R=203.25s/0.00,MAX=0.00)
+[REWARD DEBUG] acceleration_reward=+0.543, acceleration=+2.715m/s^2 (clipped=+2.715), speed_reward=-0.437 (speed=22.535m/s, limit=40.000m/s), collision_penalty=0.000, total=+0.106
+[TTC REWARD] disabled; TTC/gap are used only by the independent safety shield.
+[TTC RISK] step=68 current_lane=1 current_lane_max_risk=0.000 lanes=(L0:F=infs/0.00,R=176.48s/0.00,MAX=0.00 | L1:F=90.56s/0.00,R=509.66s/0.00,MAX=0.00 | L2:F=infs/0.00,R=183.40s/0.00,MAX=0.00)
+[REWARD DEBUG] acceleration_reward=-0.795, acceleration=-3.975m/s^2 (clipped=-3.975), speed_reward=-0.443 (speed=22.270m/s, limit=40.000m/s), collision_penalty=0.000, total=-1.238
+[TTC REWARD] disabled; TTC/gap are used only by the independent safety shield.
+[TTC RISK] step=69 current_lane=1 current_lane_max_risk=0.000 lanes=(L0:F=infs/0.00,R=174.79s/0.00,MAX=0.00 | L1:F=90.80s/0.00,R=505.53s/0.00,MAX=0.00 | L2:F=infs/0.00,R=182.42s/0.00,MAX=0.00)
+[REWARD DEBUG] acceleration_reward=-0.041, acceleration=-0.205m/s^2 (clipped=-0.205), speed_reward=-0.444 (speed=22.256m/s, limit=40.000m/s), collision_penalty=0.000, total=-0.485
+[TTC REWARD] disabled; TTC/gap are used only by the independent safety shield.
+[TTC RISK] step=70 current_lane=1 current_lane_max_risk=0.000 lanes=(L0:F=infs/0.00,R=154.22s/0.00,MAX=0.00 | L1:F=95.43s/0.00,R=453.09s/0.00,MAX=0.00 | L2:F=infs/0.00,R=170.08s/0.00,MAX=0.00)
+[REWARD DEBUG] acceleration_reward=-0.592, acceleration=-2.961m/s^2 (clipped=-2.961), speed_reward=-0.449 (speed=22.059m/s, limit=40.000m/s), collision_penalty=0.000, total=-1.041
+[TTC REWARD] disabled; TTC/gap are used only by the independent safety shield.
+[TTC RISK] step=71 current_lane=1 current_lane_max_risk=0.000 lanes=(L0:F=infs/0.00,R=136.14s/0.00,MAX=0.00 | L1:F=101.27s/0.00,R=405.64s/0.00,MAX=0.00 | L2:F=infs/0.00,R=158.02s/0.00,MAX=0.00)
+[REWARD DEBUG] acceleration_reward=-0.668, acceleration=-3.339m/s^2 (clipped=-3.339), speed_reward=-0.454 (speed=21.836m/s, limit=40.000m/s), collision_penalty=0.000, total=-1.122
+[TTC REWARD] disabled; TTC/gap are used only by the independent safety shield.
+[TTC RISK] step=72 current_lane=1 current_lane_max_risk=0.000 lanes=(L0:F=infs/0.00,R=144.15s/0.00,MAX=0.00 | L1:F=98.28s/0.00,R=426.98s/0.00,MAX=0.00 | L2:F=infs/0.00,R=163.48s/0.00,MAX=0.00)
+[REWARD DEBUG] acceleration_reward=+0.320, acceleration=+1.601m/s^2 (clipped=+1.601), speed_reward=-0.451 (speed=21.943m/s, limit=40.000m/s), collision_penalty=0.000, total=-0.131
+[TTC REWARD] disabled; TTC/gap are used only by the independent safety shield.
+[TTC RISK] step=73 current_lane=1 current_lane_max_risk=0.000 lanes=(L0:F=infs/0.00,R=156.53s/0.00,MAX=0.00 | L1:F=94.56s/0.00,R=459.42s/0.00,MAX=0.00 | L2:F=infs/0.00,R=171.46s/0.00,MAX=0.00)
+[REWARD DEBUG] acceleration_reward=+0.429, acceleration=+2.146m/s^2 (clipped=+2.146), speed_reward=-0.448 (speed=22.086m/s, limit=40.000m/s), collision_penalty=0.000, total=-0.019
+[TTC REWARD] disabled; TTC/gap are used only by the independent safety shield.
+[TTC RISK] step=74 current_lane=1 current_lane_max_risk=0.000 lanes=(L0:F=infs/0.00,R=142.50s/0.00,MAX=0.00 | L1:F=98.66s/0.00,R=422.84s/0.00,MAX=0.00 | L2:F=infs/0.00,R=162.33s/0.00,MAX=0.00)
+[REWARD DEBUG] acceleration_reward=-0.487, acceleration=-2.434m/s^2 (clipped=-2.434), speed_reward=-0.452 (speed=21.924m/s, limit=40.000m/s), collision_penalty=0.000, total=-0.939
+[TTC REWARD] disabled; TTC/gap are used only by the independent safety shield.
+[TTC RISK] step=75 current_lane=1 current_lane_max_risk=0.000 lanes=(L0:F=infs/0.00,R=163.67s/0.00,MAX=0.00 | L1:F=92.66s/0.00,R=478.02s/0.00,MAX=0.00 | L2:F=infs/0.00,R=175.77s/0.00,MAX=0.00)
+[REWARD DEBUG] acceleration_reward=+0.708, acceleration=+3.538m/s^2 (clipped=+3.538), speed_reward=-0.446 (speed=22.160m/s, limit=40.000m/s), collision_penalty=0.000, total=+0.262
+[TTC REWARD] disabled; TTC/gap are used only by the independent safety shield.
+[TTC RISK] step=76 current_lane=1 current_lane_max_risk=0.000 lanes=(L0:F=infs/0.00,R=166.43s/0.00,MAX=0.00 | L1:F=91.96s/0.00,R=485.17s/0.00,MAX=0.00 | L2:F=infs/0.00,R=177.39s/0.00,MAX=0.00)
+[REWARD DEBUG] acceleration_reward=+0.081, acceleration=+0.403m/s^2 (clipped=+0.403), speed_reward=-0.445 (speed=22.187m/s, limit=40.000m/s), collision_penalty=0.000, total=-0.365
+[TTC REWARD] disabled; TTC/gap are used only by the independent safety shield.
+[TTC RISK] step=77 current_lane=1 current_lane_max_risk=0.000 lanes=(L0:F=infs/0.00,R=161.31s/0.00,MAX=0.00 | L1:F=93.04s/0.00,R=472.16s/0.00,MAX=0.00 | L2:F=infs/0.00,R=174.30s/0.00,MAX=0.00)
+[REWARD DEBUG] acceleration_reward=-0.146, acceleration=-0.731m/s^2 (clipped=-0.731), speed_reward=-0.447 (speed=22.138m/s, limit=40.000m/s), collision_penalty=0.000, total=-0.593
+[TTC REWARD] disabled; TTC/gap are used only by the independent safety shield.
+[TTC RISK] step=78 current_lane=1 current_lane_max_risk=0.000 lanes=(L0:F=infs/0.00,R=167.86s/0.00,MAX=0.00 | L1:F=91.49s/0.00,R=489.01s/0.00,MAX=0.00 | L2:F=infs/0.00,R=178.17s/0.00,MAX=0.00)
+[REWARD DEBUG] acceleration_reward=+0.190, acceleration=+0.948m/s^2 (clipped=+0.948), speed_reward=-0.445 (speed=22.201m/s, limit=40.000m/s), collision_penalty=0.000, total=-0.255
+[TTC REWARD] disabled; TTC/gap are used only by the independent safety shield.
+[TTC RISK] step=79 current_lane=1 current_lane_max_risk=0.000 lanes=(L0:F=infs/0.00,R=189.31s/0.00,MAX=0.00 | L1:F=87.56s/0.00,R=542.84s/0.00,MAX=0.00 | L2:F=infs/0.00,R=190.02s/0.00,MAX=0.00)
+[REWARD DEBUG] acceleration_reward=+0.525, acceleration=+2.626m/s^2 (clipped=+2.626), speed_reward=-0.441 (speed=22.376m/s, limit=40.000m/s), collision_penalty=0.000, total=+0.085
+[TTC REWARD] disabled; TTC/gap are used only by the independent safety shield.
+[TTC RISK] step=80 current_lane=1 current_lane_max_risk=0.000 lanes=(L0:F=infs/0.00,R=157.59s/0.00,MAX=0.00 | L1:F=93.70s/0.00,R=462.88s/0.00,MAX=0.00 | L2:F=infs/0.00,R=171.94s/0.00,MAX=0.00)
+[REWARD DEBUG] acceleration_reward=-0.823, acceleration=-4.113m/s^2 (clipped=-4.113), speed_reward=-0.447 (speed=22.102m/s, limit=40.000m/s), collision_penalty=0.000, total=-1.270
+[TTC REWARD] disabled; TTC/gap are used only by the independent safety shield.
+[TTC RISK] step=81 current_lane=1 current_lane_max_risk=0.000 lanes=(L0:F=infs/0.00,R=178.25s/0.00,MAX=0.00 | L1:F=89.23s/0.00,R=515.57s/0.00,MAX=0.00 | L2:F=infs/0.00,R=184.01s/0.00,MAX=0.00)
+[REWARD DEBUG] acceleration_reward=+0.572, acceleration=+2.859m/s^2 (clipped=+2.859), speed_reward=-0.443 (speed=22.293m/s, limit=40.000m/s), collision_penalty=0.000, total=+0.129
+[TTC REWARD] disabled; TTC/gap are used only by the independent safety shield.
+[TTC RISK] step=82 current_lane=1 current_lane_max_risk=0.000 lanes=(L0:F=infs/0.00,R=149.43s/0.00,MAX=0.00 | L1:F=95.75s/0.00,R=441.83s/0.00,MAX=0.00 | L2:F=infs/0.00,R=166.72s/0.00,MAX=0.00)
+[REWARD DEBUG] acceleration_reward=-0.836, acceleration=-4.182m/s^2 (clipped=-4.182), speed_reward=-0.450 (speed=22.014m/s, limit=40.000m/s), collision_penalty=0.000, total=-1.286
+[TTC REWARD] disabled; TTC/gap are used only by the independent safety shield.
+[TTC RISK] step=83 current_lane=1 current_lane_max_risk=0.000 lanes=(L0:F=infs/0.00,R=140.93s/0.00,MAX=0.00 | L1:F=98.38s/0.00,R=419.55s/0.00,MAX=0.00 | L2:F=infs/0.00,R=161.07s/0.00,MAX=0.00)
+[REWARD DEBUG] acceleration_reward=-0.310, acceleration=-1.550m/s^2 (clipped=-1.550), speed_reward=-0.452 (speed=21.910m/s, limit=40.000m/s), collision_penalty=0.000, total=-0.762
+[TTC REWARD] disabled; TTC/gap are used only by the independent safety shield.
+[TTC RISK] step=84 current_lane=1 current_lane_max_risk=0.000 lanes=(L0:F=infs/0.00,R=148.23s/0.00,MAX=0.00 | L1:F=95.94s/0.00,R=438.91s/0.00,MAX=0.00 | L2:F=infs/0.00,R=165.90s/0.00,MAX=0.00)
+[REWARD DEBUG] acceleration_reward=+0.273, acceleration=+1.364m/s^2 (clipped=+1.364), speed_reward=-0.450 (speed=22.001m/s, limit=40.000m/s), collision_penalty=0.000, total=-0.177
+[TTC REWARD] disabled; TTC/gap are used only by the independent safety shield.
+[TTC RISK] step=85 current_lane=1 current_lane_max_risk=0.000 lanes=(L0:F=infs/0.00,R=134.39s/0.00,MAX=0.00 | L1:F=100.64s/0.00,R=402.30s/0.00,MAX=0.00 | L2:F=infs/0.00,R=156.50s/0.00,MAX=0.00)
+[REWARD DEBUG] acceleration_reward=-0.535, acceleration=-2.675m/s^2 (clipped=-2.675), speed_reward=-0.454 (speed=21.823m/s, limit=40.000m/s), collision_penalty=0.000, total=-0.989
+[TTC REWARD] disabled; TTC/gap are used only by the independent safety shield.
+[TTC RISK] step=86 current_lane=1 current_lane_max_risk=0.000 lanes=(L0:F=infs/0.00,R=144.72s/0.00,MAX=0.00 | L1:F=96.85s/0.00,R=429.90s/0.00,MAX=0.00 | L2:F=infs/0.00,R=163.55s/0.00,MAX=0.00)
+[REWARD DEBUG] acceleration_reward=+0.413, acceleration=+2.067m/s^2 (clipped=+2.067), speed_reward=-0.451 (speed=21.961m/s, limit=40.000m/s), collision_penalty=0.000, total=-0.037
+[TTC REWARD] disabled; TTC/gap are used only by the independent safety shield.
+[TTC RISK] step=87 current_lane=1 current_lane_max_risk=0.000 lanes=(L0:F=infs/0.00,R=128.14s/0.00,MAX=0.00 | L1:F=103.15s/0.00,R=385.67s/0.00,MAX=0.00 | L2:F=infs/0.00,R=151.98s/0.00,MAX=0.00)
+[REWARD DEBUG] acceleration_reward=-0.688, acceleration=-3.442m/s^2 (clipped=-3.442), speed_reward=-0.457 (speed=21.731m/s, limit=40.000m/s), collision_penalty=0.000, total=-1.145
+[TTC REWARD] disabled; TTC/gap are used only by the independent safety shield.
+[TTC RISK] step=88 current_lane=1 current_lane_max_risk=0.000 lanes=(L0:F=infs/0.00,R=125.21s/0.00,MAX=0.00 | L1:F=104.46s/0.00,R=377.82s/0.00,MAX=0.00 | L2:F=infs/0.00,R=149.80s/0.00,MAX=0.00)
+[REWARD DEBUG] acceleration_reward=-0.138, acceleration=-0.691m/s^2 (clipped=-0.691), speed_reward=-0.458 (speed=21.685m/s, limit=40.000m/s), collision_penalty=0.000, total=-0.596
+[TTC REWARD] disabled; TTC/gap are used only by the independent safety shield.
+[TTC RISK] step=89 current_lane=1 current_lane_max_risk=0.000 lanes=(L0:F=infs/0.00,R=127.96s/0.00,MAX=0.00 | L1:F=103.03s/0.00,R=385.42s/0.00,MAX=0.00 | L2:F=infs/0.00,R=151.81s/0.00,MAX=0.00)
+[REWARD DEBUG] acceleration_reward=+0.136, acceleration=+0.680m/s^2 (clipped=+0.680), speed_reward=-0.457 (speed=21.731m/s, limit=40.000m/s), collision_penalty=0.000, total=-0.321
+[TTC REWARD] disabled; TTC/gap are used only by the independent safety shield.
+[TTC RISK] step=90 current_lane=1 current_lane_max_risk=0.000 lanes=(L0:F=infs/0.00,R=127.12s/0.00,MAX=0.00 | L1:F=103.33s/0.00,R=383.25s/0.00,MAX=0.00 | L2:F=infs/0.00,R=151.18s/0.00,MAX=0.00)
+[REWARD DEBUG] acceleration_reward=-0.037, acceleration=-0.184m/s^2 (clipped=-0.184), speed_reward=-0.457 (speed=21.718m/s, limit=40.000m/s), collision_penalty=0.000, total=-0.494
+[TTC REWARD] disabled; TTC/gap are used only by the independent safety shield.
+[TTC RISK] step=91 current_lane=1 current_lane_max_risk=0.000 lanes=(L0:F=infs/0.00,R=134.54s/0.00,MAX=0.00 | L1:F=100.02s/0.00,R=403.40s/0.00,MAX=0.00 | L2:F=infs/0.00,R=156.49s/0.00,MAX=0.00)
+[REWARD DEBUG] acceleration_reward=+0.338, acceleration=+1.689m/s^2 (clipped=+1.689), speed_reward=-0.454 (speed=21.831m/s, limit=40.000m/s), collision_penalty=0.000, total=-0.116
+[TTC REWARD] disabled; TTC/gap are used only by the independent safety shield.
+[TTC RISK] step=92 current_lane=1 current_lane_max_risk=0.000 lanes=(L0:F=infs/0.00,R=128.18s/0.00,MAX=0.00 | L1:F=102.64s/0.00,R=386.35s/0.00,MAX=0.00 | L2:F=infs/0.00,R=151.92s/0.00,MAX=0.00)
+[REWARD DEBUG] acceleration_reward=-0.281, acceleration=-1.407m/s^2 (clipped=-1.407), speed_reward=-0.457 (speed=21.737m/s, limit=40.000m/s), collision_penalty=0.000, total=-0.738
+[TTC REWARD] disabled; TTC/gap are used only by the independent safety shield.
+[TTC RISK] step=93 current_lane=1 current_lane_max_risk=0.000 lanes=(L0:F=infs/0.00,R=128.35s/0.00,MAX=0.00 | L1:F=102.47s/0.00,R=386.92s/0.00,MAX=0.00 | L2:F=infs/0.00,R=152.02s/0.00,MAX=0.00)
+[REWARD DEBUG] acceleration_reward=+0.011, acceleration=+0.055m/s^2 (clipped=+0.055), speed_reward=-0.456 (speed=21.741m/s, limit=40.000m/s), collision_penalty=0.000, total=-0.445
+[TTC REWARD] disabled; TTC/gap are used only by the independent safety shield.
+[TTC RISK] step=94 current_lane=1 current_lane_max_risk=0.000 lanes=(L0:F=infs/0.00,R=118.13s/0.00,MAX=0.00 | L1:F=107.69s/0.00,R=359.09s/0.00,MAX=0.00 | L2:F=infs/0.00,R=144.32s/0.00,MAX=0.00)
+[REWARD DEBUG] acceleration_reward=-0.516, acceleration=-2.579m/s^2 (clipped=-2.579), speed_reward=-0.461 (speed=21.569m/s, limit=40.000m/s), collision_penalty=0.000, total=-0.977
+[TTC REWARD] disabled; TTC/gap are used only by the independent safety shield.
+[TTC RISK] step=95 current_lane=1 current_lane_max_risk=0.000 lanes=(L0:F=infs/0.00,R=134.45s/0.00,MAX=0.00 | L1:F=99.69s/0.00,R=403.64s/0.00,MAX=0.00 | L2:F=infs/0.00,R=156.35s/0.00,MAX=0.00)
+[REWARD DEBUG] acceleration_reward=+0.794, acceleration=+3.972m/s^2 (clipped=+3.972), speed_reward=-0.454 (speed=21.834m/s, limit=40.000m/s), collision_penalty=0.000, total=+0.340
+[TTC REWARD] disabled; TTC/gap are used only by the independent safety shield.
+[TTC RISK] step=96 current_lane=1 current_lane_max_risk=0.000 lanes=(L0:F=infs/0.00,R=145.19s/0.00,MAX=0.00 | L1:F=95.84s/0.00,R=432.38s/0.00,MAX=0.00 | L2:F=infs/0.00,R=163.64s/0.00,MAX=0.00)
+[REWARD DEBUG] acceleration_reward=+0.426, acceleration=+2.130m/s^2 (clipped=+2.130), speed_reward=-0.451 (speed=21.976m/s, limit=40.000m/s), collision_penalty=0.000, total=-0.025
+[TTC REWARD] disabled; TTC/gap are used only by the independent safety shield.
+[TTC RISK] step=97 current_lane=1 current_lane_max_risk=0.000 lanes=(L0:F=infs/0.00,R=148.60s/0.00,MAX=0.00 | L1:F=94.72s/0.00,R=441.47s/0.00,MAX=0.00 | L2:F=infs/0.00,R=165.84s/0.00,MAX=0.00)
+[REWARD DEBUG] acceleration_reward=+0.124, acceleration=+0.619m/s^2 (clipped=+0.619), speed_reward=-0.450 (speed=22.017m/s, limit=40.000m/s), collision_penalty=0.000, total=-0.326
+[TTC REWARD] disabled; TTC/gap are used only by the independent safety shield.
+[TTC RISK] step=98 current_lane=1 current_lane_max_risk=0.000 lanes=(L0:F=infs/0.00,R=143.19s/0.00,MAX=0.00 | L1:F=96.30s/0.00,R=427.30s/0.00,MAX=0.00 | L2:F=infs/0.00,R=162.27s/0.00,MAX=0.00)
+[REWARD DEBUG] acceleration_reward=-0.193, acceleration=-0.965m/s^2 (clipped=-0.965), speed_reward=-0.451 (speed=21.953m/s, limit=40.000m/s), collision_penalty=0.000, total=-0.644
+[TTC REWARD] disabled; TTC/gap are used only by the independent safety shield.
+[TTC RISK] step=99 current_lane=1 current_lane_max_risk=0.000 lanes=(L0:F=infs/0.00,R=151.01s/0.00,MAX=0.00 | L1:F=93.87s/0.00,R=448.03s/0.00,MAX=0.00 | L2:F=infs/0.00,R=167.34s/0.00,MAX=0.00)
+[REWARD DEBUG] acceleration_reward=+0.280, acceleration=+1.401m/s^2 (clipped=+1.401), speed_reward=-0.449 (speed=22.046m/s, limit=40.000m/s), collision_penalty=0.000, total=-0.169
+[TTC REWARD] disabled; TTC/gap are used only by the independent safety shield.
+[TTC RISK] step=100 current_lane=1 current_lane_max_risk=0.000 lanes=(L0:F=infs/0.00,R=158.24s/0.00,MAX=0.00 | L1:F=91.91s/0.00,R=466.98s/0.00,MAX=0.00 | L2:F=infs/0.00,R=171.83s/0.00,MAX=0.00)
+[REWARD DEBUG] acceleration_reward=+0.234, acceleration=+1.172m/s^2 (clipped=+1.172), speed_reward=-0.447 (speed=22.124m/s, limit=40.000m/s), collision_penalty=0.000, total=-0.213
+[TTC REWARD] disabled; TTC/gap are used only by the independent safety shield.
+[TTC RISK] step=101 current_lane=1 current_lane_max_risk=0.000 lanes=(L0:F=infs/0.00,R=135.89s/0.00,MAX=0.00 | L1:F=98.58s/0.00,R=408.13s/0.00,MAX=0.00 | L2:F=infs/0.00,R=157.24s/0.00,MAX=0.00)
+[REWARD DEBUG] acceleration_reward=-0.795, acceleration=-3.976m/s^2 (clipped=-3.976), speed_reward=-0.454 (speed=21.859m/s, limit=40.000m/s), collision_penalty=0.000, total=-1.249
+[TTC REWARD] disabled; TTC/gap are used only by the independent safety shield.
+[TTC RISK] step=102 current_lane=1 current_lane_max_risk=0.000 lanes=(L0:F=infs/0.00,R=128.72s/0.00,MAX=0.00 | L1:F=101.42s/0.00,R=388.86s/0.00,MAX=0.00 | L2:F=infs/0.00,R=152.12s/0.00,MAX=0.00)
+[REWARD DEBUG] acceleration_reward=-0.312, acceleration=-1.560m/s^2 (clipped=-1.560), speed_reward=-0.456 (speed=21.755m/s, limit=40.000m/s), collision_penalty=0.000, total=-0.768
+[TTC REWARD] disabled; TTC/gap are used only by the independent safety shield.
+[TTC RISK] step=103 current_lane=1 current_lane_max_risk=0.000 lanes=(L0:F=infs/0.00,R=123.19s/0.00,MAX=0.00 | L1:F=103.96s/0.00,R=373.89s/0.00,MAX=0.00 | L2:F=infs/0.00,R=148.03s/0.00,MAX=0.00)
+[REWARD DEBUG] acceleration_reward=-0.264, acceleration=-1.321m/s^2 (clipped=-1.321), speed_reward=-0.458 (speed=21.667m/s, limit=40.000m/s), collision_penalty=0.000, total=-0.723
+[TTC REWARD] disabled; TTC/gap are used only by the independent safety shield.
+[TTC RISK] step=104 current_lane=1 current_lane_max_risk=0.000 lanes=(L0:F=infs/0.00,R=122.63s/0.00,MAX=0.00 | L1:F=104.15s/0.00,R=372.48s/0.00,MAX=0.00 | L2:F=infs/0.00,R=147.59s/0.00,MAX=0.00)
+[REWARD DEBUG] acceleration_reward=-0.025, acceleration=-0.125m/s^2 (clipped=-0.125), speed_reward=-0.459 (speed=21.659m/s, limit=40.000m/s), collision_penalty=0.000, total=-0.483
+[TTC REWARD] disabled; TTC/gap are used only by the independent safety shield.
+[TTC RISK] step=105 current_lane=1 current_lane_max_risk=0.000 lanes=(L0:F=infs/0.00,R=120.04s/0.00,MAX=0.00 | L1:F=105.43s/0.00,R=365.48s/0.00,MAX=0.00 | L2:F=infs/0.00,R=145.61s/0.00,MAX=0.00)
+[REWARD DEBUG] acceleration_reward=-0.131, acceleration=-0.656m/s^2 (clipped=-0.656), speed_reward=-0.460 (speed=21.615m/s, limit=40.000m/s), collision_penalty=0.000, total=-0.591
+[TTC REWARD] disabled; TTC/gap are used only by the independent safety shield.
+[TTC RISK] step=106 current_lane=1 current_lane_max_risk=0.000 lanes=(L0:F=infs/0.00,R=115.55s/0.00,MAX=0.00 | L1:F=107.97s/0.00,R=353.16s/0.00,MAX=0.00 | L2:F=infs/0.00,R=142.12s/0.00,MAX=0.00)
+[REWARD DEBUG] acceleration_reward=-0.244, acceleration=-1.222m/s^2 (clipped=-1.222), speed_reward=-0.462 (speed=21.534m/s, limit=40.000m/s), collision_penalty=0.000, total=-0.706
+[TTC REWARD] disabled; TTC/gap are used only by the independent safety shield.
+[TTC RISK] step=107 current_lane=1 current_lane_max_risk=0.000 lanes=(L0:F=infs/0.00,R=106.19s/0.00,MAX=0.00 | L1:F=114.63s/0.00,R=327.12s/0.00,MAX=0.00 | L2:F=infs/0.00,R=134.54s/0.00,MAX=0.00)
+[REWARD DEBUG] acceleration_reward=-0.579, acceleration=-2.896m/s^2 (clipped=-2.896), speed_reward=-0.466 (speed=21.341m/s, limit=40.000m/s), collision_penalty=0.000, total=-1.046
+[TTC REWARD] disabled; TTC/gap are used only by the independent safety shield.
+[TTC RISK] step=108 current_lane=1 current_lane_max_risk=0.000 lanes=(L0:F=infs/0.00,R=113.12s/0.00,MAX=0.00 | L1:F=109.33s/0.00,R=346.65s/0.00,MAX=0.00 | L2:F=infs/0.00,R=140.17s/0.00,MAX=0.00)
+[REWARD DEBUG] acceleration_reward=+0.445, acceleration=+2.226m/s^2 (clipped=+2.226), speed_reward=-0.463 (speed=21.489m/s, limit=40.000m/s), collision_penalty=0.000, total=-0.018
+[TTC REWARD] disabled; TTC/gap are used only by the independent safety shield.
+[TTC RISK] step=109 current_lane=1 current_lane_max_risk=0.000 lanes=(L0:F=infs/0.00,R=111.14s/0.00,MAX=0.00 | L1:F=110.58s/0.00,R=341.25s/0.00,MAX=0.00 | L2:F=infs/0.00,R=138.57s/0.00,MAX=0.00)
+[REWARD DEBUG] acceleration_reward=-0.116, acceleration=-0.581m/s^2 (clipped=-0.581), speed_reward=-0.464 (speed=21.450m/s, limit=40.000m/s), collision_penalty=0.000, total=-0.580
+[TTC REWARD] disabled; TTC/gap are used only by the independent safety shield.
+[TTC RISK] step=110 current_lane=1 current_lane_max_risk=0.000 lanes=(L0:F=infs/0.00,R=123.78s/0.00,MAX=0.00 | L1:F=102.97s/0.00,R=376.38s/0.00,MAX=0.00 | L2:F=infs/0.00,R=148.35s/0.00,MAX=0.00)
+[REWARD DEBUG] acceleration_reward=+0.705, acceleration=+3.527m/s^2 (clipped=+3.527), speed_reward=-0.458 (speed=21.685m/s, limit=40.000m/s), collision_penalty=0.000, total=+0.247
+[TTC REWARD] disabled; TTC/gap are used only by the independent safety shield.
+[TTC RISK] step=111 current_lane=1 current_lane_max_risk=0.000 lanes=(L0:F=infs/0.00,R=120.29s/0.00,MAX=0.00 | L1:F=104.68s/0.00,R=366.89s/0.00,MAX=0.00 | L2:F=infs/0.00,R=145.71s/0.00,MAX=0.00)
+[REWARD DEBUG] acceleration_reward=-0.176, acceleration=-0.878m/s^2 (clipped=-0.878), speed_reward=-0.459 (speed=21.627m/s, limit=40.000m/s), collision_penalty=0.000, total=-0.635
+[TTC REWARD] disabled; TTC/gap are used only by the independent safety shield.
+[TTC RISK] step=112 current_lane=1 current_lane_max_risk=0.000 lanes=(L0:F=infs/0.00,R=120.99s/0.00,MAX=0.00 | L1:F=104.20s/0.00,R=368.95s/0.00,MAX=0.00 | L2:F=infs/0.00,R=146.23s/0.00,MAX=0.00)
+[REWARD DEBUG] acceleration_reward=+0.040, acceleration=+0.202m/s^2 (clipped=+0.202), speed_reward=-0.459 (speed=21.640m/s, limit=40.000m/s), collision_penalty=0.000, total=-0.419
+[TTC REWARD] disabled; TTC/gap are used only by the independent safety shield.
+[TTC RISK] step=113 current_lane=1 current_lane_max_risk=0.000 lanes=(L0:F=infs/0.00,R=122.73s/0.00,MAX=0.00 | L1:F=103.19s/0.00,R=373.87s/0.00,MAX=0.00 | L2:F=infs/0.00,R=147.53s/0.00,MAX=0.00)
+[REWARD DEBUG] acceleration_reward=+0.093, acceleration=+0.465m/s^2 (clipped=+0.465), speed_reward=-0.458 (speed=21.671m/s, limit=40.000m/s), collision_penalty=0.000, total=-0.365
+[TTC REWARD] disabled; TTC/gap are used only by the independent safety shield.
+[TTC RISK] step=114 current_lane=1 current_lane_max_risk=0.000 lanes=(L0:F=infs/0.00,R=116.68s/0.00,MAX=0.00 | L1:F=106.42s/0.00,R=357.26s/0.00,MAX=0.00 | L2:F=infs/0.00,R=142.89s/0.00,MAX=0.00)
+[REWARD DEBUG] acceleration_reward=-0.319, acceleration=-1.594m/s^2 (clipped=-1.594), speed_reward=-0.461 (speed=21.565m/s, limit=40.000m/s), collision_penalty=0.000, total=-0.780
+[TTC REWARD] disabled; TTC/gap are used only by the independent safety shield.
+[TTC RISK] step=115 current_lane=1 current_lane_max_risk=0.000 lanes=(L0:F=infs/0.00,R=107.66s/0.00,MAX=0.00 | L1:F=112.47s/0.00,R=332.15s/0.00,MAX=0.00 | L2:F=infs/0.00,R=135.66s/0.00,MAX=0.00)
+[REWARD DEBUG] acceleration_reward=-0.543, acceleration=-2.713m/s^2 (clipped=-2.713), speed_reward=-0.465 (speed=21.384m/s, limit=40.000m/s), collision_penalty=0.000, total=-1.008
+[TTC REWARD] disabled; TTC/gap are used only by the independent safety shield.
+[TTC RISK] step=116 current_lane=1 current_lane_max_risk=0.000 lanes=(L0:F=infs/0.00,R=120.92s/0.00,MAX=0.00 | L1:F=103.83s/0.00,R=369.26s/0.00,MAX=0.00 | L2:F=infs/0.00,R=146.11s/0.00,MAX=0.00)
+[REWARD DEBUG] acceleration_reward=+0.779, acceleration=+3.897m/s^2 (clipped=+3.897), speed_reward=-0.459 (speed=21.644m/s, limit=40.000m/s), collision_penalty=0.000, total=+0.320
+[TTC REWARD] disabled; TTC/gap are used only by the independent safety shield.
+[TTC RISK] step=117 current_lane=1 current_lane_max_risk=0.000 lanes=(L0:F=infs/0.00,R=108.22s/0.00,MAX=0.00 | L1:F=111.81s/0.00,R=333.95s/0.00,MAX=0.00 | L2:F=infs/0.00,R=136.09s/0.00,MAX=0.00)
+[REWARD DEBUG] acceleration_reward=-0.735, acceleration=-3.673m/s^2 (clipped=-3.673), speed_reward=-0.465 (speed=21.399m/s, limit=40.000m/s), collision_penalty=0.000, total=-1.200
+[TTC REWARD] disabled; TTC/gap are used only by the independent safety shield.
+[TTC RISK] step=118 current_lane=1 current_lane_max_risk=0.000 lanes=(L0:F=infs/0.00,R=99.07s/0.00,MAX=0.00 | L1:F=119.90s/0.00,R=308.08s/0.00,MAX=0.00 | L2:F=infs/0.00,R=128.35s/0.00,MAX=0.00)
+[REWARD DEBUG] acceleration_reward=-0.645, acceleration=-3.223m/s^2 (clipped=-3.223), speed_reward=-0.470 (speed=21.184m/s, limit=40.000m/s), collision_penalty=0.000, total=-1.115
+[TTC REWARD] disabled; TTC/gap are used only by the independent safety shield.
+[TTC RISK] step=119 current_lane=1 current_lane_max_risk=0.000 lanes=(L0:F=infs/0.00,R=90.45s/0.00,MAX=0.00 | L1:F=130.55s/0.00,R=283.39s/0.00,MAX=0.00 | L2:F=infs/0.00,R=120.63s/0.00,MAX=0.00)
+[REWARD DEBUG] acceleration_reward=-0.725, acceleration=-3.624m/s^2 (clipped=-3.624), speed_reward=-0.476 (speed=20.943m/s, limit=40.000m/s), collision_penalty=0.000, total=-1.201
+[TTC REWARD] disabled; TTC/gap are used only by the independent safety shield.
+[TTC RISK] step=120 current_lane=1 current_lane_max_risk=0.000 lanes=(L0:F=infs/0.00,R=89.39s/0.00,MAX=0.00 | L1:F=132.01s/0.00,R=280.42s/0.00,MAX=0.00 | L2:F=infs/0.00,R=119.64s/0.00,MAX=0.00)
+[REWARD DEBUG] acceleration_reward=-0.094, acceleration=-0.470m/s^2 (clipped=-0.470), speed_reward=-0.477 (speed=20.911m/s, limit=40.000m/s), collision_penalty=0.000, total=-0.571
+[TTC REWARD] disabled; TTC/gap are used only by the independent safety shield.
+[TTC RISK] step=121 current_lane=1 current_lane_max_risk=0.000 lanes=(L0:F=infs/0.00,R=82.62s/0.00,MAX=0.00 | L1:F=144.36s/0.00,R=260.74s/0.00,MAX=0.00 | L2:F=infs/0.00,R=113.21s/0.00,MAX=0.00)
+[REWARD DEBUG] acceleration_reward=-0.689, acceleration=-3.444m/s^2 (clipped=-3.444), speed_reward=-0.483 (speed=20.682m/s, limit=40.000m/s), collision_penalty=0.000, total=-1.172
+[TTC REWARD] disabled; TTC/gap are used only by the independent safety shield.
+[TTC RISK] step=122 current_lane=1 current_lane_max_risk=0.000 lanes=(L0:F=infs/0.00,R=75.66s/0.00,MAX=0.00 | L1:F=162.90s/0.00,R=240.28s/0.00,MAX=0.00 | L2:F=infs/0.00,R=106.27s/0.00,MAX=0.00)
+[REWARD DEBUG] acceleration_reward=-0.836, acceleration=-4.180m/s^2 (clipped=-4.180), speed_reward=-0.490 (speed=20.403m/s, limit=40.000m/s), collision_penalty=0.000, total=-1.326
+[TTC REWARD] disabled; TTC/gap are used only by the independent safety shield.
+[TTC RISK] step=123 current_lane=1 current_lane_max_risk=0.000 lanes=(L0:F=infs/0.00,R=70.74s/0.00,MAX=0.00 | L1:F=182.11s/0.00,R=225.71s/0.00,MAX=0.00 | L2:F=infs/0.00,R=101.16s/0.00,MAX=0.00)
+[REWARD DEBUG] acceleration_reward=-0.687, acceleration=-3.433m/s^2 (clipped=-3.433), speed_reward=-0.496 (speed=20.174m/s, limit=40.000m/s), collision_penalty=0.000, total=-1.182
+[TTC REWARD] disabled; TTC/gap are used only by the independent safety shield.
+[TTC RISK] step=124 current_lane=1 current_lane_max_risk=0.000 lanes=(L0:F=infs/0.00,R=69.13s/0.00,MAX=0.00 | L1:F=189.87s/0.00,R=221.00s/0.00,MAX=0.00 | L2:F=infs/0.00,R=99.45s/0.00,MAX=0.00)
+[REWARD DEBUG] acceleration_reward=-0.239, acceleration=-1.194m/s^2 (clipped=-1.194), speed_reward=-0.498 (speed=20.094m/s, limit=40.000m/s), collision_penalty=0.000, total=-0.736
+[TTC REWARD] disabled; TTC/gap are used only by the independent safety shield.
+[TTC RISK] step=125 current_lane=1 current_lane_max_risk=0.000 lanes=(L0:F=infs/0.00,R=67.00s/0.00,MAX=0.00 | L1:F=202.06s/0.00,R=214.70s/0.00,MAX=0.00 | L2:F=infs/0.00,R=97.15s/0.00,MAX=0.00)
+[REWARD DEBUG] acceleration_reward=-0.337, acceleration=-1.687m/s^2 (clipped=-1.687), speed_reward=-0.500 (speed=19.982m/s, limit=40.000m/s), collision_penalty=0.000, total=-0.838
+[TTC REWARD] disabled; TTC/gap are used only by the independent safety shield.
+[TTC RISK] step=126 current_lane=1 current_lane_max_risk=0.000 lanes=(L0:F=infs/0.00,R=71.19s/0.00,MAX=0.00 | L1:F=178.92s/0.00,R=227.45s/0.00,MAX=0.00 | L2:F=infs/0.00,R=101.64s/0.00,MAX=0.00)
+[REWARD DEBUG] acceleration_reward=+0.674, acceleration=+3.368m/s^2 (clipped=+3.368), speed_reward=-0.495 (speed=20.207m/s, limit=40.000m/s), collision_penalty=0.000, total=+0.179
+[TTC REWARD] disabled; TTC/gap are used only by the independent safety shield.
+[TTC RISK] step=127 current_lane=1 current_lane_max_risk=0.000 lanes=(L0:F=infs/0.00,R=72.41s/0.00,MAX=0.00 | L1:F=173.30s/0.00,R=231.26s/0.00,MAX=0.00 | L2:F=infs/0.00,R=102.93s/0.00,MAX=0.00)
+[REWARD DEBUG] acceleration_reward=+0.189, acceleration=+0.945m/s^2 (clipped=+0.945), speed_reward=-0.493 (speed=20.270m/s, limit=40.000m/s), collision_penalty=0.000, total=-0.304
+[TTC REWARD] disabled; TTC/gap are used only by the independent safety shield.
+[TTC RISK] step=128 current_lane=1 current_lane_max_risk=0.000 lanes=(L0:F=infs/0.00,R=74.94s/0.00,MAX=0.00 | L1:F=163.51s/0.00,R=238.99s/0.00,MAX=0.00 | L2:F=infs/0.00,R=105.55s/0.00,MAX=0.00)
+[REWARD DEBUG] acceleration_reward=+0.362, acceleration=+1.808m/s^2 (clipped=+1.808), speed_reward=-0.490 (speed=20.390m/s, limit=40.000m/s), collision_penalty=0.000, total=-0.129
+[TTC REWARD] disabled; TTC/gap are used only by the independent safety shield.
+[TTC RISK] step=129 current_lane=1 current_lane_max_risk=0.000 lanes=(L0:F=infs/0.00,R=73.13s/0.00,MAX=0.00 | L1:F=169.78s/0.00,R=233.68s/0.00,MAX=0.00 | L2:F=infs/0.00,R=103.68s/0.00,MAX=0.00)
+[REWARD DEBUG] acceleration_reward=-0.241, acceleration=-1.203m/s^2 (clipped=-1.203), speed_reward=-0.492 (speed=20.310m/s, limit=40.000m/s), collision_penalty=0.000, total=-0.733
+[TTC REWARD] disabled; TTC/gap are used only by the independent safety shield.
+[TTC RISK] step=130 current_lane=1 current_lane_max_risk=0.000 lanes=(L0:F=infs/0.00,R=76.53s/0.00,MAX=0.00 | L1:F=157.85s/0.00,R=244.00s/0.00,MAX=0.00 | L2:F=infs/0.00,R=107.17s/0.00,MAX=0.00)
+[REWARD DEBUG] acceleration_reward=+0.467, acceleration=+2.333m/s^2 (clipped=+2.333), speed_reward=-0.488 (speed=20.465m/s, limit=40.000m/s), collision_penalty=0.000, total=-0.022
+[TTC REWARD] disabled; TTC/gap are used only by the independent safety shield.
+[TTC RISK] step=131 current_lane=1 current_lane_max_risk=0.000 lanes=(L0:F=infs/0.00,R=78.63s/0.00,MAX=0.00 | L1:F=151.62s/0.00,R=250.40s/0.00,MAX=0.00 | L2:F=infs/0.00,R=109.29s/0.00,MAX=0.00)
+[REWARD DEBUG] acceleration_reward=+0.271, acceleration=+1.355m/s^2 (clipped=+1.355), speed_reward=-0.486 (speed=20.556m/s, limit=40.000m/s), collision_penalty=0.000, total=-0.215
+[TTC REWARD] disabled; TTC/gap are used only by the independent safety shield.
+[TTC RISK] step=132 current_lane=1 current_lane_max_risk=0.000 lanes=(L0:F=infs/0.00,R=72.73s/0.00,MAX=0.00 | L1:F=170.38s/0.00,R=232.86s/0.00,MAX=0.00 | L2:F=infs/0.00,R=103.27s/0.00,MAX=0.00)
+[REWARD DEBUG] acceleration_reward=-0.767, acceleration=-3.836m/s^2 (clipped=-3.836), speed_reward=-0.493 (speed=20.300m/s, limit=40.000m/s), collision_penalty=0.000, total=-1.260
+[TTC REWARD] disabled; TTC/gap are used only by the independent safety shield.
+[TTC RISK] step=133 current_lane=1 current_lane_max_risk=0.000 lanes=(L0:F=infs/0.00,R=72.02s/0.00,MAX=0.00 | L1:F=172.87s/0.00,R=230.88s/0.00,MAX=0.00 | L2:F=infs/0.00,R=102.54s/0.00,MAX=0.00)
+[REWARD DEBUG] acceleration_reward=-0.091, acceleration=-0.457m/s^2 (clipped=-0.457), speed_reward=-0.493 (speed=20.270m/s, limit=40.000m/s), collision_penalty=0.000, total=-0.585
+[TTC REWARD] disabled; TTC/gap are used only by the independent safety shield.
+[TTC RISK] step=134 current_lane=1 current_lane_max_risk=0.000 lanes=(L0:F=infs/0.00,R=71.45s/0.00,MAX=0.00 | L1:F=174.92s/0.00,R=229.29s/0.00,MAX=0.00 | L2:F=infs/0.00,R=101.94s/0.00,MAX=0.00)
+[REWARD DEBUG] acceleration_reward=-0.074, acceleration=-0.368m/s^2 (clipped=-0.368), speed_reward=-0.494 (speed=20.245m/s, limit=40.000m/s), collision_penalty=0.000, total=-0.567
+[TTC REWARD] disabled; TTC/gap are used only by the independent safety shield.
+[TTC RISK] step=135 current_lane=1 current_lane_max_risk=0.000 lanes=(L0:F=infs/0.00,R=67.16s/0.00,MAX=0.00 | L1:F=196.41s/0.00,R=216.43s/0.00,MAX=0.00 | L2:F=infs/0.00,R=97.37s/0.00,MAX=0.00)
+[REWARD DEBUG] acceleration_reward=-0.660, acceleration=-3.298m/s^2 (clipped=-3.298), speed_reward=-0.499 (speed=20.025m/s, limit=40.000m/s), collision_penalty=0.000, total=-1.159
+[TTC REWARD] disabled; TTC/gap are used only by the independent safety shield.
+[TTC RISK] step=136 current_lane=1 current_lane_max_risk=0.000 lanes=(L0:F=infs/0.00,R=65.78s/0.00,MAX=0.00 | L1:F=204.87s/0.00,R=212.36s/0.00,MAX=0.00 | L2:F=infs/0.00,R=95.87s/0.00,MAX=0.00)
+[REWARD DEBUG] acceleration_reward=-0.223, acceleration=-1.114m/s^2 (clipped=-1.114), speed_reward=-0.501 (speed=19.951m/s, limit=40.000m/s), collision_penalty=0.000, total=-0.724
+[TTC REWARD] disabled; TTC/gap are used only by the independent safety shield.
+[TTC RISK] step=137 current_lane=1 current_lane_max_risk=0.000 lanes=(L0:F=infs/0.00,R=67.36s/0.00,MAX=0.00 | L1:F=194.26s/0.00,R=217.31s/0.00,MAX=0.00 | L2:F=infs/0.00,R=97.59s/0.00,MAX=0.00)
+[REWARD DEBUG] acceleration_reward=+0.278, acceleration=+1.391m/s^2 (clipped=+1.391), speed_reward=-0.499 (speed=20.044m/s, limit=40.000m/s), collision_penalty=0.000, total=-0.221
+[TTC REWARD] disabled; TTC/gap are used only by the independent safety shield.
+[TTC RISK] step=138 current_lane=1 current_lane_max_risk=0.000 lanes=(L0:F=infs/0.00,R=67.36s/0.00,MAX=0.00 | L1:F=193.79s/0.00,R=217.46s/0.00,MAX=0.00 | L2:F=infs/0.00,R=97.60s/0.00,MAX=0.00)
+[REWARD DEBUG] acceleration_reward=+0.011, acceleration=+0.057m/s^2 (clipped=+0.057), speed_reward=-0.499 (speed=20.047m/s, limit=40.000m/s), collision_penalty=0.000, total=-0.487
+[TTC REWARD] disabled; TTC/gap are used only by the independent safety shield.
+[TTC RISK] step=139 current_lane=1 current_lane_max_risk=0.000 lanes=(L0:F=infs/0.00,R=68.46s/0.00,MAX=0.00 | L1:F=187.22s/0.00,R=220.92s/0.00,MAX=0.00 | L2:F=infs/0.00,R=98.79s/0.00,MAX=0.00)
+[REWARD DEBUG] acceleration_reward=+0.188, acceleration=+0.940m/s^2 (clipped=+0.940), speed_reward=-0.497 (speed=20.110m/s, limit=40.000m/s), collision_penalty=0.000, total=-0.309
+[TTC REWARD] disabled; TTC/gap are used only by the independent safety shield.
+[TTC RISK] step=140 current_lane=1 current_lane_max_risk=0.000 lanes=(L0:F=infs/0.00,R=68.94s/0.00,MAX=0.00 | L1:F=184.30s/0.00,R=222.53s/0.00,MAX=0.00 | L2:F=infs/0.00,R=99.31s/0.00,MAX=0.00)
+[REWARD DEBUG] acceleration_reward=+0.087, acceleration=+0.434m/s^2 (clipped=+0.434), speed_reward=-0.497 (speed=20.139m/s, limit=40.000m/s), collision_penalty=0.000, total=-0.410
+[TTC REWARD] disabled; TTC/gap are used only by the independent safety shield.
+[TTC RISK] step=141 current_lane=1 current_lane_max_risk=0.000 lanes=(L0:F=infs/0.00,R=67.46s/0.00,MAX=0.00 | L1:F=191.87s/0.00,R=218.16s/0.00,MAX=0.00 | L2:F=infs/0.00,R=97.72s/0.00,MAX=0.00)
+[REWARD DEBUG] acceleration_reward=-0.227, acceleration=-1.133m/s^2 (clipped=-1.133), speed_reward=-0.498 (speed=20.064m/s, limit=40.000m/s), collision_penalty=0.000, total=-0.725
+[TTC REWARD] disabled; TTC/gap are used only by the independent safety shield.
+[TTC RISK] step=142 current_lane=1 current_lane_max_risk=0.000 lanes=(L0:F=infs/0.00,R=71.15s/0.00,MAX=0.00 | L1:F=173.32s/0.00,R=229.52s/0.00,MAX=0.00 | L2:F=infs/0.00,R=101.66s/0.00,MAX=0.00)
+[REWARD DEBUG] acceleration_reward=+0.583, acceleration=+2.914m/s^2 (clipped=+2.914), speed_reward=-0.494 (speed=20.258m/s, limit=40.000m/s), collision_penalty=0.000, total=+0.089
+[TTC REWARD] disabled; TTC/gap are used only by the independent safety shield.
+[TTC RISK] step=143 current_lane=1 current_lane_max_risk=0.000 lanes=(L0:F=infs/0.00,R=70.56s/0.00,MAX=0.00 | L1:F=175.52s/0.00,R=227.85s/0.00,MAX=0.00 | L2:F=infs/0.00,R=101.04s/0.00,MAX=0.00)
+[REWARD DEBUG] acceleration_reward=-0.078, acceleration=-0.390m/s^2 (clipped=-0.390), speed_reward=-0.494 (speed=20.232m/s, limit=40.000m/s), collision_penalty=0.000, total=-0.572
+[TTC REWARD] disabled; TTC/gap are used only by the independent safety shield.
+[TTC RISK] step=144 current_lane=1 current_lane_max_risk=0.000 lanes=(L0:F=infs/0.00,R=69.36s/0.00,MAX=0.00 | L1:F=180.67s/0.00,R=224.33s/0.00,MAX=0.00 | L2:F=infs/0.00,R=99.77s/0.00,MAX=0.00)
+[REWARD DEBUG] acceleration_reward=-0.172, acceleration=-0.862m/s^2 (clipped=-0.862), speed_reward=-0.496 (speed=20.174m/s, limit=40.000m/s), collision_penalty=0.000, total=-0.668
+[TTC REWARD] disabled; TTC/gap are used only by the independent safety shield.
+[TTC RISK] step=145 current_lane=1 current_lane_max_risk=0.000 lanes=(L0:F=infs/0.00,R=71.15s/0.00,MAX=0.00 | L1:F=172.28s/0.00,R=229.93s/0.00,MAX=0.00 | L2:F=infs/0.00,R=101.68s/0.00,MAX=0.00)
+[REWARD DEBUG] acceleration_reward=+0.280, acceleration=+1.401m/s^2 (clipped=+1.401), speed_reward=-0.493 (speed=20.268m/s, limit=40.000m/s), collision_penalty=0.000, total=-0.213
+[TTC REWARD] disabled; TTC/gap are used only by the independent safety shield.
+[TTC RISK] step=146 current_lane=1 current_lane_max_risk=0.000 lanes=(L0:F=infs/0.00,R=65.59s/0.00,MAX=0.00 | L1:F=201.10s/0.00,R=213.09s/0.00,MAX=0.00 | L2:F=infs/0.00,R=95.71s/0.00,MAX=0.00)
+[REWARD DEBUG] acceleration_reward=-0.873, acceleration=-4.366m/s^2 (clipped=-4.366), speed_reward=-0.501 (speed=19.977m/s, limit=40.000m/s), collision_penalty=0.000, total=-1.374
+[TTC REWARD] disabled; TTC/gap are used only by the independent safety shield.
+[TTC RISK] step=147 current_lane=1 current_lane_max_risk=0.000 lanes=(L0:F=infs/0.00,R=64.71s/0.00,MAX=0.00 | L1:F=206.67s/0.00,R=210.53s/0.00,MAX=0.00 | L2:F=infs/0.00,R=94.75s/0.00,MAX=0.00)
+[REWARD DEBUG] acceleration_reward=-0.142, acceleration=-0.710m/s^2 (clipped=-0.710), speed_reward=-0.502 (speed=19.929m/s, limit=40.000m/s), collision_penalty=0.000, total=-0.644
+[TTC REWARD] disabled; TTC/gap are used only by the independent safety shield.
+[TTC RISK] step=148 current_lane=1 current_lane_max_risk=0.000 lanes=(L0:F=infs/0.00,R=66.30s/0.00,MAX=0.00 | L1:F=195.54s/0.00,R=215.56s/0.00,MAX=0.00 | L2:F=infs/0.00,R=96.51s/0.00,MAX=0.00)
+[REWARD DEBUG] acceleration_reward=+0.287, acceleration=+1.433m/s^2 (clipped=+1.433), speed_reward=-0.499 (speed=20.025m/s, limit=40.000m/s), collision_penalty=0.000, total=-0.213
+[TTC REWARD] disabled; TTC/gap are used only by the independent safety shield.
+[TTC RISK] step=149 current_lane=1 current_lane_max_risk=0.000 lanes=(L0:F=infs/0.00,R=67.69s/0.00,MAX=0.00 | L1:F=187.11s/0.00,R=219.94s/0.00,MAX=0.00 | L2:F=infs/0.00,R=98.01s/0.00,MAX=0.00)
+[REWARD DEBUG] acceleration_reward=+0.239, acceleration=+1.195m/s^2 (clipped=+1.195), speed_reward=-0.497 (speed=20.105m/s, limit=40.000m/s), collision_penalty=0.000, total=-0.258
+[TTC REWARD] disabled; TTC/gap are used only by the independent safety shield.
+[TTC RISK] step=150 current_lane=1 current_lane_max_risk=0.000 lanes=(L0:F=infs/0.00,R=66.04s/0.00,MAX=0.00 | L1:F=196.24s/0.00,R=215.01s/0.00,MAX=0.00 | L2:F=infs/0.00,R=96.23s/0.00,MAX=0.00)
+[REWARD DEBUG] acceleration_reward=-0.262, acceleration=-1.310m/s^2 (clipped=-1.310), speed_reward=-0.500 (speed=20.017m/s, limit=40.000m/s), collision_penalty=0.000, total=-0.762
+[TTC REWARD] disabled; TTC/gap are used only by the independent safety shield.
+[TTC RISK] step=151 current_lane=1 current_lane_max_risk=0.000 lanes=(L0:F=infs/0.00,R=69.80s/0.00,MAX=0.00 | L1:F=175.92s/0.00,R=226.69s/0.00,MAX=0.00 | L2:F=infs/0.00,R=100.28s/0.00,MAX=0.00)
+[REWARD DEBUG] acceleration_reward=+0.613, acceleration=+3.067m/s^2 (clipped=+3.067), speed_reward=-0.494 (speed=20.222m/s, limit=40.000m/s), collision_penalty=0.000, total=+0.119
+[TTC REWARD] disabled; TTC/gap are used only by the independent safety shield.
+[TTC RISK] step=152 current_lane=1 current_lane_max_risk=0.000 lanes=(L0:F=infs/0.00,R=72.90s/0.00,MAX=0.00 | L1:F=163.27s/0.00,R=236.25s/0.00,MAX=0.00 | L2:F=infs/0.00,R=103.52s/0.00,MAX=0.00)
+[REWARD DEBUG] acceleration_reward=+0.458, acceleration=+2.289m/s^2 (clipped=+2.289), speed_reward=-0.491 (speed=20.374m/s, limit=40.000m/s), collision_penalty=0.000, total=-0.033
+[TTC REWARD] disabled; TTC/gap are used only by the independent safety shield.
+[TTC RISK] step=153 current_lane=1 current_lane_max_risk=0.000 lanes=(L0:F=infs/0.00,R=75.80s/0.00,MAX=0.00 | L1:F=153.69s/0.00,R=245.21s/0.00,MAX=0.00 | L2:F=infs/0.00,R=106.50s/0.00,MAX=0.00)
+[REWARD DEBUG] acceleration_reward=+0.396, acceleration=+1.981m/s^2 (clipped=+1.981), speed_reward=-0.487 (speed=20.506m/s, limit=40.000m/s), collision_penalty=0.000, total=-0.091
+[TTC REWARD] disabled; TTC/gap are used only by the independent safety shield.
+[TTC RISK] step=154 current_lane=1 current_lane_max_risk=0.000 lanes=(L0:F=infs/0.00,R=72.97s/0.00,MAX=0.00 | L1:F=162.41s/0.00,R=236.75s/0.00,MAX=0.00 | L2:F=infs/0.00,R=103.61s/0.00,MAX=0.00)
+[REWARD DEBUG] acceleration_reward=-0.368, acceleration=-1.838m/s^2 (clipped=-1.838), speed_reward=-0.490 (speed=20.384m/s, limit=40.000m/s), collision_penalty=0.000, total=-0.858
+[TTC REWARD] disabled; TTC/gap are used only by the independent safety shield.
+[TTC RISK] step=155 current_lane=1 current_lane_max_risk=0.000 lanes=(L0:F=infs/0.00,R=75.80s/0.00,MAX=0.00 | L1:F=153.19s/0.00,R=245.46s/0.00,MAX=0.00 | L2:F=infs/0.00,R=106.50s/0.00,MAX=0.00)
+[REWARD DEBUG] acceleration_reward=+0.384, acceleration=+1.920m/s^2 (clipped=+1.920), speed_reward=-0.487 (speed=20.512m/s, limit=40.000m/s), collision_penalty=0.000, total=-0.103
+[TTC REWARD] disabled; TTC/gap are used only by the independent safety shield.
+[TTC RISK] step=156 current_lane=1 current_lane_max_risk=0.000 lanes=(L0:F=infs/0.00,R=74.77s/0.00,MAX=0.00 | L1:F=155.97s/0.00,R=242.48s/0.00,MAX=0.00 | L2:F=infs/0.00,R=105.46s/0.00,MAX=0.00)
+[REWARD DEBUG] acceleration_reward=-0.124, acceleration=-0.621m/s^2 (clipped=-0.621), speed_reward=-0.488 (speed=20.470m/s, limit=40.000m/s), collision_penalty=0.000, total=-0.612
+[TTC REWARD] disabled; TTC/gap are used only by the independent safety shield.
+[TTC RISK] step=157 current_lane=1 current_lane_max_risk=0.000 lanes=(L0:F=infs/0.00,R=73.41s/0.00,MAX=0.00 | L1:F=160.05s/0.00,R=238.48s/0.00,MAX=0.00 | L2:F=infs/0.00,R=104.06s/0.00,MAX=0.00)
+[REWARD DEBUG] acceleration_reward=-0.173, acceleration=-0.866m/s^2 (clipped=-0.866), speed_reward=-0.490 (speed=20.413m/s, limit=40.000m/s), collision_penalty=0.000, total=-0.663
+[TTC REWARD] disabled; TTC/gap are used only by the independent safety shield.
+[TTC RISK] step=158 current_lane=1 current_lane_max_risk=0.000 lanes=(L0:F=infs/0.00,R=75.49s/0.00,MAX=0.00 | L1:F=153.29s/0.00,R=244.95s/0.00,MAX=0.00 | L2:F=infs/0.00,R=106.19s/0.00,MAX=0.00)
+[REWARD DEBUG] acceleration_reward=+0.284, acceleration=+1.422m/s^2 (clipped=+1.422), speed_reward=-0.487 (speed=20.508m/s, limit=40.000m/s), collision_penalty=0.000, total=-0.203
+[TTC REWARD] disabled; TTC/gap are used only by the independent safety shield.
+[TTC RISK] step=159 current_lane=1 current_lane_max_risk=0.000 lanes=(L0:F=infs/0.00,R=78.76s/0.00,MAX=0.00 | L1:F=144.48s/0.00,R=254.99s/0.00,MAX=0.00 | L2:F=infs/0.00,R=109.47s/0.00,MAX=0.00)
+[REWARD DEBUG] acceleration_reward=+0.411, acceleration=+2.057m/s^2 (clipped=+2.057), speed_reward=-0.484 (speed=20.645m/s, limit=40.000m/s), collision_penalty=0.000, total=-0.073
+[TTC REWARD] disabled; TTC/gap are used only by the independent safety shield.
+[TTC RISK] step=160 current_lane=1 current_lane_max_risk=0.000 lanes=(L0:F=infs/0.00,R=83.71s/0.00,MAX=0.00 | L1:F=134.07s/0.00,R=270.00s/0.00,MAX=0.00 | L2:F=infs/0.00,R=114.28s/0.00,MAX=0.00)
+[REWARD DEBUG] acceleration_reward=+0.556, acceleration=+2.781m/s^2 (clipped=+2.781), speed_reward=-0.479 (speed=20.830m/s, limit=40.000m/s), collision_penalty=0.000, total=+0.077
+[TTC REWARD] disabled; TTC/gap are used only by the independent safety shield.
+[TTC RISK] step=161 current_lane=1 current_lane_max_risk=0.000 lanes=(L0:F=infs/0.00,R=88.21s/0.00,MAX=0.00 | L1:F=126.63s/0.00,R=283.58s/0.00,MAX=0.00 | L2:F=infs/0.00,R=118.50s/0.00,MAX=0.00)
+[REWARD DEBUG] acceleration_reward=+0.452, acceleration=+2.262m/s^2 (clipped=+2.262), speed_reward=-0.475 (speed=20.981m/s, limit=40.000m/s), collision_penalty=0.000, total=-0.023
+[TTC REWARD] disabled; TTC/gap are used only by the independent safety shield.
+[TTC RISK] step=162 current_lane=1 current_lane_max_risk=0.000 lanes=(L0:F=infs/0.00,R=87.80s/0.00,MAX=0.00 | L1:F=127.06s/0.00,R=282.50s/0.00,MAX=0.00 | L2:F=infs/0.00,R=118.12s/0.00,MAX=0.00)
+[REWARD DEBUG] acceleration_reward=-0.032, acceleration=-0.160m/s^2 (clipped=-0.160), speed_reward=-0.476 (speed=20.970m/s, limit=40.000m/s), collision_penalty=0.000, total=-0.508
+[TTC REWARD] disabled; TTC/gap are used only by the independent safety shield.
+[TTC RISK] step=163 current_lane=1 current_lane_max_risk=0.000 lanes=(L0:F=infs/0.00,R=88.73s/0.00,MAX=0.00 | L1:F=125.57s/0.00,R=285.38s/0.00,MAX=0.00 | L2:F=infs/0.00,R=118.97s/0.00,MAX=0.00)
+[REWARD DEBUG] acceleration_reward=+0.093, acceleration=+0.465m/s^2 (clipped=+0.465), speed_reward=-0.475 (speed=21.001m/s, limit=40.000m/s), collision_penalty=0.000, total=-0.382
+[TTC REWARD] disabled; TTC/gap are used only by the independent safety shield.
+[TTC RISK] step=164 current_lane=1 current_lane_max_risk=0.000 lanes=(L0:F=infs/0.00,R=88.22s/0.00,MAX=0.00 | L1:F=126.13s/0.00,R=283.99s/0.00,MAX=0.00 | L2:F=infs/0.00,R=118.50s/0.00,MAX=0.00)
+[REWARD DEBUG] acceleration_reward=-0.041, acceleration=-0.207m/s^2 (clipped=-0.207), speed_reward=-0.475 (speed=20.987m/s, limit=40.000m/s), collision_penalty=0.000, total=-0.517
+[TTC REWARD] disabled; TTC/gap are used only by the independent safety shield.
+[TTC RISK] step=165 current_lane=1 current_lane_max_risk=0.000 lanes=(L0:F=infs/0.00,R=97.95s/0.00,MAX=0.00 | L1:F=114.57s/0.00,R=312.87s/0.00,MAX=0.00 | L2:F=infs/0.00,R=127.18s/0.00,MAX=0.00)
+[REWARD DEBUG] acceleration_reward=+0.826, acceleration=+4.132m/s^2 (clipped=+4.132), speed_reward=-0.468 (speed=21.263m/s, limit=40.000m/s), collision_penalty=0.000, total=+0.358
+[TTC REWARD] disabled; TTC/gap are used only by the independent safety shield.
+[TTC RISK] step=166 current_lane=1 current_lane_max_risk=0.000 lanes=(L0:F=infs/0.00,R=94.71s/0.00,MAX=0.00 | L1:F=117.73s/0.00,R=303.50s/0.00,MAX=0.00 | L2:F=infs/0.00,R=124.35s/0.00,MAX=0.00)
+[REWARD DEBUG] acceleration_reward=-0.249, acceleration=-1.243m/s^2 (clipped=-1.243), speed_reward=-0.471 (speed=21.180m/s, limit=40.000m/s), collision_penalty=0.000, total=-0.719
+[TTC REWARD] disabled; TTC/gap are used only by the independent safety shield.
+[TTC RISK] step=167 current_lane=1 current_lane_max_risk=0.000 lanes=(L0:F=infs/0.00,R=91.34s/0.00,MAX=0.00 | L1:F=121.51s/0.00,R=293.64s/0.00,MAX=0.00 | L2:F=infs/0.00,R=121.32s/0.00,MAX=0.00)
+[REWARD DEBUG] acceleration_reward=-0.279, acceleration=-1.393m/s^2 (clipped=-1.393), speed_reward=-0.473 (speed=21.087m/s, limit=40.000m/s), collision_penalty=0.000, total=-0.752
+[TTC REWARD] disabled; TTC/gap are used only by the independent safety shield.
+[TTC RISK] step=168 current_lane=1 current_lane_max_risk=0.000 lanes=(L0:F=infs/0.00,R=88.68s/0.00,MAX=0.00 | L1:F=124.84s/0.00,R=285.88s/0.00,MAX=0.00 | L2:F=infs/0.00,R=118.90s/0.00,MAX=0.00)
+[REWARD DEBUG] acceleration_reward=-0.232, acceleration=-1.161m/s^2 (clipped=-1.161), speed_reward=-0.475 (speed=21.010m/s, limit=40.000m/s), collision_penalty=0.000, total=-0.707
+[TTC REWARD] disabled; TTC/gap are used only by the independent safety shield.
+[TTC RISK] step=169 current_lane=1 current_lane_max_risk=0.000 lanes=(L0:F=infs/0.00,R=97.67s/0.00,MAX=0.00 | L1:F=114.32s/0.00,R=312.59s/0.00,MAX=0.00 | L2:F=infs/0.00,R=126.90s/0.00,MAX=0.00)
+[REWARD DEBUG] acceleration_reward=+0.759, acceleration=+3.796m/s^2 (clipped=+3.796), speed_reward=-0.468 (speed=21.263m/s, limit=40.000m/s), collision_penalty=0.000, total=+0.291
+[TTC REWARD] disabled; TTC/gap are used only by the independent safety shield.
+[TTC RISK] step=170 current_lane=1 current_lane_max_risk=0.000 lanes=(L0:F=infs/0.00,R=91.82s/0.00,MAX=0.00 | L1:F=120.47s/0.00,R=295.45s/0.00,MAX=0.00 | L2:F=infs/0.00,R=121.74s/0.00,MAX=0.00)
+[REWARD DEBUG] acceleration_reward=-0.468, acceleration=-2.341m/s^2 (clipped=-2.341), speed_reward=-0.472 (speed=21.107m/s, limit=40.000m/s), collision_penalty=0.000, total=-0.941
+[TTC REWARD] disabled; TTC/gap are used only by the independent safety shield.
+[TTC RISK] step=171 current_lane=1 current_lane_max_risk=0.000 lanes=(L0:F=infs/0.00,R=88.94s/0.00,MAX=0.00 | L1:F=124.02s/0.00,R=287.01s/0.00,MAX=0.00 | L2:F=infs/0.00,R=119.11s/0.00,MAX=0.00)
+[REWARD DEBUG] acceleration_reward=-0.250, acceleration=-1.251m/s^2 (clipped=-1.251), speed_reward=-0.474 (speed=21.023m/s, limit=40.000m/s), collision_penalty=0.000, total=-0.725
+[TTC REWARD] disabled; TTC/gap are used only by the independent safety shield.
+[TTC RISK] step=172 current_lane=1 current_lane_max_risk=0.000 lanes=(L0:F=infs/0.00,R=94.18s/0.00,MAX=0.00 | L1:F=117.48s/0.00,R=302.73s/0.00,MAX=0.00 | L2:F=infs/0.00,R=123.83s/0.00,MAX=0.00)
+[REWARD DEBUG] acceleration_reward=+0.460, acceleration=+2.300m/s^2 (clipped=+2.300), speed_reward=-0.471 (speed=21.176m/s, limit=40.000m/s), collision_penalty=0.000, total=-0.011
+[TTC REWARD] disabled; TTC/gap are used only by the independent safety shield.
+[TTC RISK] step=173 current_lane=1 current_lane_max_risk=0.000 lanes=(L0:F=infs/0.00,R=98.29s/0.00,MAX=0.00 | L1:F=113.20s/0.00,R=314.98s/0.00,MAX=0.00 | L2:F=infs/0.00,R=127.41s/0.00,MAX=0.00)
+[REWARD DEBUG] acceleration_reward=+0.327, acceleration=+1.636m/s^2 (clipped=+1.636), speed_reward=-0.468 (speed=21.286m/s, limit=40.000m/s), collision_penalty=0.000, total=-0.141
+[TTC REWARD] disabled; TTC/gap are used only by the independent safety shield.
+[TTC RISK] step=174 current_lane=1 current_lane_max_risk=0.000 lanes=(L0:F=infs/0.00,R=96.11s/0.00,MAX=0.00 | L1:F=115.18s/0.00,R=308.69s/0.00,MAX=0.00 | L2:F=infs/0.00,R=125.51s/0.00,MAX=0.00)
+[REWARD DEBUG] acceleration_reward=-0.162, acceleration=-0.810m/s^2 (clipped=-0.810), speed_reward=-0.469 (speed=21.232m/s, limit=40.000m/s), collision_penalty=0.000, total=-0.631
+[TTC REWARD] disabled; TTC/gap are used only by the independent safety shield.
+[TTC RISK] step=175 current_lane=1 current_lane_max_risk=0.000 lanes=(L0:F=infs/0.00,R=99.59s/0.00,MAX=0.00 | L1:F=111.77s/0.00,R=319.06s/0.00,MAX=0.00 | L2:F=infs/0.00,R=128.50s/0.00,MAX=0.00)
+[REWARD DEBUG] acceleration_reward=+0.268, acceleration=+1.341m/s^2 (clipped=+1.341), speed_reward=-0.467 (speed=21.321m/s, limit=40.000m/s), collision_penalty=0.000, total=-0.199
+[TTC REWARD] disabled; TTC/gap are used only by the independent safety shield.
+[TTC RISK] step=176 current_lane=1 current_lane_max_risk=0.000 lanes=(L0:F=infs/0.00,R=88.61s/0.00,MAX=0.00 | L1:F=123.69s/0.00,R=286.64s/0.00,MAX=0.00 | L2:F=infs/0.00,R=118.78s/0.00,MAX=0.00)
+[REWARD DEBUG] acceleration_reward=-0.895, acceleration=-4.475m/s^2 (clipped=-4.475), speed_reward=-0.474 (speed=21.023m/s, limit=40.000m/s), collision_penalty=0.000, total=-1.369
+[TTC REWARD] disabled; TTC/gap are used only by the independent safety shield.
+[TTC RISK] step=177 current_lane=1 current_lane_max_risk=0.000 lanes=(L0:F=infs/0.00,R=88.61s/0.00,MAX=0.00 | L1:F=123.53s/0.00,R=286.77s/0.00,MAX=0.00 | L2:F=infs/0.00,R=118.77s/0.00,MAX=0.00)
+[REWARD DEBUG] acceleration_reward=+0.006, acceleration=+0.031m/s^2 (clipped=+0.031), speed_reward=-0.474 (speed=21.025m/s, limit=40.000m/s), collision_penalty=0.000, total=-0.468
+[TTC REWARD] disabled; TTC/gap are used only by the independent safety shield.
+[TTC RISK] step=178 current_lane=1 current_lane_max_risk=0.000 lanes=(L0:F=infs/0.00,R=80.50s/0.00,MAX=0.00 | L1:F=136.80s/0.00,R=262.49s/0.00,MAX=0.00 | L2:F=infs/0.00,R=111.11s/0.00,MAX=0.00)
+[REWARD DEBUG] acceleration_reward=-0.814, acceleration=-4.069m/s^2 (clipped=-4.069), speed_reward=-0.481 (speed=20.753m/s, limit=40.000m/s), collision_penalty=0.000, total=-1.295
+[TTC REWARD] disabled; TTC/gap are used only by the independent safety shield.
+[TTC RISK] step=179 current_lane=1 current_lane_max_risk=0.000 lanes=(L0:F=infs/0.00,R=83.13s/0.00,MAX=0.00 | L1:F=131.65s/0.00,R=270.60s/0.00,MAX=0.00 | L2:F=infs/0.00,R=113.64s/0.00,MAX=0.00)
+[REWARD DEBUG] acceleration_reward=+0.291, acceleration=+1.455m/s^2 (clipped=+1.455), speed_reward=-0.479 (speed=20.850m/s, limit=40.000m/s), collision_penalty=0.000, total=-0.188
+[TTC REWARD] disabled; TTC/gap are used only by the independent safety shield.
+[TTC RISK] step=180 current_lane=1 current_lane_max_risk=0.000 lanes=(L0:F=infs/0.00,R=79.71s/0.00,MAX=0.00 | L1:F=138.02s/0.00,R=260.35s/0.00,MAX=0.00 | L2:F=infs/0.00,R=110.34s/0.00,MAX=0.00)
+[REWARD DEBUG] acceleration_reward=-0.365, acceleration=-1.826m/s^2 (clipped=-1.826), speed_reward=-0.482 (speed=20.729m/s, limit=40.000m/s), collision_penalty=0.000, total=-0.847
+[TTC REWARD] disabled; TTC/gap are used only by the independent safety shield.
+[TTC RISK] step=181 current_lane=1 current_lane_max_risk=0.000 lanes=(L0:F=infs/0.00,R=85.18s/0.00,MAX=0.00 | L1:F=127.88s/0.00,R=277.06s/0.00,MAX=0.00 | L2:F=infs/0.00,R=115.58s/0.00,MAX=0.00)
+[REWARD DEBUG] acceleration_reward=+0.588, acceleration=+2.939m/s^2 (clipped=+2.939), speed_reward=-0.477 (speed=20.925m/s, limit=40.000m/s), collision_penalty=0.000, total=+0.111
+[TTC REWARD] disabled; TTC/gap are used only by the independent safety shield.
+[TTC RISK] step=182 current_lane=1 current_lane_max_risk=0.000 lanes=(L0:F=infs/0.00,R=77.44s/0.00,MAX=0.00 | L1:F=142.66s/0.00,R=253.69s/0.00,MAX=0.00 | L2:F=infs/0.00,R=108.09s/0.00,MAX=0.00)
+[REWARD DEBUG] acceleration_reward=-0.838, acceleration=-4.189m/s^2 (clipped=-4.189), speed_reward=-0.484 (speed=20.645m/s, limit=40.000m/s), collision_penalty=0.000, total=-1.322
+[TTC REWARD] disabled; TTC/gap are used only by the independent safety shield.
+[TTC RISK] step=183 current_lane=1 current_lane_max_risk=0.000 lanes=(L0:F=infs/0.00,R=72.13s/0.00,MAX=0.00 | L1:F=157.31s/0.00,R=237.53s/0.00,MAX=0.00 | L2:F=infs/0.00,R=102.71s/0.00,MAX=0.00)
+[REWARD DEBUG] acceleration_reward=-0.675, acceleration=-3.374m/s^2 (clipped=-3.374), speed_reward=-0.489 (speed=20.420m/s, limit=40.000m/s), collision_penalty=0.000, total=-1.164
+[TTC REWARD] disabled; TTC/gap are used only by the independent safety shield.
+[TTC RISK] step=184 current_lane=1 current_lane_max_risk=0.000 lanes=(L0:F=infs/0.00,R=71.65s/0.00,MAX=0.00 | L1:F=158.65s/0.00,R=236.18s/0.00,MAX=0.00 | L2:F=infs/0.00,R=102.21s/0.00,MAX=0.00)
+[REWARD DEBUG] acceleration_reward=-0.058, acceleration=-0.289m/s^2 (clipped=-0.289), speed_reward=-0.490 (speed=20.401m/s, limit=40.000m/s), collision_penalty=0.000, total=-0.548
+[TTC REWARD] disabled; TTC/gap are used only by the independent safety shield.
+[TTC RISK] step=185 current_lane=1 current_lane_max_risk=0.000 lanes=(L0:F=infs/0.00,R=74.49s/0.00,MAX=0.00 | L1:F=149.56s/0.00,R=245.07s/0.00,MAX=0.00 | L2:F=infs/0.00,R=105.13s/0.00,MAX=0.00)
+[REWARD DEBUG] acceleration_reward=+0.391, acceleration=+1.955m/s^2 (clipped=+1.955), speed_reward=-0.487 (speed=20.531m/s, limit=40.000m/s), collision_penalty=0.000, total=-0.096
+[TTC REWARD] disabled; TTC/gap are used only by the independent safety shield.
+[TTC RISK] step=186 current_lane=1 current_lane_max_risk=0.000 lanes=(L0:F=infs/0.00,R=79.38s/0.00,MAX=0.00 | L1:F=137.46s/0.00,R=260.20s/0.00,MAX=0.00 | L2:F=infs/0.00,R=110.01s/0.00,MAX=0.00)
+[REWARD DEBUG] acceleration_reward=+0.601, acceleration=+3.006m/s^2 (clipped=+3.006), speed_reward=-0.482 (speed=20.732m/s, limit=40.000m/s), collision_penalty=0.000, total=+0.120
+[TTC REWARD] disabled; TTC/gap are used only by the independent safety shield.
+[TTC RISK] step=187 current_lane=1 current_lane_max_risk=0.000 lanes=(L0:F=infs/0.00,R=85.39s/0.00,MAX=0.00 | L1:F=126.51s/0.00,R=278.59s/0.00,MAX=0.00 | L2:F=infs/0.00,R=115.76s/0.00,MAX=0.00)
+[REWARD DEBUG] acceleration_reward=+0.643, acceleration=+3.213m/s^2 (clipped=+3.213), speed_reward=-0.476 (speed=20.946m/s, limit=40.000m/s), collision_penalty=0.000, total=+0.166
+[TTC REWARD] disabled; TTC/gap are used only by the independent safety shield.
+[TTC RISK] step=188 current_lane=1 current_lane_max_risk=0.000 lanes=(L0:F=infs/0.00,R=79.28s/0.00,MAX=0.00 | L1:F=137.27s/0.00,R=260.15s/0.00,MAX=0.00 | L2:F=infs/0.00,R=109.90s/0.00,MAX=0.00)
+[REWARD DEBUG] acceleration_reward=-0.640, acceleration=-3.198m/s^2 (clipped=-3.198), speed_reward=-0.482 (speed=20.733m/s, limit=40.000m/s), collision_penalty=0.000, total=-1.121
+[TTC REWARD] disabled; TTC/gap are used only by the independent safety shield.
+[TTC RISK] step=189 current_lane=1 current_lane_max_risk=0.000 lanes=(L0:F=infs/0.00,R=82.11s/0.00,MAX=0.00 | L1:F=131.59s/0.00,R=268.91s/0.00,MAX=0.00 | L2:F=infs/0.00,R=112.64s/0.00,MAX=0.00)
+[REWARD DEBUG] acceleration_reward=+0.318, acceleration=+1.592m/s^2 (clipped=+1.592), speed_reward=-0.479 (speed=20.839m/s, limit=40.000m/s), collision_penalty=0.000, total=-0.161
+[TTC REWARD] disabled; TTC/gap are used only by the independent safety shield.
+[TTC RISK] step=190 current_lane=1 current_lane_max_risk=0.000 lanes=(L0:F=infs/0.00,R=86.20s/0.00,MAX=0.00 | L1:F=124.79s/0.00,R=281.47s/0.00,MAX=0.00 | L2:F=infs/0.00,R=116.51s/0.00,MAX=0.00)
+[REWARD DEBUG] acceleration_reward=+0.421, acceleration=+2.103m/s^2 (clipped=+2.103), speed_reward=-0.476 (speed=20.979m/s, limit=40.000m/s), collision_penalty=0.000, total=-0.055
+[TTC REWARD] disabled; TTC/gap are used only by the independent safety shield.
+[TTC RISK] step=191 current_lane=1 current_lane_max_risk=0.000 lanes=(L0:F=infs/0.00,R=83.76s/0.00,MAX=0.00 | L1:F=128.41s/0.00,R=274.19s/0.00,MAX=0.00 | L2:F=infs/0.00,R=114.21s/0.00,MAX=0.00)
+[REWARD DEBUG] acceleration_reward=-0.236, acceleration=-1.178m/s^2 (clipped=-1.178), speed_reward=-0.477 (speed=20.901m/s, limit=40.000m/s), collision_penalty=0.000, total=-0.713
+[TTC REWARD] disabled; TTC/gap are used only by the independent safety shield.
+[TTC RISK] step=192 current_lane=1 current_lane_max_risk=0.000 lanes=(L0:F=infs/0.00,R=89.73s/0.00,MAX=0.00 | L1:F=119.74s/0.00,R=292.36s/0.00,MAX=0.00 | L2:F=infs/0.00,R=119.73s/0.00,MAX=0.00)
+[REWARD DEBUG] acceleration_reward=+0.573, acceleration=+2.867m/s^2 (clipped=+2.867), speed_reward=-0.473 (speed=21.092m/s, limit=40.000m/s), collision_penalty=0.000, total=+0.101
+[TTC REWARD] disabled; TTC/gap are used only by the independent safety shield.
+[TTC RISK] step=193 current_lane=1 current_lane_max_risk=0.000 lanes=(L0:F=infs/0.00,R=81.93s/0.00,MAX=0.00 | L1:F=131.17s/0.00,R=268.90s/0.00,MAX=0.00 | L2:F=infs/0.00,R=112.46s/0.00,MAX=0.00)
+[REWARD DEBUG] acceleration_reward=-0.750, acceleration=-3.749m/s^2 (clipped=-3.749), speed_reward=-0.479 (speed=20.842m/s, limit=40.000m/s), collision_penalty=0.000, total=-1.229
+[TTC REWARD] disabled; TTC/gap are used only by the independent safety shield.
+[TTC RISK] step=194 current_lane=1 current_lane_max_risk=0.000 lanes=(L0:F=infs/0.00,R=82.40s/0.00,MAX=0.00 | L1:F=130.16s/0.00,R=270.47s/0.00,MAX=0.00 | L2:F=infs/0.00,R=112.91s/0.00,MAX=0.00)
+[REWARD DEBUG] acceleration_reward=+0.057, acceleration=+0.284m/s^2 (clipped=+0.284), speed_reward=-0.478 (speed=20.861m/s, limit=40.000m/s), collision_penalty=0.000, total=-0.422
+[TTC REWARD] disabled; TTC/gap are used only by the independent safety shield.
+[TTC RISK] step=195 current_lane=1 current_lane_max_risk=0.000 lanes=(L0:F=infs/0.00,R=76.22s/0.00,MAX=0.00 | L1:F=142.68s/0.00,R=251.67s/0.00,MAX=0.00 | L2:F=infs/0.00,R=106.86s/0.00,MAX=0.00)
+[REWARD DEBUG] acceleration_reward=-0.693, acceleration=-3.467m/s^2 (clipped=-3.467), speed_reward=-0.484 (speed=20.630m/s, limit=40.000m/s), collision_penalty=0.000, total=-1.178
+[TTC REWARD] disabled; TTC/gap are used only by the independent safety shield.
+[TTC RISK] step=196 current_lane=1 current_lane_max_risk=0.000 lanes=(L0:F=infs/0.00,R=71.04s/0.00,MAX=0.00 | L1:F=157.38s/0.00,R=235.76s/0.00,MAX=0.00 | L2:F=infs/0.00,R=101.58s/0.00,MAX=0.00)
+[REWARD DEBUG] acceleration_reward=-0.672, acceleration=-3.361m/s^2 (clipped=-3.361), speed_reward=-0.490 (speed=20.406m/s, limit=40.000m/s), collision_penalty=0.000, total=-1.162
+[TTC REWARD] disabled; TTC/gap are used only by the independent safety shield.
+[TTC RISK] step=197 current_lane=1 current_lane_max_risk=0.000 lanes=(L0:F=infs/0.00,R=66.72s/0.00,MAX=0.00 | L1:F=174.42s/0.00,R=222.43s/0.00,MAX=0.00 | L2:F=infs/0.00,R=97.02s/0.00,MAX=0.00)
+[REWARD DEBUG] acceleration_reward=-0.637, acceleration=-3.184m/s^2 (clipped=-3.184), speed_reward=-0.495 (speed=20.193m/s, limit=40.000m/s), collision_penalty=0.000, total=-1.132
+[TTC REWARD] disabled; TTC/gap are used only by the independent safety shield.
+[TTC RISK] step=198 current_lane=1 current_lane_max_risk=0.000 lanes=(L0:F=infs/0.00,R=62.71s/0.00,MAX=0.00 | L1:F=196.89s/0.00,R=209.93s/0.00,MAX=0.00 | L2:F=infs/0.00,R=92.65s/0.00,MAX=0.00)
+[REWARD DEBUG] acceleration_reward=-0.670, acceleration=-3.350m/s^2 (clipped=-3.350), speed_reward=-0.501 (speed=19.970m/s, limit=40.000m/s), collision_penalty=0.000, total=-1.171
+[TTC REWARD] disabled; TTC/gap are used only by the independent safety shield.
+[TTC RISK] step=199 current_lane=1 current_lane_max_risk=0.000 lanes=(L0:F=infs/0.00,R=61.91s/0.00,MAX=0.00 | L1:F=202.07s/0.00,R=207.53s/0.00,MAX=0.00 | L2:F=infs/0.00,R=91.76s/0.00,MAX=0.00)
+[REWARD DEBUG] acceleration_reward=-0.135, acceleration=-0.674m/s^2 (clipped=-0.674), speed_reward=-0.502 (speed=19.925m/s, limit=40.000m/s), collision_penalty=0.000, total=-0.637
+[TTC REWARD] disabled; TTC/gap are used only by the independent safety shield.
+[TTC RISK] step=200 current_lane=1 current_lane_max_risk=0.000 lanes=(L0:F=infs/0.00,R=61.71s/0.00,MAX=0.00 | L1:F=202.99s/0.00,R=207.04s/0.00,MAX=0.00 | L2:F=infs/0.00,R=91.54s/0.00,MAX=0.00)
+[REWARD DEBUG] acceleration_reward=-0.025, acceleration=-0.123m/s^2 (clipped=-0.123), speed_reward=-0.502 (speed=19.917m/s, limit=40.000m/s), collision_penalty=0.000, total=-0.527
+[TTC REWARD] disabled; TTC/gap are used only by the independent safety shield.
+[REFERENCE COLLECTION] episode=80/100 steps=200 return=-44.222
+[REFERENCE EPISODE LEFT COUNTERS] requested=0 mask_allowed=0 target_selected=0 completed=0
+[REFERENCE EPISODE RIGHT COUNTERS] requested=0 mask_allowed=0 target_selected=0 completed=0
+[REFERENCE EPISODE ACTION OPPORTUNITIES] steps=200 change_valid=0 (0.0%) only_keep=200 (100.0%)
