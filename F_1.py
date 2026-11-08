@@ -3668,6 +3668,91 @@ def print_lane_request_counters(tag, counters):
             f"completed={values['completed']}",
         )
 
+def make_lane_opportunity_diagnostics():
+    """Count why each adjacent lane is or is not a valid lane-change opportunity."""
+    return Counter()
+
+
+def update_lane_opportunity_diagnostics(simulator, counters):
+    """Classify both adjacent lanes using the same hard-safety and benefit rules as the mask."""
+    base = simulator.env.unwrapped
+    ego = base.vehicle
+    current_lane = int(ego.lane_index[2])
+    lane_data = simulator._min_ttc_by_lane()
+
+    if getattr(simulator, "_lane_change_active", False):
+        counters["active_maneuver_steps"] += 1
+        return
+
+    current_profile = simulator._lane_benefit_utility(lane_data.get(current_lane, {}))
+    rear_assessment = simulator._rear_escape_assessment(lane_data)
+    current_values = lane_data.get(current_lane, {})
+    current_front_emergency = (
+        float(current_values.get("front_ttc", float("inf"))) <= SAFETY_OVERRIDE_TTC
+        or float(current_values.get("front_gap", float("inf"))) <= MIN_FOLLOWING_GAP
+    )
+    emergency_override = bool(
+        rear_assessment.get("rear_escape_needed", False) or current_front_emergency
+    )
+    lane_count = int(base.config.get("lanes_count", NUM_LANES))
+    start_node, end_node, _ = ego.lane_index
+    road_lane_ids = set(range(len(base.road.network.graph[start_node][end_node])))
+
+    for candidate_lane in (current_lane - 1, current_lane + 1):
+        counters["adjacent_lane_checks"] += 1
+        if candidate_lane < 0 or candidate_lane >= min(lane_count, NUM_LANES) or candidate_lane not in road_lane_ids:
+            counters["boundary_or_unavailable"] += 1
+            continue
+        if candidate_lane not in lane_data:
+            counters["traffic_data_missing"] += 1
+            continue
+
+        values = lane_data[candidate_lane]
+        reasons = simulator._lane_change_principle_reasons(
+            candidate_lane, lane_data, current_lane=current_lane,
+            ego_speed=float(ego.speed),
+        )
+        if reasons:
+            counters["hard_safety_blocked"] += 1
+            for reason in reasons:
+                counters[f"hard:{reason}"] += 1
+            continue
+
+        candidate_profile = simulator._lane_benefit_utility(values)
+        improvement = float(candidate_profile["utility"]) - float(current_profile["utility"])
+        counters["hard_safe_candidates"] += 1
+        counters["utility_improvement_sum"] += improvement
+        if not emergency_override and improvement < BENEFIT_MIN_UTILITY_IMPROVEMENT:
+            counters["benefit_threshold_blocked"] += 1
+            continue
+
+        counters["valid_adjacent_candidates"] += 1
+
+
+def print_lane_opportunity_diagnostics(tag, counters):
+    checks = int(counters.get("adjacent_lane_checks", 0))
+    valid = int(counters.get("valid_adjacent_candidates", 0))
+    hard_safe = int(counters.get("hard_safe_candidates", 0))
+    print(
+        f"[{tag} LANE-OPPORTUNITY DIAGNOSTICS]",
+        f"adjacent_checks={checks}",
+        f"valid_candidates={valid}",
+        f"hard_safety_blocked={counters.get('hard_safety_blocked', 0)}",
+        f"benefit_threshold_blocked={counters.get('benefit_threshold_blocked', 0)}",
+        f"boundary_or_unavailable={counters.get('boundary_or_unavailable', 0)}",
+        f"traffic_data_missing={counters.get('traffic_data_missing', 0)}",
+        f"active_maneuver_steps={counters.get('active_maneuver_steps', 0)}",
+        f"hard_safe_candidates={hard_safe}",
+        f"mean_utility_improvement={float(counters.get('utility_improvement_sum', 0.0)) / max(hard_safe, 1):+.4f}",
+        f"benefit_threshold={BENEFIT_MIN_UTILITY_IMPROVEMENT:.3f}",
+        f"front_ttc_min={LANE_CHANGE_MIN_FRONT_TTC:.1f}s",
+        f"rear_ttc_min={LANE_CHANGE_MIN_REAR_TTC:.1f}s",
+        f"min_gap={LANE_CHANGE_MIN_GAP:.1f}m",
+    )
+    for key, value in sorted(counters.items()):
+        if key.startswith("hard:"):
+            print(f"    {key[5:]}={value}")
+
 
 
 def calculate_min_ttc(simulator):
@@ -3974,6 +4059,7 @@ def collect_reference_rollouts(simulator, policy, reward_function):
         }
         lane_counters = make_lane_request_counters()
         action_mask_counters = make_action_mask_counters()
+        lane_opportunity_diagnostics = make_lane_opportunity_diagnostics()
         seen_completed = {
             "LEFT": int(getattr(simulator, "_lane_change_stats", {}).get("completed_LEFT", 0)),
             "RIGHT": int(getattr(simulator, "_lane_change_stats", {}).get("completed_RIGHT", 0)),
@@ -3985,6 +4071,7 @@ def collect_reference_rollouts(simulator, policy, reward_function):
             )
             record_action_mask(action_mask_counters, valid_mask)
             target_lane_mask = np.asarray(simulator.get_valid_target_lane_mask(), dtype=bool)
+            update_lane_opportunity_diagnostics(simulator, lane_opportunity_diagnostics)
             current_lane_id = int(simulator.env.unwrapped.vehicle.lane_index[2])
             sampled_action, policy_aux = policy.act(
                 state, deterministic=False, valid_action_mask=valid_mask,
@@ -4108,6 +4195,7 @@ def collect_reference_rollouts(simulator, policy, reward_function):
             f"steps={len(returns)} return={float(returns[0]) if len(returns) else 0.0:+.3f}"
         )
         print_lane_request_counters("REFERENCE EPISODE", lane_counters)
+        print_lane_opportunity_diagnostics("REFERENCE EPISODE", lane_opportunity_diagnostics)
         print_action_mask_counters("REFERENCE EPISODE", action_mask_counters)
         for direction in ("LEFT", "RIGHT"):
             for counter_name in ("requested", "mask_allowed", "target_selected", "completed"):
@@ -4286,6 +4374,7 @@ def train_pure_rl(simulator, policy):
         no_safe_target_lane_steps = 0
         valid_target_lane_steps = 0
         lane_counters = make_lane_request_counters()
+        lane_opportunity_diagnostics = make_lane_opportunity_diagnostics()
         intervention_counts = {
             "emergency_braking_steps": 0,
             "lane_change_requests": 0,
@@ -4304,6 +4393,7 @@ def train_pure_rl(simulator, policy):
             simulator._trace_valid_action_mask = np.asarray(valid_mask, dtype=bool).tolist()
 
             target_lane_mask = np.asarray(simulator.get_valid_target_lane_mask(), dtype=bool)
+            update_lane_opportunity_diagnostics(simulator, lane_opportunity_diagnostics)
             # The target mask always includes KEEP/current lane; count a
             # lane-change opportunity only when at least one safe side lane exists.
             if int(target_lane_mask.sum()) > 1:
@@ -4538,6 +4628,7 @@ def train_pure_rl(simulator, policy):
         critic_loss_history.append(float(np.mean(episode_critic_losses)) if episode_critic_losses else 0.0)
 
         print_lane_request_counters("PURE RL EPISODE", lane_counters)
+        print_lane_opportunity_diagnostics("PURE RL EPISODE", lane_opportunity_diagnostics)
         print(
             f"Episode {episode + 1:03d}/{NUM_ONLINE_EPISODES} | "
             f"steps={episode_steps} | return={episode_return:.3f} | "
