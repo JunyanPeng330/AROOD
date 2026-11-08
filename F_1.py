@@ -245,15 +245,13 @@ RANDOMIZED_REAR_GAP_MIN = 20.0
 RANDOMIZED_REAR_GAP_MAX = 500.0
 TRAFFIC_SPEED_VARIATION = 10.0
 
-# A lane change is beneficial only when its expected combined utility improves
-# meaningfully over staying in the current lane across a physical-time horizon.
-# The weights are explicit experiment parameters and sum to one.
+# Lane changes are instrumental: accept them only when they create a
+# meaningful predicted sustainable-speed gain. Safety remains a hard filter;
+# stability is only a small tie-breaker when ranking speed-beneficial lanes.
 BENEFIT_PREDICTION_HORIZON_SECONDS = 5.0
 BENEFIT_PREDICTION_SAMPLES = 11
-BENEFIT_SAFETY_WEIGHT = 0.40
-BENEFIT_EFFICIENCY_WEIGHT = 0.40
-BENEFIT_STABILITY_WEIGHT = 0.20
-BENEFIT_MIN_UTILITY_IMPROVEMENT = 0.00
+BENEFIT_STABILITY_TIEBREAK_WEIGHT = 0.05
+BENEFIT_MIN_EXPECTED_SPEED_GAIN_MPS = 0.5
 BENEFIT_SAFETY_GAP_REFERENCE = 50.0
 
 
@@ -1234,6 +1232,7 @@ class HighwaySimulator:
 
         safety_series = []
         efficiency_series = []
+        sustainable_speed_series = []
         gap_reference = max(1.0, float(BENEFIT_SAFETY_GAP_REFERENCE))
         headway = max(0.1, float(DESIRED_TIME_HEADWAY))
         following_gap = max(0.0, float(MIN_FOLLOWING_GAP))
@@ -1267,12 +1266,15 @@ class HighwaySimulator:
                 ) / headway
             else:
                 sustainable_speed = speed_reference
-            efficiency_series.append(
-                float(np.clip(sustainable_speed / speed_reference, 0.0, 1.0))
-            )
+            # The speed limit is the maximum useful cruising opportunity:
+            # an open lane cannot promise a speed above the legal/simulated limit.
+            sustainable_speed = float(np.clip(sustainable_speed, 0.0, speed_reference))
+            sustainable_speed_series.append(sustainable_speed)
+            efficiency_series.append(sustainable_speed / speed_reference)
 
-        safety_score = float(np.mean(safety_series))
+        safety_score = float(np.mean(safety_series))  # diagnostic only; safety is filtered separately
         efficiency_score = float(np.mean(efficiency_series))
+        expected_sustainable_speed = float(np.mean(sustainable_speed_series))
 
         # Stability rewards a lane whose predicted safety/efficiency profile
         # does not fluctuate sharply over the evaluation horizon.
@@ -1281,15 +1283,18 @@ class HighwaySimulator:
         ) / 2.0
         stability_score = float(np.clip(1.0 - profile_variation, 0.0, 1.0))
 
+        # Speed opportunity is the primary lane-ranking signal. Stability is
+        # deliberately weak and cannot make an otherwise speed-neutral lane
+        # eligible for a lane change (eligibility uses speed gain below).
         utility = (
-            BENEFIT_SAFETY_WEIGHT * safety_score
-            + BENEFIT_EFFICIENCY_WEIGHT * efficiency_score
-            + BENEFIT_STABILITY_WEIGHT * stability_score
+            efficiency_score
+            + BENEFIT_STABILITY_TIEBREAK_WEIGHT * stability_score
         )
         return {
             "utility": float(utility),
             "safety_score": safety_score,
             "efficiency_score": efficiency_score,
+            "expected_sustainable_speed_mps": expected_sustainable_speed,
             "stability_score": stability_score,
             "prediction_horizon_s": horizon,
         }
@@ -1344,10 +1349,14 @@ class HighwaySimulator:
                 float(candidate_profile["utility"])
                 - float(current_profile["utility"])
             )
+            expected_speed_gain = (
+                float(candidate_profile["expected_sustainable_speed_mps"])
+                - float(current_profile["expected_sustainable_speed_mps"])
+            )
 
             if (
                 not emergency_benefit_override
-                and utility_improvement < BENEFIT_MIN_UTILITY_IMPROVEMENT
+                and expected_speed_gain < BENEFIT_MIN_EXPECTED_SPEED_GAIN_MPS
             ):
                 continue
 
@@ -1357,6 +1366,9 @@ class HighwaySimulator:
                 "candidate_utility": float(candidate_profile["utility"]),
                 "current_lane_utility": float(current_profile["utility"]),
                 "utility_improvement": float(utility_improvement),
+                "expected_speed_gain_mps": float(expected_speed_gain),
+                "candidate_sustainable_speed_mps": float(candidate_profile["expected_sustainable_speed_mps"]),
+                "current_sustainable_speed_mps": float(current_profile["expected_sustainable_speed_mps"]),
                 "candidate_safety_score": float(candidate_profile["safety_score"]),
                 "candidate_efficiency_score": float(candidate_profile["efficiency_score"]),
                 "candidate_stability_score": float(candidate_profile["stability_score"]),
@@ -3720,9 +3732,14 @@ def update_lane_opportunity_diagnostics(simulator, counters):
 
         candidate_profile = simulator._lane_benefit_utility(values)
         improvement = float(candidate_profile["utility"]) - float(current_profile["utility"])
+        speed_gain = (
+            float(candidate_profile["expected_sustainable_speed_mps"])
+            - float(current_profile["expected_sustainable_speed_mps"])
+        )
         counters["hard_safe_candidates"] += 1
         counters["utility_improvement_sum"] += improvement
-        if not emergency_override and improvement < BENEFIT_MIN_UTILITY_IMPROVEMENT:
+        counters["expected_speed_gain_sum"] += speed_gain
+        if not emergency_override and speed_gain < BENEFIT_MIN_EXPECTED_SPEED_GAIN_MPS:
             counters["benefit_threshold_blocked"] += 1
             continue
 
@@ -3744,7 +3761,8 @@ def print_lane_opportunity_diagnostics(tag, counters):
         f"active_maneuver_steps={counters.get('active_maneuver_steps', 0)}",
         f"hard_safe_candidates={hard_safe}",
         f"mean_utility_improvement={float(counters.get('utility_improvement_sum', 0.0)) / max(hard_safe, 1):+.4f}",
-        f"benefit_threshold={BENEFIT_MIN_UTILITY_IMPROVEMENT:.3f}",
+        f"min_expected_speed_gain={BENEFIT_MIN_EXPECTED_SPEED_GAIN_MPS:.2f}m/s",
+        f"mean_expected_speed_gain={float(counters.get('expected_speed_gain_sum', 0.0)) / max(hard_safe, 1):+.3f}m/s",
         f"front_ttc_min={LANE_CHANGE_MIN_FRONT_TTC:.1f}s",
         f"rear_ttc_min={LANE_CHANGE_MIN_REAR_TTC:.1f}s",
         f"min_gap={LANE_CHANGE_MIN_GAP:.1f}m",
