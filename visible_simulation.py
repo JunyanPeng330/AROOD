@@ -165,7 +165,39 @@ def replay_episode(start, frames, playback_speed=1.0, save_path=gif_save_path):
     ax.set_ylim(lane_edges[0] - 1.5, lane_edges[-1] + 1.5)
     ax.set_yticks(lane_centres, [f"Lane {i}" for i in range(lane_count)])
     ax.grid(axis="x", alpha=0.2)
-    ax.set_title("Recorded trajectory replay — no policy inference or simulator stepping")
+    # Determine the complete longitudinal span represented by the recorded
+    # scene. The archive stores every vehicle in road.vehicles, not only the
+    # six vehicles selected for the policy observation.
+    relative_x = []
+    for recorded_frame in frames:
+        recorded_vehicles = recorded_frame.get("vehicles", [])
+        recorded_ego = next(
+            (v for v in recorded_vehicles if v.get("is_ego")), None
+        )
+        if recorded_ego is None and recorded_vehicles:
+            recorded_ego = recorded_vehicles[0]
+        if recorded_ego is None:
+            continue
+        ego_position = recorded_ego.get("position_xy_m")
+        if not ego_position or len(ego_position) < 1:
+            continue
+        ego_x = float(ego_position[0])
+        for recorded_vehicle in recorded_vehicles:
+            position = recorded_vehicle.get("position_xy_m")
+            if not position or len(position) < 1:
+                continue
+            relative_x.append(float(position[0]) - ego_x)
+
+    # Keep the camera window stable throughout the animation while including
+    # the furthest recorded vehicle both behind and ahead of the ego.
+    view_margin_m = 15.0
+    if relative_x:
+        full_view_min_x = min(relative_x) - view_margin_m
+        full_view_max_x = max(relative_x) + view_margin_m
+    else:
+        full_view_min_x, full_view_max_x = -90.0, 130.0
+
+    ax.set_title("Recorded replay — full recorded traffic/observation scene")
 
     vehicle_patches = []
     trail_x, trail_y = [], []
@@ -194,7 +226,10 @@ def replay_episode(start, frames, playback_speed=1.0, save_path=gif_save_path):
             centre_x = float(ego_pos[0])
             trail_x.append(centre_x)
             trail_y.append(float(ego_pos[1]))
-            ax.set_xlim(centre_x - 90.0, centre_x + 130.0)
+            ax.set_xlim(
+                centre_x + full_view_min_x,
+                centre_x + full_view_max_x
+            )
             trail.set_data(trail_x, trail_y)
 
         while vehicle_patches:
