@@ -1386,7 +1386,7 @@ class HighwaySimulator:
                 "selection_principle": (
                     "emergency_safe_lane_selection"
                     if emergency_benefit_override
-                    else "persistent_safety_efficiency_stability_improvement"
+                    else "predicted_speed_gain_with_stability_tiebreak"
                 ),
                 "is_current_lane": False,
             })
@@ -3682,7 +3682,10 @@ def print_lane_request_counters(tag, counters):
 
 def make_lane_opportunity_diagnostics():
     """Count why each adjacent lane is or is not a valid lane-change opportunity."""
-    return Counter()
+    counters = Counter()
+    counters["expected_speed_gain_sum"] = 0.0
+    counters["utility_improvement_sum"] = 0.0
+    return counters
 
 
 def update_lane_opportunity_diagnostics(simulator, counters):
