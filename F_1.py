@@ -451,6 +451,8 @@ def record_episode_start(simulator, phase, episode_number, initial_state):
         "simulation_frequency_hz": int(simulation_frequency),
         "num_lanes": int(NUM_LANES),
         "managed_surrounding_vehicle_slots": int(NUM_SURROUNDING_VEHICLES),
+        "simulated_surrounding_vehicles": int(NUM_TRAFFIC_VEHICLES),
+        "traffic_reference_range_each_direction_m": float(Traffic_relevant_range),
         "speed_limit_mps": float(SPEED_LIMIT),
         "initial_state": np.asarray(initial_state, dtype=np.float32).tolist(),
         "vehicles": snapshot_simulator_vehicles(simulator),
@@ -783,7 +785,7 @@ class HighwaySimulator:
                     "vehicles_count": NUM_VEHICLE_ROWS,
                     "features": ["presence", "x", "y", "vx", "vy", "cos_h", "sin_h"],
                     "features_range": {
-                        "x": [-500.0, 500.0],
+                        "x": [-1000.0, 1000.0],
                         "y": [-12.0, 12.0],
                         "vx": [-40.0, 40.0],
                         "vy": [-10.0, 10.0],
@@ -1070,9 +1072,14 @@ class HighwaySimulator:
         speed, delta_v, speed_regime = self._sample_surrounding_speed(
             ego_speed=float(ego.speed), side=side
         )
-        target_speed = min(
-            float(speed),
-            float(getattr(lane, "speed_limit", TRAFFIC_SPEED_MAX) or TRAFFIC_SPEED_MAX),
+        lane_speed_limit = float(
+            getattr(lane, "speed_limit", TRAFFIC_SPEED_MAX) or TRAFFIC_SPEED_MAX
+        )
+        # Desired cruise speed is sampled independently from the initial speed,
+        # allowing IDM to accelerate or decelerate naturally after spawning.
+        target_speed = random.uniform(
+            min(TRAFFIC_SPEED_MIN, lane_speed_limit),
+            min(TRAFFIC_SPEED_MAX, lane_speed_limit),
         )
         position = np.asarray(lane.position(longitudinal, 0.0), dtype=float)
         heading = float(lane.heading_at(longitudinal))
