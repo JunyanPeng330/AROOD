@@ -1107,6 +1107,14 @@ class HighwaySimulator:
         ego = base_env.vehicle
         base_env.road.vehicles = [vehicle for vehicle in base_env.road.vehicles if vehicle is ego]
 
+        # HighwayEnv's stock highway lanes use a 30 m/s limit. Align the
+        # simulated road limit with this experiment's existing 40 m/s target
+        # so IDM vehicles can use the same speed envelope as the ego policy.
+        for lane_id in range(NUM_LANES):
+            self.env.unwrapped.road.network.get_lane(
+                self._lane_index_for_id(lane_id)
+            ).speed_limit = float(SPEED_LIMIT)
+
         lane_counts = [self.vehicles_count // NUM_LANES] * NUM_LANES
         for lane_id in range(self.vehicles_count % NUM_LANES):
             lane_counts[lane_id] += 1
