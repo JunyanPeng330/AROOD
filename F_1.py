@@ -267,6 +267,7 @@ part of the policy observation.
 # Simulator relevance / recycling range in each longitudinal direction.
 Traffic_relevant_range = 500
 TRAFFIC_MIN_SPAWN_SEPARATION = 35.0  # metres between same-lane vehicle centres
+TRAFFIC_INITIAL_MIN_GAP = 50.0       # initial front/rear centre gap from ego
 
 # Ego-relative surrounding-vehicle speed distribution (m/s).
 # Each new traffic vehicle is sampled relative to the current ego speed.
@@ -951,7 +952,7 @@ class HighwaySimulator:
               f"observation_slots={NUM_SURROUNDING_VEHICLES}",
               "behaviour=IDM+MOBIL",
               f"initial_spacing_randomized={self.randomize_traffic_gaps}",
-              f"speed_variation=±{TRAFFIC_SPEED_VARIATION:.1f}m/s")
+              "speed_profile=ego_relative_matched_challenge_broad")
 
         self.step_count = 0
         base_env = self.env.unwrapped
@@ -1121,10 +1122,11 @@ class HighwaySimulator:
         for lane_id, lane_count in enumerate(lane_counts):
             front_count = (lane_count + 1) // 2
             rear_count = lane_count // 2
-            for side, count, minimum_gap in (
-                ("front", front_count, RANDOMIZED_FRONT_GAP_MIN),
-                ("rear", rear_count, RANDOMIZED_REAR_GAP_MIN),
+            for side, count in (
+                ("front", front_count),
+                ("rear", rear_count),
             ):
+                minimum_gap = TRAFFIC_INITIAL_MIN_GAP
                 if count <= 0:
                     continue
                 gaps = np.linspace(
