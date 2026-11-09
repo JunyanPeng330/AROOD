@@ -747,10 +747,10 @@ def ttc_to_risk(ttc_seconds):
 
 
 class HighwaySimulator:
-    """Highway-env wrapper with six managed traffic vehicles.
+    """Highway-env wrapper with 20 managed IDM/MOBIL traffic vehicles.
 
-    State is 53-D: seven 7-feature vehicle rows (ego + six traffic vehicles)
-    and four context values.
+    The policy still receives seven 7-feature rows (ego + six semantic
+    nearest-neighbour slots) and the existing context/safety features.
     """
 
     def __init__(self, state_dim=STATE_DIM, action_dim=ACTION_DIM,
@@ -773,8 +773,6 @@ class HighwaySimulator:
                 f"This experiment is configured for exactly {NUM_TRAFFIC_VEHICLES} surrounding vehicles; "
                 f"received {self.vehicles_count}."
             )
-        self.traffic_front_gap = 45.0
-        self.traffic_rear_gap = 45.0
         self.randomize_traffic_gaps = False
         self.env = gym.make(
             "highway-v0",
@@ -942,15 +940,9 @@ class HighwaySimulator:
         else:
             obs, info = self.env.reset(seed=seed)
 
-        # In randomized reference scenarios, each lane/side slot samples its
-        # own gap during spawning (and when that slot is replenished). Keep the
-        # configured distribution-shift gaps untouched when randomization is off.
+        # Randomization changes the initial spacing jitter only. The population
+        # remains distributed across the full +/-500 m range in every episode.
         self.randomize_traffic_gaps = bool(randomize_traffic_gaps)
-        if self.randomize_traffic_gaps:
-            self.traffic_front_gap = random.uniform(
-                RANDOMIZED_FRONT_GAP_MIN, RANDOMIZED_FRONT_GAP_MAX)
-            self.traffic_rear_gap = random.uniform(
-                RANDOMIZED_REAR_GAP_MIN, RANDOMIZED_REAR_GAP_MAX)
         print("[TRAFFIC SCENARIO]",
               f"population={self.vehicles_count}",
               f"reference_range=±{self.TRAFFIC_RELEVANT_RANGE:.1f}m",
@@ -2843,7 +2835,7 @@ class HighwaySimulator:
 
 
     def _snapshot_managed_traffic_slots(self):
-        """Capture managed-slot vehicle state immediately around one native env.step()."""
+        """Capture all 20 managed traffic vehicles around one native env.step()."""
         base_env = self.env.unwrapped
         ego = getattr(base_env, "vehicle", None)
         snapshot = {}
@@ -2945,11 +2937,11 @@ class HighwaySimulator:
 
 
     def _sanitize_traffic_slot_speeds(self, where):
-        """Prevent managed traffic-slot vehicles from retaining negative/non-finite speed.
+        """Prevent any managed traffic vehicle from retaining invalid speed.
 
-        highway-env updates surrounding vehicles during env.step(). A traffic
+        highway-env updates all IDM vehicles during env.step(). A traffic
         vehicle that acquires a negative scalar speed must be clamped immediately
-        after that update, before slot maintenance or safety-mask evaluation.
+        after that update, before population maintenance or safety evaluation.
         """
         base_env = self.env.unwrapped
         ego = base_env.vehicle
