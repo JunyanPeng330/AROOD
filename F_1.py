@@ -20,6 +20,7 @@ import uuid
 import gymnasium as gym
 import highway_env
 from highway_env.vehicle.kinematics import Vehicle
+from highway_env.vehicle.behavior import IDMVehicle
 
 # Simulator-level speed invariant:
 # highway-env's Vehicle.step() integrates acceleration and then calls
@@ -257,15 +258,15 @@ BENEFIT_SAFETY_GAP_REFERENCE = 50.0
 
 
 '''
-The six-slot traffic manager maintains the nearest front and rear vehicle in
-each of the three lanes. A vehicle can qualify for a slot when it is within
-1,000 m longitudinally of ego. Vehicles outside that range are excluded and
-their missing slots are replenished. The six slots remain an observation
-abstraction; the range expansion does not increase the number of observed
-vehicles.
+The simulator maintains a 20-vehicle IDM/MOBIL traffic population within
+500 m ahead and 500 m behind ego. The policy observation remains six semantic
+slots: nearest front and rear vehicle in each of the three lanes. Slot
+occupants are reselected every simulation step; vehicle identities are not
+part of the policy observation.
 '''
-# Simulator relevance / recycling range, in metres.
+# Simulator relevance / recycling range in each longitudinal direction.
 Traffic_relevant_range = 500
+TRAFFIC_MIN_SPAWN_SEPARATION = 35.0  # metres between same-lane vehicle centres
 
 # Ego-relative surrounding-vehicle speed distribution (m/s).
 # Each new traffic vehicle is sampled relative to the current ego speed.
@@ -301,7 +302,8 @@ MAX_PHYSICAL_ACCELERATION = 5.0  # m/s^2
 
 
 NUM_LANES = 3
-NUM_SURROUNDING_VEHICLES = 6
+NUM_SURROUNDING_VEHICLES = 6  # Fixed policy observation slots: front/rear in each of 3 lanes
+NUM_TRAFFIC_VEHICLES = 20     # Physical surrounding-vehicle population in the simulator
 VEHICLE_FEATURES = 7
 NUM_VEHICLE_ROWS = NUM_SURROUNDING_VEHICLES + 1
 VEHICLE_STATE_DIM = NUM_VEHICLE_ROWS * VEHICLE_FEATURES
@@ -752,7 +754,7 @@ class HighwaySimulator:
     """
 
     def __init__(self, state_dim=STATE_DIM, action_dim=ACTION_DIM,
-                 max_steps=MAX_STEPS, render_mode=None, vehicles_count=NUM_SURROUNDING_VEHICLES):
+                 max_steps=MAX_STEPS, render_mode=None, vehicles_count=NUM_TRAFFIC_VEHICLES):
         if gym is None or highway_env is None:
             raise ImportError(
                 "Highway-env dependencies are missing. Install with: "
@@ -765,7 +767,12 @@ class HighwaySimulator:
         self.max_steps = max_steps
         self.step_count = 0
         self.render_mode = render_mode
-        self.vehicles_count = NUM_SURROUNDING_VEHICLES
+        self.vehicles_count = int(vehicles_count)
+        if self.vehicles_count != NUM_TRAFFIC_VEHICLES:
+            raise ValueError(
+                f"This experiment is configured for exactly {NUM_TRAFFIC_VEHICLES} surrounding vehicles; "
+                f"received {self.vehicles_count}."
+            )
         self.traffic_front_gap = 45.0
         self.traffic_rear_gap = 45.0
         self.randomize_traffic_gaps = False
@@ -778,7 +785,7 @@ class HighwaySimulator:
                     "vehicles_count": NUM_VEHICLE_ROWS,
                     "features": ["presence", "x", "y", "vx", "vy", "cos_h", "sin_h"],
                     "features_range": {
-                        "x": [-1000.0, 1000.0],
+                        "x": [-500.0, 500.0],
                         "y": [-12.0, 12.0],
                         "vx": [-40.0, 40.0],
                         "vy": [-10.0, 10.0],
@@ -793,7 +800,11 @@ class HighwaySimulator:
                 },
 
                 "lanes_count": 3,
-                "vehicles_count": NUM_SURROUNDING_VEHICLES,
+                # Native reset creates no uncontrolled traffic; the wrapper
+                # creates exactly 20 IDMVehicle instances at controlled
+                # positions inside the +/-500 m relevance window.
+                "vehicles_count": 0,
+                "other_vehicles_type": "highway_env.vehicle.behavior.IDMVehicle",
                 "duration": max_steps,
                 "offroad_terminal": False,
 
@@ -810,6 +821,71 @@ class HighwaySimulator:
 
         self.state = None
 
+
+    def _build_six_slot_observation(self):
+        """Build the fixed ego + six semantic nearest-neighbour observation.
+
+        Slot order is lane 0 front/rear, lane 1 front/rear, lane 2 front/rear.
+        The vehicle occupying a slot is selected afresh at every observation.
+        """
+        base_env = self.env.unwrapped
+        ego = base_env.vehicle
+        ego_s = self._road_longitudinal_position(ego)
+        slots = {
+            (lane_id, side): None
+            for lane_id in range(NUM_LANES)
+            for side in ("front", "rear")
+        }
+
+        for other in list(base_env.road.vehicles):
+            if other is ego or not bool(getattr(other, "_arood_managed_traffic", False)):
+                continue
+            try:
+                lane_id = int(other.lane_index[2])
+                if lane_id not in range(NUM_LANES):
+                    continue
+                signed_gap = self._road_longitudinal_position(other) - ego_s
+            except (AttributeError, TypeError, ValueError, IndexError, KeyError):
+                continue
+
+            distance = abs(float(signed_gap))
+            if distance > self.TRAFFIC_RELEVANT_RANGE or distance <= self.TRAFFIC_CROSSING_EPSILON:
+                continue
+            side = "front" if signed_gap > 0.0 else "rear"
+            current = slots[(lane_id, side)]
+            if current is None or distance < current[0]:
+                slots[(lane_id, side)] = (distance, other)
+
+        observation_config = base_env.config["observation"]
+        features = list(observation_config["features"])
+        feature_ranges = observation_config.get("features_range", {})
+        rows = np.zeros((NUM_VEHICLE_ROWS, len(features)), dtype=np.float32)
+
+        def encode_vehicle(vehicle, origin=None):
+            values = vehicle.to_dict(origin, observe_intentions=False)
+            row = np.asarray([values.get(feature, 0.0) for feature in features], dtype=np.float32)
+            for feature_index, feature in enumerate(features):
+                bounds = feature_ranges.get(feature)
+                if bounds is None:
+                    continue
+                low, high = float(bounds[0]), float(bounds[1])
+                if high > low:
+                    row[feature_index] = np.clip(
+                        2.0 * (float(row[feature_index]) - low) / (high - low) - 1.0,
+                        -1.0, 1.0,
+                    )
+            return row
+
+        rows[0] = encode_vehicle(ego)
+        row_index = 1
+        for lane_id in range(NUM_LANES):
+            for side in ("front", "rear"):
+                selected = slots[(lane_id, side)]
+                if selected is not None:
+                    rows[row_index] = encode_vehicle(selected[1], origin=ego)
+                row_index += 1
+
+        return rows
 
 
     def _encode_state(self, obs):
@@ -876,17 +952,17 @@ class HighwaySimulator:
             self.traffic_rear_gap = random.uniform(
                 RANDOMIZED_REAR_GAP_MIN, RANDOMIZED_REAR_GAP_MAX)
         print("[TRAFFIC SCENARIO]",
-              f"front_gap_range={RANDOMIZED_FRONT_GAP_MIN:.1f}-{RANDOMIZED_FRONT_GAP_MAX:.1f}m",
-              f"rear_gap_range={RANDOMIZED_REAR_GAP_MIN:.1f}-{RANDOMIZED_REAR_GAP_MAX:.1f}m",
-              f"gap_sampling={'independent_per_lane_and_side' if self.randomize_traffic_gaps else 'configured_baseline_setting'}",
-              f"speed_variation=±{TRAFFIC_SPEED_VARIATION:.1f}m/s",
-              f"relevance_range={self.TRAFFIC_RELEVANT_RANGE:.1f}m",
-              f"randomized={self.randomize_traffic_gaps}")
+              f"population={self.vehicles_count}",
+              f"reference_range=±{self.TRAFFIC_RELEVANT_RANGE:.1f}m",
+              f"observation_slots={NUM_SURROUNDING_VEHICLES}",
+              "behaviour=IDM+MOBIL",
+              f"initial_spacing_randomized={self.randomize_traffic_gaps}",
+              f"speed_variation=±{TRAFFIC_SPEED_VARIATION:.1f}m/s")
 
         self.step_count = 0
         base_env = self.env.unwrapped
-        self._initialize_six_vehicle_traffic()
-        obs = base_env.observation_type.observe()
+        self._initialize_traffic_population()
+        obs = self._build_six_slot_observation()
 
         # Store the target lane once at the beginning of this episode.
         # Do NOT recalculate it at every time step.
@@ -990,153 +1066,255 @@ class HighwaySimulator:
         ))
         return speed, float(delta_v), regime
 
-    def _spawn_slot_vehicle(self, lane_id, side):
-        """Spawn a replacement at the configured gap with ego-relative speed."""
+    def _spawn_traffic_vehicle(self, lane_id, side, gap):
+        """Create one realistic IDM/MOBIL vehicle at a specified ego-relative gap."""
         base_env = self.env.unwrapped
         ego = base_env.vehicle
         lane_index = self._lane_index_for_id(lane_id)
-        # Compute s in the target lane's own parameterization for placement;
-        # classification and distance comparisons use the shared road frame.
-        ego_s_target_lane = self._lane_longitudinal_position(ego, lane_index)
-        # Keep the existing independent per-lane/per-side gap randomization.
-        if self.randomize_traffic_gaps:
-            if side == "front":
-                gap = random.uniform(
-                    RANDOMIZED_FRONT_GAP_MIN, RANDOMIZED_FRONT_GAP_MAX)
-            else:
-                gap = random.uniform(
-                    RANDOMIZED_REAR_GAP_MIN, RANDOMIZED_REAR_GAP_MAX)
-        else:
-            gap = self.traffic_front_gap if side == "front" else self.traffic_rear_gap
-        longitudinal = ego_s_target_lane + gap if side == "front" else ego_s_target_lane - gap
-
-        # Generate speed from ego speed rather than independently sampling
-        # the full [TRAFFIC_SPEED_MIN, TRAFFIC_SPEED_MAX] range. Do not apply
-        # the old front/rear pairwise speed constraint: it biased the intended
-        # ego-relative mixture and could override position-aware sampling.
+        lane = base_env.road.network.get_lane(lane_index)
+        ego_s = self._lane_longitudinal_position(ego, lane_index)
+        gap = float(np.clip(gap, 20.0, self.TRAFFIC_RELEVANT_RANGE - 10.0))
+        longitudinal = ego_s + gap if side == "front" else ego_s - gap
         speed, delta_v, speed_regime = self._sample_surrounding_speed(
             ego_speed=float(ego.speed), side=side
         )
-        traffic_vehicle = Vehicle.make_on_lane(
-            base_env.road, lane_index, longitudinal=longitudinal, speed=speed
+        target_speed = min(
+            float(speed),
+            float(getattr(lane, "speed_limit", TRAFFIC_SPEED_MAX) or TRAFFIC_SPEED_MAX),
         )
+        position = np.asarray(lane.position(longitudinal, 0.0), dtype=float)
+        heading = float(lane.heading_at(longitudinal))
+        traffic_vehicle = IDMVehicle(
+            base_env.road,
+            position,
+            heading=heading,
+            speed=float(speed),
+            target_lane_index=lane_index,
+            target_speed=float(target_speed),
+        )
+
+        # Mild per-driver variation changes driving style without random,
+        # context-free acceleration or lane changes. MOBIL still checks
+        # acceleration benefit and braking imposed on the target-lane follower.
+        traffic_vehicle.TIME_WANTED = random.uniform(1.4, 2.0)
+        traffic_vehicle.POLITENESS = random.uniform(0.05, 0.25)
+        traffic_vehicle.LANE_CHANGE_MIN_ACC_GAIN = random.uniform(0.25, 0.60)
+        traffic_vehicle.LANE_CHANGE_DELAY = random.uniform(1.5, 2.5)
+        traffic_vehicle.randomize_behavior()
+        traffic_vehicle._arood_managed_traffic = True
         traffic_vehicle._arood_traffic_side = side
-        traffic_vehicle._arood_speed_delta_from_ego = delta_v
+        traffic_vehicle._arood_speed_delta_from_ego = float(delta_v)
         traffic_vehicle._arood_speed_regime = speed_regime
         base_env.road.vehicles.append(traffic_vehicle)
-        print(
-            "[TRAFFIC SPAWN]",
-            f"lane={lane_id}", f"side={side}",
-            f"gap={gap:.1f}m", f"range={self.TRAFFIC_RELEVANT_RANGE:.1f}m",
-            f"ego_speed={float(ego.speed):.2f}m/s",
-            f"speed={speed:.2f}m/s", f"delta_v_sample={delta_v:+.2f}m/s",
-            f"regime={speed_regime}",
-            f"id={id(traffic_vehicle)}",
-        )
         return traffic_vehicle
 
-    def _initialize_six_vehicle_traffic(self):
-        """Start with exactly one front and one rear vehicle in each lane."""
+
+    def _initialize_traffic_population(self):
+        """Initialize 20 IDM vehicles across three lanes and both ego-relative sides."""
         base_env = self.env.unwrapped
         ego = base_env.vehicle
         base_env.road.vehicles = [vehicle for vehicle in base_env.road.vehicles if vehicle is ego]
-        for lane_id in range(NUM_LANES):
-            self._spawn_slot_vehicle(lane_id, "front")
-            self._spawn_slot_vehicle(lane_id, "rear")
+
+        lane_counts = [self.vehicles_count // NUM_LANES] * NUM_LANES
+        for lane_id in range(self.vehicles_count % NUM_LANES):
+            lane_counts[lane_id] += 1
+
+        for lane_id, lane_count in enumerate(lane_counts):
+            front_count = (lane_count + 1) // 2
+            rear_count = lane_count // 2
+            for side, count, minimum_gap in (
+                ("front", front_count, RANDOMIZED_FRONT_GAP_MIN),
+                ("rear", rear_count, RANDOMIZED_REAR_GAP_MIN),
+            ):
+                if count <= 0:
+                    continue
+                gaps = np.linspace(
+                    float(minimum_gap),
+                    float(self.TRAFFIC_RELEVANT_RANGE - 25.0),
+                    count,
+                )
+                if self.randomize_traffic_gaps and count > 1:
+                    spacing = float(gaps[1] - gaps[0])
+                    jitter_limit = 0.12 * spacing
+                    gaps = [
+                        float(np.clip(
+                            gap + random.uniform(-jitter_limit, jitter_limit),
+                            minimum_gap,
+                            self.TRAFFIC_RELEVANT_RANGE - 10.0,
+                        ))
+                        for gap in gaps
+                    ]
+                for gap in gaps:
+                    self._spawn_traffic_vehicle(lane_id, side, float(gap))
+
         self._assert_traffic_invariant("initialized")
 
-    def _maintain_six_vehicle_traffic(self):
-        """Maintain nearest in-range front/rear neighbors in every lane.
 
-        A vehicle qualifies only when its lane is valid, it is within the
-        longitudinal relevance range, and it is strictly on one side of ego.
-        When it crosses ego, leaves range, changes into an invalid lane, or
-        becomes a duplicate in a slot, it is removed/reclassified and the
-        missing slot is immediately replenished.
-        """
+    def _find_recycle_spawn_location(self, preferred_lane, preferred_side):
+        """Find a safe, unoccupied spawn position near the selected range boundary."""
+        road = self.env.unwrapped.road
+        ego_s = self._road_longitudinal_position(self.env.unwrapped.vehicle)
+        lane_order = [int(preferred_lane)] + [
+            lane for lane in range(NUM_LANES) if lane != int(preferred_lane)
+        ]
+        side_order = [preferred_side, "rear" if preferred_side == "front" else "front"]
+        best = None
+
+        for lane_id in lane_order:
+            for side in side_order:
+                candidate_gaps = list(range(self.TRAFFIC_RELEVANT_RANGE - 20, 279, -10))
+                random.shuffle(candidate_gaps)
+                same_lane_positions = []
+                for other in road.vehicles:
+                    if other is self.env.unwrapped.vehicle or not bool(
+                        getattr(other, "_arood_managed_traffic", False)
+                    ):
+                        continue
+                    try:
+                        if int(other.lane_index[2]) != lane_id:
+                            continue
+                        signed = self._road_longitudinal_position(other) - ego_s
+                        same_lane_positions.append(float(signed))
+                    except (AttributeError, TypeError, ValueError, IndexError):
+                        continue
+
+                for gap in candidate_gaps:
+                    signed_candidate = float(gap) if side == "front" else -float(gap)
+                    separation = min(
+                        (abs(signed_candidate - existing) for existing in same_lane_positions),
+                        default=float("inf"),
+                    )
+                    if best is None or separation > best[0]:
+                        best = (separation, lane_id, side, float(gap))
+                    if separation >= TRAFFIC_MIN_SPAWN_SEPARATION:
+                        return lane_id, side, float(gap)
+
+        if best is not None:
+            print(
+                "[TRAFFIC RECYCLE WARNING]",
+                f"best_available_separation={best[0]:.1f}m",
+                f"lane={best[1]}",
+                f"side={best[2]}",
+                f"gap={best[3]:.1f}m",
+            )
+            return best[1], best[2], best[3]
+        return int(preferred_lane), preferred_side, float(self.TRAFFIC_RELEVANT_RANGE - 20.0)
+
+
+    def _maintain_traffic_population(self):
+        """Keep 20 active IDM vehicles inside +/-500 m; never reduce traffic to six."""
         road = self.env.unwrapped.road
         ego = self.env.unwrapped.vehicle
         ego_s = self._road_longitudinal_position(ego)
-        slots = {(lane, side): [] for lane in range(NUM_LANES) for side in ("front", "rear")}
-        valid_vehicle_ids = set()
+        remove_ids = set()
+        replacements = []
 
         for vehicle in list(road.vehicles):
-            if vehicle is ego:
+            if vehicle is ego or not bool(getattr(vehicle, "_arood_managed_traffic", False)):
                 continue
-            try:
-                lane_id = int(vehicle.lane_index[2])
-                if lane_id not in range(NUM_LANES):
-                    continue
-                longitudinal = self._road_longitudinal_position(vehicle)
-                signed_gap = longitudinal - ego_s
-            except (AttributeError, TypeError, ValueError, IndexError):
-                continue
-
-            distance = abs(signed_gap)
-            if distance > self.TRAFFIC_RELEVANT_RANGE:
-                continue
-            if abs(signed_gap) <= self.TRAFFIC_CROSSING_EPSILON:
-                # Avoid assigning a nearly overlapping vehicle inconsistently
-                # to front/rear from tiny numerical sign changes.
-                continue
-
-            side = "front" if signed_gap > 0 else "rear"
-            slots[(lane_id, side)].append((distance, vehicle))
-            valid_vehicle_ids.add(id(vehicle))
-
-        keep_ids = set()
-        for slot_key, candidates in slots.items():
-            candidates.sort(key=lambda item: item[0])
-            if candidates:
-                nearest = candidates[0][1]
-                keep_ids.add(id(nearest))
-                if len(candidates) > 1:
-                    print("[TRAFFIC DUPLICATE SLOT]", f"slot={slot_key}",
-                          f"removed={len(candidates) - 1}")
-
-        # Remove vehicles that crossed ego, left the relevant range, changed
-        # to an unsupported lane, or lost a nearest-neighbor slot.
-        road.vehicles = [
-            vehicle for vehicle in road.vehicles
-            if vehicle is ego or id(vehicle) in keep_ids
-        ]
-
-        # Replenish each missing slot immediately. Each spawn is placed using
-        # the target lane's longitudinal coordinate, while slot selection uses
-        # the shared road-coordinate frame above.
-        for lane_id in range(NUM_LANES):
-            for side in ("front", "rear"):
-                if not slots[(lane_id, side)]:
-                    self._spawn_slot_vehicle(lane_id, side)
-
-        self._assert_traffic_invariant("maintained")
-
-    def _assert_traffic_invariant(self, where):
-        ego = self.env.unwrapped.vehicle
-        ego_s = self._road_longitudinal_position(ego)
-        counts = {(lane, side): 0 for lane in range(NUM_LANES) for side in ("front", "rear")}
-        traffic_count = 0
-        for vehicle in list(self.env.unwrapped.road.vehicles):
-            if vehicle is ego:
-                continue
-            traffic_count += 1
             try:
                 lane_id = int(vehicle.lane_index[2])
                 signed_gap = self._road_longitudinal_position(vehicle) - ego_s
-            except (AttributeError, TypeError, ValueError, IndexError):
+            except (AttributeError, TypeError, ValueError, IndexError, KeyError):
+                lane_id = random.randrange(NUM_LANES)
+                signed_gap = 1.0
+
+            invalid_lane = lane_id not in range(NUM_LANES)
+            outside_range = abs(float(signed_gap)) > self.TRAFFIC_RELEVANT_RANGE
+            crashed = bool(getattr(vehicle, "crashed", False))
+            if invalid_lane or outside_range or crashed:
+                remove_ids.add(id(vehicle))
+                preferred_lane = lane_id if not invalid_lane else random.randrange(NUM_LANES)
+                preferred_side = "front" if signed_gap >= 0.0 else "rear"
+                replacements.append((preferred_lane, preferred_side))
+            else:
+                vehicle._arood_traffic_side = (
+                    "front" if signed_gap > self.TRAFFIC_CROSSING_EPSILON
+                    else "rear" if signed_gap < -self.TRAFFIC_CROSSING_EPSILON
+                    else "crossing"
+                )
+
+        if remove_ids:
+            road.vehicles = [v for v in road.vehicles if id(v) not in remove_ids]
+
+        for preferred_lane, preferred_side in replacements:
+            lane_id, side, gap = self._find_recycle_spawn_location(
+                preferred_lane, preferred_side
+            )
+            self._spawn_traffic_vehicle(lane_id, side, gap)
+
+        managed = [
+            v for v in road.vehicles
+            if v is not ego and bool(getattr(v, "_arood_managed_traffic", False))
+        ]
+        while len(managed) < self.vehicles_count:
+            lane_id, side, gap = self._find_recycle_spawn_location(
+                random.randrange(NUM_LANES), random.choice(("front", "rear"))
+            )
+            managed.append(self._spawn_traffic_vehicle(lane_id, side, gap))
+
+        if len(managed) > self.vehicles_count:
+            # Defensive cleanup if an interrupted reset or external tool added
+            # extra managed vehicles. Keep the closest 20 to ego.
+            managed.sort(
+                key=lambda v: abs(
+                    self._road_longitudinal_position(v) - ego_s
+                )
+            )
+            keep_ids = {id(v) for v in managed[:self.vehicles_count]}
+            road.vehicles = [
+                v for v in road.vehicles
+                if v is ego or not bool(getattr(v, "_arood_managed_traffic", False))
+                or id(v) in keep_ids
+            ]
+
+        self._assert_traffic_invariant("maintained")
+
+
+    def _assert_traffic_invariant(self, where):
+        """Validate population size and the +/- reference-range boundary."""
+        ego = self.env.unwrapped.vehicle
+        ego_s = self._road_longitudinal_position(ego)
+        managed = [
+            v for v in self.env.unwrapped.road.vehicles
+            if v is not ego and bool(getattr(v, "_arood_managed_traffic", False))
+        ]
+        outside = []
+        invalid_lanes = []
+        for vehicle in managed:
+            try:
+                signed_gap = self._road_longitudinal_position(vehicle) - ego_s
+                lane_id = int(vehicle.lane_index[2])
+            except (AttributeError, TypeError, ValueError, IndexError, KeyError):
+                outside.append(id(vehicle))
                 continue
-            if lane_id in range(NUM_LANES) and abs(signed_gap) > self.TRAFFIC_CROSSING_EPSILON:
-                if abs(signed_gap) <= self.TRAFFIC_RELEVANT_RANGE:
-                    counts[(lane_id, "front" if signed_gap > 0 else "rear")] += 1
-        expected_slots = NUM_LANES * 2
-        occupied_slots = sum(count > 0 for count in counts.values())
-        invariant_ok = (
-            traffic_count == expected_slots
-            and occupied_slots == expected_slots
-            and all(count == 1 for count in counts.values())
-        )
-        if not invariant_ok:
-            print("[TRAFFIC INVARIANT WARNING] Expected exactly one in-range vehicle in every lane/side slot.")
+            if abs(signed_gap) > self.TRAFFIC_RELEVANT_RANGE:
+                outside.append(id(vehicle))
+            if lane_id not in range(NUM_LANES):
+                invalid_lanes.append(id(vehicle))
+
+        if (
+            len(managed) != self.vehicles_count
+            or outside
+            or invalid_lanes
+        ):
+            print(
+                "[TRAFFIC POPULATION WARNING]",
+                f"where={where}",
+                f"actual={len(managed)}",
+                f"expected={self.vehicles_count}",
+                f"outside_reference_range={len(outside)}",
+                f"invalid_lane={len(invalid_lanes)}",
+            )
+        else:
+            print(
+                "[TRAFFIC POPULATION]",
+                f"where={where}",
+                f"vehicles={len(managed)}",
+                f"reference_range=+/-{self.TRAFFIC_RELEVANT_RANGE:.0f}m",
+                f"observation_slots={NUM_SURROUNDING_VEHICLES}",
+            )
+
 
     def _relevant_lane_ids(self, include_active_lane_change=True):
         """Return the single canonical lane set relevant to ego safety/reward.
@@ -2671,7 +2849,7 @@ class HighwaySimulator:
         snapshot = {}
         for vehicle in list(getattr(getattr(base_env, "road", None), "vehicles", [])):
             side = getattr(vehicle, "_arood_traffic_side", None)
-            if vehicle is ego or side not in ("front", "rear"):
+            if vehicle is ego or not bool(getattr(vehicle, "_arood_managed_traffic", False)):
                 continue
             try:
                 speed = float(vehicle.speed)
@@ -2778,7 +2956,7 @@ class HighwaySimulator:
         for traffic_vehicle in list(base_env.road.vehicles):
             if traffic_vehicle is ego:
                 continue
-            if getattr(traffic_vehicle, "_arood_traffic_side", None) not in ("front", "rear"):
+            if not bool(getattr(traffic_vehicle, "_arood_managed_traffic", False)):
                 continue
             try:
                 raw_speed = float(traffic_vehicle.speed)
@@ -3017,8 +3195,8 @@ class HighwaySimulator:
                   f"speed={speed_after:.3f}")
 
         self.step_count += 1
-        self._maintain_six_vehicle_traffic()
-        obs = base_env.observation_type.observe()
+        self._maintain_traffic_population()
+        obs = self._build_six_slot_observation()
         next_state = self._encode_state(obs)
         self._assert_traffic_invariant("instant_step")
 
