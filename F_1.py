@@ -236,15 +236,7 @@ LANE_REJECTION_REWARD_PENALTY = 0.05  # Small signal when an unsafe lane-change 
 SHIELD_ACCEL_INTERVENTION_WEIGHT = 0.15  # Modest cost for routine acceleration overrides
 
 # Traffic scenario diversity for training.
-# Randomized traffic gaps create varied lane-change opportunities.
-
-REFERENCE_GAP_MIN = 20.0
-REFERENCE_GAP_MAX = 500.0
-RANDOMIZED_FRONT_GAP_MIN = 50.0
-RANDOMIZED_FRONT_GAP_MAX = 500.0
-RANDOMIZED_REAR_GAP_MIN = 20.0
-RANDOMIZED_REAR_GAP_MAX = 500.0
-TRAFFIC_SPEED_VARIATION = 10.0
+# Initial spacing is spread across the reference window with optional jitter.
 
 # Lane changes are instrumental: accept them only when they create a
 # meaningful predicted sustainable-speed gain. Safety remains a hard filter;
