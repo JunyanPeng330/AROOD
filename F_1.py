@@ -1305,7 +1305,7 @@ class HighwaySimulator:
                 f"outside_reference_range={len(outside)}",
                 f"invalid_lane={len(invalid_lanes)}",
             )
-        else:
+        elif where in ("initialized", "reset"):
             print(
                 "[TRAFFIC POPULATION]",
                 f"where={where}",
