@@ -245,13 +245,15 @@ RANDOMIZED_REAR_GAP_MIN = 20.0
 RANDOMIZED_REAR_GAP_MAX = 500.0
 TRAFFIC_SPEED_VARIATION = 10.0
 
-# Lane changes are instrumental: accept them only when they create a
-# meaningful predicted sustainable-speed gain. Safety remains a hard filter;
-# stability is only a small tie-breaker when ranking speed-beneficial lanes.
+# A lane change is beneficial only when its expected combined utility improves
+# meaningfully over staying in the current lane across a physical-time horizon.
+# The weights are explicit experiment parameters and sum to one.
 BENEFIT_PREDICTION_HORIZON_SECONDS = 5.0
 BENEFIT_PREDICTION_SAMPLES = 11
-BENEFIT_STABILITY_TIEBREAK_WEIGHT = 0.05
-BENEFIT_MIN_EXPECTED_SPEED_GAIN_MPS = 0.5
+BENEFIT_SAFETY_WEIGHT = 0.40
+BENEFIT_EFFICIENCY_WEIGHT = 0.40
+BENEFIT_STABILITY_WEIGHT = 0.20
+BENEFIT_MIN_UTILITY_IMPROVEMENT = 0.00
 BENEFIT_SAFETY_GAP_REFERENCE = 50.0
 
 
@@ -297,7 +299,7 @@ MIN_FOLLOWING_GAP = 10.0      # metres
 SPEED_MATCH_KV = 0.5         # 1/second
 SPEED_MATCH_KD = 0.08        # 1/second^2
 
-MAX_PHYSICAL_ACCELERATION = 5.0  # m/s^2
+MAX_PHYSICAL_ACCELERATION = 8.0  # m/s^2
 
 
 NUM_LANES = 3
@@ -315,12 +317,12 @@ POLICY_ACTION_DIM = 2  # binary KEEP, CHANGE decision; acceleration is a conditi
 HIDDEN_DIM = 128
 
 
-NUM_REFERENCE_EPISODES = 100
+NUM_REFERENCE_EPISODES = 50
 REFERENCE_TRAINING_EPOCHS = 150
 REFERENCE_BATCH_SIZE = 256
 NUM_ONLINE_EPISODES = 50
 
-MAX_STEPS = 1000
+MAX_STEPS = 500
 
 
 TTC_PROXY_THRESHOLD = 0.2
@@ -349,12 +351,12 @@ EVALUATOR_MIN_SAFETY_WEIGHT = 0.5
 # only when a lane change completes; rejected requests are not charged this cost.
 
 
-reward_path = 'figure/Re_F_' + '4.png'
+reward_path = 'figure/Re_F_' + '7.png'
 #reward_per_step_path = 'figure/Re_E_new_per_step_' + '2.png'
-plot_path = 'figure/plot_F_' + '4.txt'
-MODEL_PATH = 'policy/F_' + '4.pt'
-EPISODE_TRAJECTORY_PATH = 'figure/episode_trajectories_F_' + '4.jsonl'
-TRAJECTORY_RECORDING_ENABLED = os.environ.get("AROOD_RECORD_TRAJECTORIES_F_", "4").strip().lower() not in {"0", "false", "no", "off"}
+plot_path = 'figure/plot_F_' + '7.txt'
+MODEL_PATH = 'policy/F_' + '7.pt'
+EPISODE_TRAJECTORY_PATH = 'figure/episode_trajectories_F_' + '7.jsonl'
+TRAJECTORY_RECORDING_ENABLED = os.environ.get("AROOD_RECORD_TRAJECTORIES_F_", "7").strip().lower() not in {"0", "false", "no", "off"}
 
 
 # ============================================================
@@ -1232,7 +1234,6 @@ class HighwaySimulator:
 
         safety_series = []
         efficiency_series = []
-        sustainable_speed_series = []
         gap_reference = max(1.0, float(BENEFIT_SAFETY_GAP_REFERENCE))
         headway = max(0.1, float(DESIRED_TIME_HEADWAY))
         following_gap = max(0.0, float(MIN_FOLLOWING_GAP))
@@ -1266,15 +1267,12 @@ class HighwaySimulator:
                 ) / headway
             else:
                 sustainable_speed = speed_reference
-            # The speed limit is the maximum useful cruising opportunity:
-            # an open lane cannot promise a speed above the legal/simulated limit.
-            sustainable_speed = float(np.clip(sustainable_speed, 0.0, speed_reference))
-            sustainable_speed_series.append(sustainable_speed)
-            efficiency_series.append(sustainable_speed / speed_reference)
+            efficiency_series.append(
+                float(np.clip(sustainable_speed / speed_reference, 0.0, 1.0))
+            )
 
-        safety_score = float(np.mean(safety_series))  # diagnostic only; safety is filtered separately
+        safety_score = float(np.mean(safety_series))
         efficiency_score = float(np.mean(efficiency_series))
-        expected_sustainable_speed = float(np.mean(sustainable_speed_series))
 
         # Stability rewards a lane whose predicted safety/efficiency profile
         # does not fluctuate sharply over the evaluation horizon.
@@ -1283,18 +1281,15 @@ class HighwaySimulator:
         ) / 2.0
         stability_score = float(np.clip(1.0 - profile_variation, 0.0, 1.0))
 
-        # Speed opportunity is the primary lane-ranking signal. Stability is
-        # deliberately weak and cannot make an otherwise speed-neutral lane
-        # eligible for a lane change (eligibility uses speed gain below).
         utility = (
-            efficiency_score
-            + BENEFIT_STABILITY_TIEBREAK_WEIGHT * stability_score
+            BENEFIT_SAFETY_WEIGHT * safety_score
+            + BENEFIT_EFFICIENCY_WEIGHT * efficiency_score
+            + BENEFIT_STABILITY_WEIGHT * stability_score
         )
         return {
             "utility": float(utility),
             "safety_score": safety_score,
             "efficiency_score": efficiency_score,
-            "expected_sustainable_speed_mps": expected_sustainable_speed,
             "stability_score": stability_score,
             "prediction_horizon_s": horizon,
         }
@@ -1349,14 +1344,10 @@ class HighwaySimulator:
                 float(candidate_profile["utility"])
                 - float(current_profile["utility"])
             )
-            expected_speed_gain = (
-                float(candidate_profile["expected_sustainable_speed_mps"])
-                - float(current_profile["expected_sustainable_speed_mps"])
-            )
 
             if (
                 not emergency_benefit_override
-                and expected_speed_gain < BENEFIT_MIN_EXPECTED_SPEED_GAIN_MPS
+                and utility_improvement < BENEFIT_MIN_UTILITY_IMPROVEMENT
             ):
                 continue
 
@@ -1366,9 +1357,6 @@ class HighwaySimulator:
                 "candidate_utility": float(candidate_profile["utility"]),
                 "current_lane_utility": float(current_profile["utility"]),
                 "utility_improvement": float(utility_improvement),
-                "expected_speed_gain_mps": float(expected_speed_gain),
-                "candidate_sustainable_speed_mps": float(candidate_profile["expected_sustainable_speed_mps"]),
-                "current_sustainable_speed_mps": float(current_profile["expected_sustainable_speed_mps"]),
                 "candidate_safety_score": float(candidate_profile["safety_score"]),
                 "candidate_efficiency_score": float(candidate_profile["efficiency_score"]),
                 "candidate_stability_score": float(candidate_profile["stability_score"]),
@@ -1386,7 +1374,7 @@ class HighwaySimulator:
                 "selection_principle": (
                     "emergency_safe_lane_selection"
                     if emergency_benefit_override
-                    else "predicted_speed_gain_with_stability_tiebreak"
+                    else "persistent_safety_efficiency_stability_improvement"
                 ),
                 "is_current_lane": False,
             })
@@ -3680,100 +3668,6 @@ def print_lane_request_counters(tag, counters):
             f"completed={values['completed']}",
         )
 
-def make_lane_opportunity_diagnostics():
-    """Count why each adjacent lane is or is not a valid lane-change opportunity."""
-    counters = Counter()
-    counters["expected_speed_gain_sum"] = 0.0
-    counters["utility_improvement_sum"] = 0.0
-    return counters
-
-
-def update_lane_opportunity_diagnostics(simulator, counters):
-    """Classify both adjacent lanes using the same hard-safety and benefit rules as the mask."""
-    base = simulator.env.unwrapped
-    ego = base.vehicle
-    current_lane = int(ego.lane_index[2])
-    lane_data = simulator._min_ttc_by_lane()
-
-    if getattr(simulator, "_lane_change_active", False):
-        counters["active_maneuver_steps"] += 1
-        return
-
-    current_profile = simulator._lane_benefit_utility(lane_data.get(current_lane, {}))
-    rear_assessment = simulator._rear_escape_assessment(lane_data)
-    current_values = lane_data.get(current_lane, {})
-    current_front_emergency = (
-        float(current_values.get("front_ttc", float("inf"))) <= SAFETY_OVERRIDE_TTC
-        or float(current_values.get("front_gap", float("inf"))) <= MIN_FOLLOWING_GAP
-    )
-    emergency_override = bool(
-        rear_assessment.get("rear_escape_needed", False) or current_front_emergency
-    )
-    lane_count = int(base.config.get("lanes_count", NUM_LANES))
-    start_node, end_node, _ = ego.lane_index
-    road_lane_ids = set(range(len(base.road.network.graph[start_node][end_node])))
-
-    for candidate_lane in (current_lane - 1, current_lane + 1):
-        counters["adjacent_lane_checks"] += 1
-        if candidate_lane < 0 or candidate_lane >= min(lane_count, NUM_LANES) or candidate_lane not in road_lane_ids:
-            counters["boundary_or_unavailable"] += 1
-            continue
-        if candidate_lane not in lane_data:
-            counters["traffic_data_missing"] += 1
-            continue
-
-        values = lane_data[candidate_lane]
-        reasons = simulator._lane_change_principle_reasons(
-            candidate_lane, lane_data, current_lane=current_lane,
-            ego_speed=float(ego.speed),
-        )
-        if reasons:
-            counters["hard_safety_blocked"] += 1
-            for reason in reasons:
-                counters[f"hard:{reason}"] += 1
-            continue
-
-        candidate_profile = simulator._lane_benefit_utility(values)
-        improvement = float(candidate_profile["utility"]) - float(current_profile["utility"])
-        speed_gain = (
-            float(candidate_profile["expected_sustainable_speed_mps"])
-            - float(current_profile["expected_sustainable_speed_mps"])
-        )
-        counters["hard_safe_candidates"] += 1
-        counters["utility_improvement_sum"] += improvement
-        counters["expected_speed_gain_sum"] += speed_gain
-        if not emergency_override and speed_gain < BENEFIT_MIN_EXPECTED_SPEED_GAIN_MPS:
-            counters["benefit_threshold_blocked"] += 1
-            continue
-
-        counters["valid_adjacent_candidates"] += 1
-
-
-def print_lane_opportunity_diagnostics(tag, counters):
-    checks = int(counters.get("adjacent_lane_checks", 0))
-    valid = int(counters.get("valid_adjacent_candidates", 0))
-    hard_safe = int(counters.get("hard_safe_candidates", 0))
-    print(
-        f"[{tag} LANE-OPPORTUNITY DIAGNOSTICS]",
-        f"adjacent_checks={checks}",
-        f"valid_candidates={valid}",
-        f"hard_safety_blocked={counters.get('hard_safety_blocked', 0)}",
-        f"benefit_threshold_blocked={counters.get('benefit_threshold_blocked', 0)}",
-        f"boundary_or_unavailable={counters.get('boundary_or_unavailable', 0)}",
-        f"traffic_data_missing={counters.get('traffic_data_missing', 0)}",
-        f"active_maneuver_steps={counters.get('active_maneuver_steps', 0)}",
-        f"hard_safe_candidates={hard_safe}",
-        f"mean_utility_improvement={float(counters.get('utility_improvement_sum', 0.0)) / max(hard_safe, 1):+.4f}",
-        f"min_expected_speed_gain={BENEFIT_MIN_EXPECTED_SPEED_GAIN_MPS:.2f}m/s",
-        f"mean_expected_speed_gain={float(counters.get('expected_speed_gain_sum', 0.0)) / max(hard_safe, 1):+.3f}m/s",
-        f"front_ttc_min={LANE_CHANGE_MIN_FRONT_TTC:.1f}s",
-        f"rear_ttc_min={LANE_CHANGE_MIN_REAR_TTC:.1f}s",
-        f"min_gap={LANE_CHANGE_MIN_GAP:.1f}m",
-    )
-    for key, value in sorted(counters.items()):
-        if key.startswith("hard:"):
-            print(f"    {key[5:]}={value}")
-
 
 
 def calculate_min_ttc(simulator):
@@ -4080,7 +3974,6 @@ def collect_reference_rollouts(simulator, policy, reward_function):
         }
         lane_counters = make_lane_request_counters()
         action_mask_counters = make_action_mask_counters()
-        lane_opportunity_diagnostics = make_lane_opportunity_diagnostics()
         seen_completed = {
             "LEFT": int(getattr(simulator, "_lane_change_stats", {}).get("completed_LEFT", 0)),
             "RIGHT": int(getattr(simulator, "_lane_change_stats", {}).get("completed_RIGHT", 0)),
@@ -4092,7 +3985,6 @@ def collect_reference_rollouts(simulator, policy, reward_function):
             )
             record_action_mask(action_mask_counters, valid_mask)
             target_lane_mask = np.asarray(simulator.get_valid_target_lane_mask(), dtype=bool)
-            update_lane_opportunity_diagnostics(simulator, lane_opportunity_diagnostics)
             current_lane_id = int(simulator.env.unwrapped.vehicle.lane_index[2])
             sampled_action, policy_aux = policy.act(
                 state, deterministic=False, valid_action_mask=valid_mask,
@@ -4216,7 +4108,6 @@ def collect_reference_rollouts(simulator, policy, reward_function):
             f"steps={len(returns)} return={float(returns[0]) if len(returns) else 0.0:+.3f}"
         )
         print_lane_request_counters("REFERENCE EPISODE", lane_counters)
-        print_lane_opportunity_diagnostics("REFERENCE EPISODE", lane_opportunity_diagnostics)
         print_action_mask_counters("REFERENCE EPISODE", action_mask_counters)
         for direction in ("LEFT", "RIGHT"):
             for counter_name in ("requested", "mask_allowed", "target_selected", "completed"):
@@ -4395,7 +4286,6 @@ def train_pure_rl(simulator, policy):
         no_safe_target_lane_steps = 0
         valid_target_lane_steps = 0
         lane_counters = make_lane_request_counters()
-        lane_opportunity_diagnostics = make_lane_opportunity_diagnostics()
         intervention_counts = {
             "emergency_braking_steps": 0,
             "lane_change_requests": 0,
@@ -4414,7 +4304,6 @@ def train_pure_rl(simulator, policy):
             simulator._trace_valid_action_mask = np.asarray(valid_mask, dtype=bool).tolist()
 
             target_lane_mask = np.asarray(simulator.get_valid_target_lane_mask(), dtype=bool)
-            update_lane_opportunity_diagnostics(simulator, lane_opportunity_diagnostics)
             # The target mask always includes KEEP/current lane; count a
             # lane-change opportunity only when at least one safe side lane exists.
             if int(target_lane_mask.sum()) > 1:
@@ -4649,7 +4538,6 @@ def train_pure_rl(simulator, policy):
         critic_loss_history.append(float(np.mean(episode_critic_losses)) if episode_critic_losses else 0.0)
 
         print_lane_request_counters("PURE RL EPISODE", lane_counters)
-        print_lane_opportunity_diagnostics("PURE RL EPISODE", lane_opportunity_diagnostics)
         print(
             f"Episode {episode + 1:03d}/{NUM_ONLINE_EPISODES} | "
             f"steps={episode_steps} | return={episode_return:.3f} | "
