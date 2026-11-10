@@ -3288,19 +3288,6 @@ def _rear_escape_assessment(self, lane_ttc=None):
             if escape_needed else "rear_threat_manageable_by_front_safe_acceleration"
         ),
     })
-    print(
-        "[REAR-ESCAPE FEASIBILITY]",
-        f"current_lane={current_lane}",
-        f"rear_ttc_s={rear_ttc:.3f}",
-        f"rear_gap_m={rear_gap:.3f}",
-        f"rear_speed_mps={rear_speed:.3f}",
-        f"ego_speed_mps={ego_speed:.3f}",
-        f"max_front_safe_accel_mps2={max_front_safe_acceleration:.3f}",
-        f"predicted_min_front_gap_m={predicted_front_min_gap:.3f}",
-        f"predicted_min_rear_gap_m={predicted_rear_min_gap:.3f}",
-        f"rear_escape_needed={escape_needed}",
-        f"horizon_s={horizon:.2f}",
-    )
     return result
 
 
@@ -4224,9 +4211,7 @@ def train_pure_rl(simulator, policy):
     # from those returns before starting ordinary online RL.
     reference_data = collect_reference_rollouts(simulator, policy, reward_function)
 
-    print('((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((')
-    print('((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((')
-    print('========================================================================================================================')
+    print("\n[PHASE 2] Online Actor-Critic fine-tuning begins after reference warm-start.")
 
 
     warm_start_policy_from_reference(policy, reference_data)
@@ -4362,9 +4347,10 @@ def train_pure_rl(simulator, policy):
             reward_safety_info = dict(safety_info or {})
 
             reward_safety_info["lane_change_accepted"] = bool(
-
+                safety_info.get("lane_request_decision") == "TARGET_SELECTED"
+            )
+            reward_safety_info["lane_change_completed"] = bool(
                 step_info.get("lane_change_completed_instantly", False)
-
             ) if isinstance(step_info, dict) else False
 
             current_speed_mps = float(simulator.env.unwrapped.vehicle.speed)
@@ -4470,8 +4456,8 @@ def train_pure_rl(simulator, policy):
         lane_stats = dict(getattr(simulator, "_lane_change_stats", {}))
         lane_change_history.append(lane_stats)
 
-        # A collision-free episode contributes 0 to collision_rate. For an episode
-        # without collision, safe_step_count is the full number of completed steps.
+        # collision_rate is a per-episode indicator (0/1), not a per-step rate.
+        # safe_step_count excludes the collision transition itself.
         collision_rate = float(first_collision_step is not None)
         lane_change_rate = float(lane_stats.get("completed", 0)) / max(episode_steps, 1)
         safe_step_count = int(
@@ -4719,9 +4705,9 @@ def train_pure_rl(simulator, policy):
 
     with open(plot_path, "w", encoding="utf-8") as f:
         f.write(f"episode_collision_incidence={float(np.mean(collision_rate_history)) if collision_rate_history else 0.0:.4f}"+ "\n")
-        f.write(f"lane_change_rate={float(np.mean(lane_change_rate_history)) if lane_change_rate_history else 0.0:.4f}"+ "\n")
-        f.write(f"safe_travel_dis={float(np.mean(safe_travel_dis_history)) if safe_travel_dis_history else 0.0:.2f} m/episode (mean)"+ "\n")
-        f.write(f"safe_step_count={float(np.mean(safe_step_count_history)) if safe_step_count_history else 0.0:.2f} steps/episode (mean)"+ "\n")
+        f.write(f"lane_changes_per_policy_step={float(np.mean(lane_change_rate_history)) if lane_change_rate_history else 0.0:.4f}"+ "\n")
+        f.write(f"collision_free_distance_m={float(np.mean(safe_travel_dis_history)) if safe_travel_dis_history else 0.0:.2f} per episode"+ "\n")
+        f.write(f"collision_free_steps={float(np.mean(safe_step_count_history)) if safe_step_count_history else 0.0:.2f} per episode"+ "\n")
         f.write(f"emergency_braking_rate={float(np.mean(emergency_braking_rate_history)) if emergency_braking_rate_history else 0.0:.4f} (per-step rate)"+ "\n")
         f.write(f"lane_change_rejection_rate={float(np.mean(lane_change_rejection_rate_history)) if lane_change_rejection_rate_history else 0.0:.4f} (per-request rate)"+ "\n")
         f.write(f"acceleration_override_rate={float(np.mean(acceleration_override_rate_history)) if acceleration_override_rate_history else 0.0:.4f} (per-step rate)"+ "\n")
