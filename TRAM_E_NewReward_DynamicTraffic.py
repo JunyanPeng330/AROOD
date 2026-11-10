@@ -1281,7 +1281,7 @@ class HighwaySimulator:
                     )
             return row
 
-        rows[0] = encode_vehicle(ego)
+        rows[0] = encode_vehicle(ego, origin=ego)
         row_index = 1
         for lane_id in range(NUM_LANES):
             for side in ("front", "rear"):
