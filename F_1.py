@@ -188,7 +188,7 @@ simulation_frequency = 15
 lane_keeping_weight = 0.20
 
 # Below SPEED_LIMIT, reward positive measured longitudinal acceleration; at/above it, give full speed reward.
-# MAX_PHYSICAL_ACCELERATION normalizes below-limit acceleration reward to [0, 1].
+# MAX_PHYSICAL_ACCELERATION is the simulator's physical acceleration limit and reward normalization scale.
 # Lane selection is judged separately; TTC/gap stay in the independent safety shield.
 SPEED_LIMIT = 40.0
 INITIAL_PROGRESS_WEIGHT = 4.0
@@ -243,7 +243,6 @@ RANDOMIZED_FRONT_GAP_MIN = 50.0
 RANDOMIZED_FRONT_GAP_MAX = 500.0
 RANDOMIZED_REAR_GAP_MIN = 20.0
 RANDOMIZED_REAR_GAP_MAX = 500.0
-TRAFFIC_SPEED_VARIATION = 10.0
 
 # A lane change is beneficial only when its expected combined utility improves
 # meaningfully over staying in the current lane across a physical-time horizon.
@@ -299,7 +298,7 @@ MIN_FOLLOWING_GAP = 10.0      # metres
 SPEED_MATCH_KV = 0.5         # 1/second
 SPEED_MATCH_KD = 0.08        # 1/second^2
 
-MAX_PHYSICAL_ACCELERATION = 8.0  # m/s^2
+MAX_PHYSICAL_ACCELERATION = 5.0  # m/s^2; matches ContinuousAction acceleration_range [-5, 5].
 
 
 NUM_LANES = 3
@@ -334,8 +333,7 @@ POLICY_LR = 3e-4
 DEVICE = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
 # Structured diagnostics: one JSON object per line.
-
-#DIAGNOSTIC_LOG_PATH = "training_diagnostics_binary_lane_ranked.jsonl"
+DIAGNOSTIC_LOG_PATH = os.path.join("figure", "training_diagnostics_F_7.jsonl")
 
 # Created only when a managed traffic-slot vehicle first has negative speed.
 # Keep this distinct from any tracked README/placeholder so exclusive creation works.
@@ -513,21 +511,28 @@ def append_trajectory_record(record):
 
 
 def write_diagnostic_event(event, simulator=None, **fields):
-    """Append one structured diagnostic event; logging failures must not stop RL."""
+    """Append one strict-JSON diagnostic record; logging failures never stop RL."""
     record = {
+        "record_type": "diagnostic_event",
+        "schema_version": 1,
+        "run_id": TRAJECTORY_RUN_ID,
+        "recorded_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
         "event": str(event),
         "phase": getattr(simulator, "_trace_phase", None) if simulator is not None else None,
         "episode": getattr(simulator, "_trace_episode", None) if simulator is not None else None,
         "simulator_step": getattr(simulator, "step_count", None) if simulator is not None else None,
     }
     record.update(fields)
-    '''
     try:
+        os.makedirs(os.path.dirname(DIAGNOSTIC_LOG_PATH) or ".", exist_ok=True)
         with open(DIAGNOSTIC_LOG_PATH, "a", encoding="utf-8") as log_file:
-            log_file.write(json.dumps(record, ensure_ascii=False, default=str, allow_nan=True) + "\n")
+            log_file.write(json.dumps(
+                _trajectory_jsonable(record),
+                ensure_ascii=False, allow_nan=False, separators=(",", ":")
+            ) + "\n")
+            log_file.flush()
     except (OSError, TypeError, ValueError) as exc:
-        print("[DIAGNOSTIC LOG WARNING]", f"event={event}", f"error={exc}")
-    '''
+        print("[DIAGNOSTIC LOG WARNING]", f"event={event}", f"path={DIAGNOSTIC_LOG_PATH}", f"error={exc}")
 
 
 def _safe_float_for_diagnostic(value):
@@ -877,13 +882,18 @@ class HighwaySimulator:
                 RANDOMIZED_FRONT_GAP_MIN, RANDOMIZED_FRONT_GAP_MAX)
             self.traffic_rear_gap = random.uniform(
                 RANDOMIZED_REAR_GAP_MIN, RANDOMIZED_REAR_GAP_MAX)
-        print("[TRAFFIC SCENARIO]",
-              f"front_gap_range={RANDOMIZED_FRONT_GAP_MIN:.1f}-{RANDOMIZED_FRONT_GAP_MAX:.1f}m",
-              f"rear_gap_range={RANDOMIZED_REAR_GAP_MIN:.1f}-{RANDOMIZED_REAR_GAP_MAX:.1f}m",
-              f"gap_sampling={'independent_per_lane_and_side' if self.randomize_traffic_gaps else 'configured_baseline_setting'}",
-              f"speed_variation=±{TRAFFIC_SPEED_VARIATION:.1f}m/s",
-              f"relevance_range={self.TRAFFIC_RELEVANT_RANGE:.1f}m",
-              f"randomized={self.randomize_traffic_gaps}")
+        print(
+            "[TRAFFIC SCENARIO]",
+            f"managed_slots={NUM_SURROUNDING_VEHICLES} (nearest front/rear in each of {NUM_LANES} lanes)",
+            f"front_gap_m={RANDOMIZED_FRONT_GAP_MIN:.0f}-{RANDOMIZED_FRONT_GAP_MAX:.0f}",
+            f"rear_gap_m={RANDOMIZED_REAR_GAP_MIN:.0f}-{RANDOMIZED_REAR_GAP_MAX:.0f}",
+            f"gap_sampling={'independent_per_slot' if self.randomize_traffic_gaps else 'fixed_baseline'}",
+            f"speed_mps={TRAFFIC_SPEED_MIN:.0f}-{TRAFFIC_SPEED_MAX:.0f}",
+            f"speed_delta_mix={TRAFFIC_SPEED_MATCHED_PROB:.0%}[-3,+3],"
+            f"{TRAFFIC_SPEED_POSITION_CHALLENGE_PROB:.0%}[front:-8..-3/rear:+3..+6],"
+            f"{1.0-TRAFFIC_SPEED_MATCHED_PROB-TRAFFIC_SPEED_POSITION_CHALLENGE_PROB:.0%}[-8,+6]",
+            f"reference_range=±{self.TRAFFIC_RELEVANT_RANGE:.0f}m"
+        )
 
         self.step_count = 0
         base_env = self.env.unwrapped
@@ -2162,8 +2172,8 @@ class HighwaySimulator:
             f"accel_before={accel_before_speed_floor:.6f}",
             f"min_normalized_accel={min_normalized_accel}",
             f"accel_units=normalized[-1,1]",
-            f"physical_accel_before={accel_before_speed_floor * MAX_PHYSICAL_ACCELERATION:.3f}m/s^2",
-            f"physical_accel_after={accel_after_speed_floor * MAX_PHYSICAL_ACCELERATION:.3f}m/s^2",
+            f"physical_accel_before_mps2={accel_before_speed_floor * MAX_PHYSICAL_ACCELERATION:+.3f}",
+            f"physical_accel_after_mps2={accel_after_speed_floor * MAX_PHYSICAL_ACCELERATION:+.3f}",
             f"accel_after={accel_after_speed_floor:.6f}",
             f"changed={abs(accel_after_speed_floor - accel_before_speed_floor) > 1e-6}",
         )
@@ -2273,63 +2283,10 @@ class HighwaySimulator:
 
 
 
-        print(
-            "[TTC FILTER]",
-            f"current_lane={current_lane}",
-            f"front_ttc={current_front_ttc:.3f}",
-            f"rear_ttc={current_rear_ttc:.3f}",
-            f"emergency={emergency_braking}",
-        )
-
-        if policy_requested_lane_action == 0:
-            # KEEP does not evaluate a candidate lane; report measured current
-            # lane values instead of misleading default inf candidate values.
-            current_lane_values = lane_ttc_current.get(current_lane, {})
-            print(
-                "[LANE SAFETY]",
-                "requested=KEEP",
-                f"current_lane={current_lane}",
-                f"current_front_ttc={float(current_lane_values.get('front_ttc', float('inf'))):.3f}",
-                f"current_rear_ttc={float(current_lane_values.get('rear_ttc', float('inf'))):.3f}",
-                f"current_front_gap={float(current_lane_values.get('front_gap', float('inf'))):.3f}",
-                f"current_rear_gap={float(current_lane_values.get('rear_gap', float('inf'))):.3f}",
-                "lane_change_evaluation=not_applicable",
-                f"lane_change_active={self._lane_change_active}",
-                f"cooldown={self._lane_change_cooldown}",
-                "blocked=False",
-                "reason=none",
-                "filtered=KEEP",
-            )
-        else:
-            print(
-                "[LANE SAFETY]",
-                f"requested={requested_lane_name}",
-                f"candidate_lane={candidate_lane}",
-                f"front_ttc={candidate_front_ttc:.3f}",
-                f"rear_ttc={candidate_rear_ttc:.3f}",
-                f"front_gap={candidate_front_gap:.3f}",
-                f"rear_gap={candidate_rear_gap:.3f}",
-                f"front_gap_limit={candidate_front_gap_limit:.3f}",
-                f"rear_gap_limit={candidate_rear_gap_limit:.3f}",
-                f"lane_available={candidate_lane_available}",
-                f"speed_match_active_but_not_a_veto={speed_match_active}",
-                f"lane_change_active={self._lane_change_active}",
-                f"cooldown={self._lane_change_cooldown}",
-                f"blocked={lane_change_blocked}",
-                f"reason={lane_change_rejection_reason}",
-                f"filtered={filtered_lane_name}",
-            )
-
-
-        # Correlate final output with this exact filter invocation.
+        # Keep one request-level trace for each CHANGE decision. The post-step
+        # [TTC RISK] snapshot separately reports the resulting physical risk.
         safety_info["ttc_filter_call_id"] = ttc_filter_call_id
         safety_info["safety_filter_applied"] = True
-        print(
-            "[FILTER EXIT]",
-            f"call_id={ttc_filter_call_id}",
-            f"sampled={sampled_action.tolist()}",
-            f"filtered={filtered_action.tolist()}",
-        )
 
 
 
@@ -2817,8 +2774,9 @@ class HighwaySimulator:
         """Execute the proposed hybrid action with instantaneous lane changes.
 
         The policy chooses KEEP or CHANGE. For CHANGE, the separate target-lane
-        selector supplies an adjacent lane. No per-step TTC shield overrides the
-        policy action; the simulator applies its own vehicle dynamics.
+        selector supplies an adjacent lane. The upstream safety layer may reject
+        the request or adjust acceleration; this method performs the accepted lane
+        relocation instantaneously before one native simulator update.
         """
         action = np.asarray(action, dtype=np.float32).reshape(-1)
         if action.size != 2:
@@ -3769,7 +3727,6 @@ def construct_reward(reward_specification, embedding_model=None):
             f"(speed={current_speed:.3f}m/s, limit={speed_limit:.3f}m/s), "
             f"collision_penalty={collision_penalty:.3f}, total={reward:+.3f}"
         )
-        print("[TTC REWARD] disabled; TTC/gap are used only by the independent safety shield.")
         return reward
     return reward_function
 
@@ -4224,10 +4181,10 @@ def train_pure_rl(simulator, policy):
     collision_history = []
     lane_change_history = []
     # Episode-level evaluation metrics:
-    # collision_rate: 1 if any collision occurs in the episode, otherwise 0.
-    # lane_change_rate: completed lane changes divided by episode steps.
-    # safe_travel_dis: collision-free distance accumulated before the first collision.
-    # safe_step_count: 1-based collision step, or episode length if no collision occurs.
+    # episode_collision_indicator: 1 if any collision occurs, otherwise 0.
+    # lane_change_rate: completed lane changes divided by policy decisions.
+    # safe_travel_dis: distance accumulated on collision-free transitions.
+    # safe_step_count: completed collision-free transitions before first collision.
     collision_rate_history = []
     lane_change_rate_history = []
     safe_travel_dis_history = []
@@ -4249,13 +4206,12 @@ def train_pure_rl(simulator, policy):
 
     os.makedirs(os.path.dirname(reward_path) or ".", exist_ok=True)
     os.makedirs(os.path.dirname(MODEL_PATH) or ".", exist_ok=True)
-    '''
     try:
-        with open(DIAGNOSTIC_LOG_PATH, "w", encoding="utf-8") as f:
-            f.write("")
+        os.makedirs(os.path.dirname(DIAGNOSTIC_LOG_PATH) or ".", exist_ok=True)
+        with open(DIAGNOSTIC_LOG_PATH, "w", encoding="utf-8"):
+            pass
     except OSError as exc:
-        print("[DIAGNOSTIC LOG WARNING]", exc)
-    '''
+        print("[DIAGNOSTIC LOG WARNING]", f"path={DIAGNOSTIC_LOG_PATH}", f"error={exc}")
 
     # Phase I: collect trajectories with the initial policy and update it
     # from those returns before starting ordinary online RL.
@@ -4294,6 +4250,7 @@ def train_pure_rl(simulator, policy):
             "steps_with_any_intervention": 0,
             "intervention_events": 0,
         }
+        safe_intervention_events = 0
         seen_completed = {
             "LEFT": int(getattr(simulator, "_lane_change_stats", {}).get("completed_LEFT", 0)),
             "RIGHT": int(getattr(simulator, "_lane_change_stats", {}).get("completed_RIGHT", 0)),
@@ -4331,9 +4288,9 @@ def train_pure_rl(simulator, policy):
             filtered_action = np.asarray(filtered_action, dtype=np.float32).reshape(-1)
             record_lane_request_decision(lane_counters, sampled_action, valid_mask, safety_info)
 
-            # Count safety-layer interventions on online-training steps. Acceleration
-            # override means emergency braking changed the normal controller output;
-            # the policy's acceleration dimension is only a placeholder in this design.
+            # Count safety-layer interventions on online-training steps. An acceleration
+            # override includes front-threat emergency braking OR rear-threat escape
+            # acceleration; emergency_braking_steps is the front-threat subset.
             requested_change = int(np.clip(np.rint(float(sampled_action[1])), 0, 1)) == 1
             emergency_intervention = bool(safety_info.get("emergency_braking", False))
             lane_change_rejected = bool(requested_change and safety_info.get("lane_change_blocked", False))
@@ -4344,9 +4301,10 @@ def train_pure_rl(simulator, policy):
             intervention_counts["lane_change_rejections"] += int(lane_change_rejected)
             intervention_counts["acceleration_override_steps"] += int(acceleration_override)
             intervention_counts["steps_with_any_intervention"] += int(any_intervention)
-            intervention_counts["intervention_events"] += (
+            intervention_events_this_step = (
                 int(emergency_intervention) + int(lane_change_rejected) + int(acceleration_override)
             )
+            intervention_counts["intervention_events"] += intervention_events_this_step
             previous_speed_mps = float(simulator.env.unwrapped.vehicle.speed)
             vehicles_before = snapshot_simulator_vehicles(simulator)
 
@@ -4377,11 +4335,12 @@ def train_pure_rl(simulator, policy):
                     first_collision_step = episode_steps + 1
                 # Do not count the collision transition as safely travelled distance.
             elif first_collision_step is None:
-                # Once the first collision has occurred, later motion is not counted
-                # as safely travelled distance even if the episode continues.
+                # Count only transitions before the first collision in both the
+                # safe-distance and safe-intervention numerators.
                 safe_travel_dis += float(
                     np.linalg.norm(current_ego_position - previous_ego_position)
                 )
+                safe_intervention_events += intervention_events_this_step
             previous_ego_position = current_ego_position
 
             safety_violation = collision_occurred
@@ -4508,7 +4467,7 @@ def train_pure_rl(simulator, policy):
         collision_rate = float(first_collision_step is not None)
         lane_change_rate = float(lane_stats.get("completed", 0)) / max(episode_steps, 1)
         safe_step_count = int(
-            first_collision_step if first_collision_step is not None else episode_steps
+            first_collision_step - 1 if first_collision_step is not None else episode_steps
         )
         collision_rate_history.append(collision_rate)
         lane_change_rate_history.append(lane_change_rate)
@@ -4527,7 +4486,7 @@ def train_pure_rl(simulator, policy):
         acceleration_override_rate = intervention_counts["acceleration_override_steps"] / episode_step_denominator
         overall_intervention_rate = intervention_counts["steps_with_any_intervention"] / episode_step_denominator
         distance_km = float(safe_travel_dis) / 1000.0
-        interventions_per_km = intervention_counts["intervention_events"] / distance_km if distance_km > 1e-9 else 0.0
+        interventions_per_km = safe_intervention_events / distance_km if distance_km > 1e-9 else 0.0
         emergency_braking_rate_history.append(float(emergency_braking_rate))
         lane_change_rejection_rate_history.append(float(lane_change_rejection_rate))
         acceleration_override_rate_history.append(float(acceleration_override_rate))
@@ -4545,16 +4504,17 @@ def train_pure_rl(simulator, policy):
             f"mean_speed={mean_speed_mps:.2f}m/s ({mean_speed_ratio:.1%} target) | "
             f"speed>=90%target={speed_target_fraction:.1%} | "
             f"no_safe_lane={no_safe_target_lane_fraction:.1%} | "
-            f"collision_rate={collision_rate:.0f} | "
-            f"lane_change_rate={lane_change_rate:.4f} | "
-            f"safe_travel_dis={safe_travel_dis:.2f}m | "
-            f"safe_step_count={safe_step_count} | "
+            f"episode_had_collision={bool(collision_rate)} | "
+            f"lane_changes_per_100_steps={100.0 * lane_change_rate:.2f} | "
+            f"collision_free_distance={safe_travel_dis:.2f}m | "
+            f"collision_free_steps={safe_step_count} | "
             f"emergency_braking_rate={emergency_braking_rate:.4f} | "
             f"lane_change_rejection_rate={lane_change_rejection_rate:.4f} "
             f"({intervention_counts['lane_change_rejections']}/{intervention_counts['lane_change_requests']} requests) | "
             f"acceleration_override_rate={acceleration_override_rate:.4f} | "
             f"overall_intervention_rate={overall_intervention_rate:.4f} | "
-            f"interventions_per_km={interventions_per_km:.3f} (safe distance={safe_travel_dis:.2f}m) | "
+            f"intervention_events_per_safe_km={interventions_per_km:.3f} "
+            f"(events={safe_intervention_events}, distance={safe_travel_dis:.1f}m) | "
             f"lane_requested={lane_stats.get('requested', 0)} | "
             f"lane_accepted={lane_stats.get('accepted', 0)} | "
             f"lane_completed={lane_stats.get('completed', 0)} | "
@@ -4584,6 +4544,7 @@ def train_pure_rl(simulator, policy):
             "overall_intervention_rate": float(overall_intervention_rate),
             "interventions_per_km": float(interventions_per_km),
             "intervention_counts": dict(intervention_counts),
+            "collision_free_intervention_events": int(safe_intervention_events),
         }
         episode_metric_history.append(episode_metrics)
 
@@ -4610,6 +4571,7 @@ def train_pure_rl(simulator, policy):
             overall_intervention_rate=float(overall_intervention_rate),
             interventions_per_km=float(interventions_per_km),
             intervention_counts=dict(intervention_counts),
+            collision_free_intervention_events=int(safe_intervention_events),
             first_collision_step=first_collision_step,
             lane_change_stats=lane_stats,
             lane_request_counters=lane_counters,
@@ -4735,20 +4697,20 @@ def train_pure_rl(simulator, policy):
 
 
 
-    print("\\n[FINAL EPISODE METRICS]")
-    print(f"collision_rate={float(np.mean(collision_rate_history)) if collision_rate_history else 0.0:.4f}")
-    print(f"lane_change_rate={float(np.mean(lane_change_rate_history)) if lane_change_rate_history else 0.0:.4f}")
-    print(f"safe_travel_dis={float(np.mean(safe_travel_dis_history)) if safe_travel_dis_history else 0.0:.2f} m/episode (mean)")
-    print(f"safe_step_count={float(np.mean(safe_step_count_history)) if safe_step_count_history else 0.0:.2f} steps/episode (mean)")
+    print("\\n[FINAL EPISODE METRICS — means across episodes]")
+    print(f"episode_collision_incidence={float(np.mean(collision_rate_history)) if collision_rate_history else 0.0:.4f}")
+    print(f"lane_changes_per_100_steps={100.0 * (float(np.mean(lane_change_rate_history)) if lane_change_rate_history else 0.0):.2f}")
+    print(f"collision_free_distance={float(np.mean(safe_travel_dis_history)) if safe_travel_dis_history else 0.0:.2f} m/episode")
+    print(f"collision_free_steps={float(np.mean(safe_step_count_history)) if safe_step_count_history else 0.0:.2f} steps/episode")
     print(f"emergency_braking_rate={float(np.mean(emergency_braking_rate_history)) if emergency_braking_rate_history else 0.0:.4f} (per-step rate)")
     print(f"lane_change_rejection_rate={float(np.mean(lane_change_rejection_rate_history)) if lane_change_rejection_rate_history else 0.0:.4f} (per-request rate)")
     print(f"acceleration_override_rate={float(np.mean(acceleration_override_rate_history)) if acceleration_override_rate_history else 0.0:.4f} (per-step rate)")
     print(f"overall_intervention_rate={float(np.mean(overall_intervention_rate_history)) if overall_intervention_rate_history else 0.0:.4f} (per-step rate)")
-    print(f"interventions_per_km={float(np.mean(interventions_per_km_history)) if interventions_per_km_history else 0.0:.3f} (safe_travel_dis is measured in metres)")
+    print(f"intervention_events_per_collision_free_km={float(np.mean(interventions_per_km_history)) if interventions_per_km_history else 0.0:.3f}")
 
 
     with open(plot_path, "w", encoding="utf-8") as f:
-        f.write(f"collision_rate={float(np.mean(collision_rate_history)) if collision_rate_history else 0.0:.4f}"+ "\n")
+        f.write(f"episode_collision_incidence={float(np.mean(collision_rate_history)) if collision_rate_history else 0.0:.4f}"+ "\n")
         f.write(f"lane_change_rate={float(np.mean(lane_change_rate_history)) if lane_change_rate_history else 0.0:.4f}"+ "\n")
         f.write(f"safe_travel_dis={float(np.mean(safe_travel_dis_history)) if safe_travel_dis_history else 0.0:.2f} m/episode (mean)"+ "\n")
         f.write(f"safe_step_count={float(np.mean(safe_step_count_history)) if safe_step_count_history else 0.0:.2f} steps/episode (mean)"+ "\n")
@@ -4756,7 +4718,7 @@ def train_pure_rl(simulator, policy):
         f.write(f"lane_change_rejection_rate={float(np.mean(lane_change_rejection_rate_history)) if lane_change_rejection_rate_history else 0.0:.4f} (per-request rate)"+ "\n")
         f.write(f"acceleration_override_rate={float(np.mean(acceleration_override_rate_history)) if acceleration_override_rate_history else 0.0:.4f} (per-step rate)"+ "\n")
         f.write(f"overall_intervention_rate={float(np.mean(overall_intervention_rate_history)) if overall_intervention_rate_history else 0.0:.4f} (per-step rate)"+ "\n")
-        f.write(f"interventions_per_km={float(np.mean(interventions_per_km_history)) if interventions_per_km_history else 0.0:.3f} (safe_travel_dis is measured in metres)"+ "\n")
+        f.write(f"intervention_events_per_collision_free_km={float(np.mean(interventions_per_km_history)) if interventions_per_km_history else 0.0:.3f}"+ "\n")
         f.write("reward:\n" + str(reward_history) + "\n")
         f.write("collision:\n" + str(collision_history) + "\n")
         f.write("collision_rate:\n" + str(collision_rate_history) + "\n")
@@ -4808,10 +4770,14 @@ def main():
     print("Selected DEVICE:", DEVICE)
     if torch.cuda.is_available():
         print("GPU:", torch.cuda.get_device_name(0))
-    print("Hybrid RL with learned conditional acceleration + episode-level prompt-ready evaluator; no real LLM call.")
-    print(f"State dimension: {STATE_DIM}; policy actions: {POLICY_ACTION_DIM}; execution envelope: {ACTION_DIM}")
-    print("Architecture: binary KEEP/CHANGE policy, conditional target-lane head, learned conditional acceleration, and emergency-only acceleration override.")
-    print(f"Episode evaluator batch size: {EVALUATOR_BATCH_SIZE}; backend: {PromptBasedEvaluator.backend_name}")
+    print("Training: reference-rollout warm start followed by online Actor-Critic updates.")
+    print(f"Dimensions: state={STATE_DIM}, policy_action={POLICY_ACTION_DIM} [KEEP/CHANGE], execution_action={ACTION_DIM}.")
+    print("Control: policy selects KEEP/CHANGE and target lane; safety layer can reject unsafe changes, brake for a front threat, or accelerate to escape a rear threat.")
+    print(f"Simulator: {NUM_LANES} lanes, {NUM_SURROUNDING_VEHICLES} managed traffic slots, {policy_frequency} Hz policy / {simulation_frequency} Hz simulation.")
+    print(f"Acceleration bounds: ±{MAX_PHYSICAL_ACCELERATION:.1f} m/s²; speed limit: {SPEED_LIMIT:.1f} m/s.")
+    print(f"Episode evaluator: batch={EVALUATOR_BATCH_SIZE}, backend={PromptBasedEvaluator.backend_name} (no external LLM call).")
+    print(f"Diagnostics: {DIAGNOSTIC_LOG_PATH}; trajectories: {EPISODE_TRAJECTORY_PATH if TRAJECTORY_RECORDING_ENABLED else 'disabled'}.")
+    print("[REWARD CONFIG] TTC/gap are not reward terms; they are used by the safety layer.")
     simulator = create_highway_simulator()
     simulator.reset(seed=SEED)
     policy = create_initial_policy(
