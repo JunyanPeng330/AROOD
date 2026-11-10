@@ -442,6 +442,8 @@ def record_episode_start(simulator, phase, episode_number, initial_state):
         "simulation_frequency_hz": int(simulation_frequency),
         "num_lanes": int(NUM_LANES),
         "managed_surrounding_vehicle_slots": int(NUM_SURROUNDING_VEHICLES),
+        "simulated_surrounding_vehicles": int(NUM_TRAFFIC_VEHICLES),
+        "traffic_reference_range_each_direction_m": float(Traffic_relevant_range),
         "speed_limit_mps": float(SPEED_LIMIT),
         "initial_state": np.asarray(initial_state, dtype=np.float32).tolist(),
         "vehicles": snapshot_simulator_vehicles(simulator),
@@ -748,6 +750,12 @@ class HighwaySimulator:
                     "type": "Kinematics",
                     "vehicles_count": NUM_VEHICLE_ROWS,
                     "features": ["presence", "x", "y", "vx", "vy", "cos_h", "sin_h"],
+                    "features_range": {
+                        "x": [-1000.0, 1000.0],
+                        "y": [-12.0, 12.0],
+                        "vx": [-40.0, 40.0],
+                        "vy": [-10.0, 10.0],
+                    },
                     "absolute": False,
                     "normalize": True,
                     "order": "sorted",
@@ -3052,7 +3060,7 @@ class HighwaySimulator:
 
         self.step_count += 1
         self._maintain_traffic_population()
-        obs = base_env.observation_type.observe()
+        obs = self._build_six_slot_observation()
         next_state = self._encode_state(obs)
         self._assert_traffic_invariant("instant_step")
 
