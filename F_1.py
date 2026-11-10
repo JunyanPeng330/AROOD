@@ -880,12 +880,21 @@ class HighwaySimulator:
                 RANDOMIZED_FRONT_GAP_MIN, RANDOMIZED_FRONT_GAP_MAX)
             self.traffic_rear_gap = random.uniform(
                 RANDOMIZED_REAR_GAP_MIN, RANDOMIZED_REAR_GAP_MAX)
+        if self.randomize_traffic_gaps:
+            front_gap_description = (
+                f"{RANDOMIZED_FRONT_GAP_MIN:.0f}-{RANDOMIZED_FRONT_GAP_MAX:.0f}m, independently sampled"
+            )
+            rear_gap_description = (
+                f"{RANDOMIZED_REAR_GAP_MIN:.0f}-{RANDOMIZED_REAR_GAP_MAX:.0f}m, independently sampled"
+            )
+        else:
+            front_gap_description = f"{self.traffic_front_gap:.0f}m fixed"
+            rear_gap_description = f"{self.traffic_rear_gap:.0f}m fixed"
         print(
             "[TRAFFIC SCENARIO]",
             f"managed_slots={NUM_SURROUNDING_VEHICLES} (nearest front/rear in each of {NUM_LANES} lanes)",
-            f"front_gap_m={f'{RANDOMIZED_FRONT_GAP_MIN:.0f}-{RANDOMIZED_FRONT_GAP_MAX:.0f}' if self.randomize_traffic_gaps else f'{self.traffic_front_gap:.0f} fixed'}",
-            f"rear_gap_m={f'{RANDOMIZED_REAR_GAP_MIN:.0f}-{RANDOMIZED_REAR_GAP_MAX:.0f}' if self.randomize_traffic_gaps else f'{self.traffic_rear_gap:.0f} fixed'}",
-            f"gap_sampling={'independent_per_slot' if self.randomize_traffic_gaps else 'fixed_baseline'}",
+            f"front_gap={front_gap_description}",
+            f"rear_gap={rear_gap_description}",
             f"speed_mps={TRAFFIC_SPEED_MIN:.0f}-{TRAFFIC_SPEED_MAX:.0f}",
             f"speed_delta_mix={TRAFFIC_SPEED_MATCHED_PROB:.0%}[-3,+3],"
             f"{TRAFFIC_SPEED_POSITION_CHALLENGE_PROB:.0%}[front:-8..-3/rear:+3..+6],"
