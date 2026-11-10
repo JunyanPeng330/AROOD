@@ -4177,7 +4177,7 @@ def train_pure_rl(simulator, policy):
     # Episode-level evaluation metrics:
     # episode_collision_indicator: 1 if any collision occurs, otherwise 0.
     # lane_change_rate: completed lane changes divided by policy decisions.
-    # safe_travel_dis: distance accumulated on collision-free transitions.
+    # safe_travel_dis: road-longitudinal distance accumulated on collision-free transitions.
     # safe_step_count: completed collision-free transitions before first collision.
     collision_rate_history = []
     lane_change_rate_history = []
@@ -4227,7 +4227,9 @@ def train_pure_rl(simulator, policy):
         collisions = 0
         first_collision_step = None
         safe_travel_dis = 0.0
-        previous_ego_position = np.asarray(simulator.env.unwrapped.vehicle.position, dtype=np.float64).copy()
+        # Measure road-longitudinal displacement, not Euclidean XY displacement:
+        # instantaneous lane changes move laterally and must not add fake distance.
+        previous_ego_s = float(simulator._road_longitudinal_position(simulator.env.unwrapped.vehicle))
         episode_actor_losses = []
         episode_critic_losses = []
         episode_speed_samples = []
@@ -4319,9 +4321,9 @@ def train_pure_rl(simulator, policy):
                 if isinstance(step_info, dict) else step_info
             )
             collisions += int(collision_occurred)
-            current_ego_position = np.asarray(
-                simulator.env.unwrapped.vehicle.position, dtype=np.float64
-            ).copy()
+            current_ego_s = float(
+                simulator._road_longitudinal_position(simulator.env.unwrapped.vehicle)
+            )
             if collision_occurred:
                 if first_collision_step is None:
                     # 1-based index: a collision on the first transition is step 1.
@@ -4330,11 +4332,9 @@ def train_pure_rl(simulator, policy):
             elif first_collision_step is None:
                 # Count only transitions before the first collision in both the
                 # safe-distance and safe-intervention numerators.
-                safe_travel_dis += float(
-                    np.linalg.norm(current_ego_position - previous_ego_position)
-                )
+                safe_travel_dis += max(0.0, current_ego_s - previous_ego_s)
                 safe_intervention_steps += intervention_step_this_step
-            previous_ego_position = current_ego_position
+            previous_ego_s = current_ego_s
 
             safety_violation = collision_occurred
             lane_info = simulator.get_lane_information()
