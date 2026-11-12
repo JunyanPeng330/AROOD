@@ -121,8 +121,12 @@ class ContinuousTrafficVehicle(base.Vehicle):
 # 3. Replace the old six-vehicle traffic manager
 # ---------------------------------------------------------------------------
 
+_ORIGINAL_ROAD_LONGITUDINAL_POSITION = base.HighwaySimulator._road_longitudinal_position
+_ORIGINAL_STATE_ENCODER = base.HighwaySimulator._encode_state
+
+
 def _road_s(self, vehicle):
-    return float(base.HighwaySimulator._road_longitudinal_position(self, vehicle))
+    return float(_ORIGINAL_ROAD_LONGITUDINAL_POSITION(self, vehicle))
 
 
 def _vehicle_length(vehicle):
@@ -466,7 +470,7 @@ def _six_slot_state(self, obs=None):
         rows.append(encode_vehicle(slots[(lane_id, "rear")]))
 
     # The original encoder appends context and per-lane safety features.
-    return base.HighwaySimulator._encode_state(
+    return _ORIGINAL_STATE_ENCODER(
         self, np.asarray(rows, dtype=np.float32)
     )
 
