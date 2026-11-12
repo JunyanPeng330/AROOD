@@ -95,6 +95,7 @@ POLICY_ACTION_DIM = base.POLICY_ACTION_DIM
 
 MODEL_PATH = os.path.join("policy", "U_acceleration_oriented.pt")
 PLOT_PATH = os.path.join("figure", "U_training_return.png")
+PLOT_TXT_PATH = os.path.join("figure", "plot_U.txt")
 METRICS_PATH = os.path.join("figure", "U_episode_metrics.jsonl")
 base.EPISODE_TRAJECTORY_PATH = os.path.join("figure", "U_trajectories.jsonl")
 
@@ -780,6 +781,7 @@ def train(simulator, policy):
     metrics_history = []
 
     for episode in range(NUM_EPISODES):
+        episode_start_time = time.time()
         simulator._trace_phase = "V2_acceleration_oriented"
         simulator._trace_episode = episode + 1
         state = np.asarray(simulator.reset(seed=SEED + episode), dtype=np.float32)
@@ -945,6 +947,7 @@ def train(simulator, policy):
             "traffic_population": len(simulator.env.unwrapped.road.vehicles) - 1,
             "traffic_spawned_total": int(getattr(simulator, "_traffic_spawn_count", 0)),
             "traffic_removed_total": int(getattr(simulator, "_traffic_removal_count", 0)),
+            "episode_time_seconds": float(time.time() - episode_start_time),
         }
         metrics_history.append(row)
         episode_returns.append(float(episode_return))
@@ -988,6 +991,105 @@ def train(simulator, policy):
     plt.tight_layout()
     plt.savefig(PLOT_PATH)
     plt.close()
+
+    # Save a compact text summary and the complete per-episode histories,
+    # following the plot.txt workflow used in V.py.
+    def _mean_metric(key):
+        values = [float(item[key]) for item in metrics_history if key in item]
+        return float(np.mean(values)) if values else 0.0
+
+    with open(PLOT_TXT_PATH, "w", encoding="utf-8") as f:
+        f.write(f"collision_rate={_mean_metric('collision_rate'):.4f}\\n")
+        f.write(f"lane_change_rate={_mean_metric('lane_change_rate'):.4f}\\n")
+        f.write(
+            f"safe_travel_distance={_mean_metric('safe_travel_distance_m'):.2f} "
+            "m/episode (mean)\\n"
+        )
+        f.write(f"steps={_mean_metric('steps'):.2f} steps/episode (mean)\\n")
+        f.write(
+            f"lane_change_rejection_rate={_mean_metric('lane_change_rejection_rate'):.4f} "
+            "(per-request rate)\\n"
+        )
+        f.write(f"mean_speed={_mean_metric('mean_speed_mps'):.2f} m/s\\n")
+        f.write(
+            f"speed_at_least_90pct_limit={_mean_metric('speed_at_least_90pct_limit'):.4f}\\n"
+        )
+        f.write(
+            f"mean_acceleration_reward={_mean_metric('mean_acceleration_reward'):.4f}\\n"
+        )
+        f.write(f"mean_lane_change_cost={_mean_metric('mean_lane_change_cost'):.4f}\\n")
+        f.write(
+            f"mean_actor_loss={_mean_metric('mean_actor_loss'):.6f}\\n"
+        )
+        f.write(
+            f"mean_critic_loss={_mean_metric('mean_critic_loss'):.6f}\\n"
+        )
+        f.write(
+            f"episode_time_seconds={_mean_metric('episode_time_seconds'):.2f} "
+            "seconds/episode (mean)\\n"
+        )
+        f.write("reward:\\n" + str(episode_returns) + "\\n")
+        f.write(
+            "collision:\\n"
+            + str([int(item["collisions"]) for item in metrics_history]) + "\\n"
+        )
+        f.write(
+            "collision_rate:\\n"
+            + str([float(item["collision_rate"]) for item in metrics_history]) + "\\n"
+        )
+        f.write(
+            "safe_travel_distance:\\n"
+            + str([float(item["safe_travel_distance_m"]) for item in metrics_history])
+            + "\\n"
+        )
+        f.write(
+            "safe_step_count:\\n"
+            + str([
+                int(item["steps"]) if item["collisions"] == 0
+                else max(0, int(item["steps"]) - 1)
+                for item in metrics_history
+            ]) + "\\n"
+        )
+        f.write(
+            "lane_change:\\n"
+            + str([int(item["lane_changes"]) for item in metrics_history]) + "\\n"
+        )
+        f.write(
+            "episode_times:\\n"
+            + str([float(item["episode_time_seconds"]) for item in metrics_history])
+            + "\\n"
+        )
+        f.write(
+            "lane_change_rate:\\n"
+            + str([float(item["lane_change_rate"]) for item in metrics_history])
+            + "\\n"
+        )
+        f.write(
+            "mean_step_reward:\\n"
+            + str([
+                float(item["return"]) / max(int(item["steps"]), 1)
+                for item in metrics_history
+            ]) + "\\n"
+        )
+        f.write(
+            "mean_speed_mps:\\n"
+            + str([float(item["mean_speed_mps"]) for item in metrics_history])
+            + "\\n"
+        )
+        f.write(
+            "lane_change_rejection_rate:\\n"
+            + str([
+                float(item["lane_change_rejection_rate"])
+                for item in metrics_history
+            ]) + "\\n"
+        )
+        f.write(
+            "traffic_population:\\n"
+            + str([int(item["traffic_population"]) for item in metrics_history])
+            + "\\n"
+        )
+
+    print(f"[PLOT TXT SAVED] {PLOT_TXT_PATH}")
 
     return {"policy": policy, "episode_returns": episode_returns,
             "metrics": metrics_history}
