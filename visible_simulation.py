@@ -1,8 +1,8 @@
-"""Replay recorded AROOD training episodes without creating a simulator or loading a policy.
+"""Replay recorded U.py acceleration-oriented training episodes.
 
-A.py appends actual pre/post vehicle states and decision context to
-figures/episode_trajectories.jsonl. This script only reads that archive and
-animates the recorded positions; it never calls env.reset(), env.step(), or a policy.
+U.py writes complete pre/post traffic snapshots and decision context to
+figure/U_trajectories.jsonl. This script only reads that archive and animates
+the recorded positions; it never creates or steps a simulator or loads a policy.
 """
 import argparse
 import json
@@ -12,12 +12,9 @@ from collections import OrderedDict
 import matplotlib.pyplot as plt
 from matplotlib.animation import FuncAnimation
 from matplotlib.patches import Polygon
-import TRAM_E_NewReward
-
-
-DEFAULT_ARCHIVE = TRAM_E_NewReward.EPISODE_TRAJECTORY_PATH
-gif_save_path = 'figure/videos/replay_26.gif'
-Episode = 99
+DEFAULT_ARCHIVE = os.path.join("figure", "U_trajectories.jsonl")
+DEFAULT_REPLAY_PATH = os.path.join("figure", "videos", "U_replay_episode_50.gif")
+Episode = 50
 
 
 def load_archive(path):
@@ -307,16 +304,17 @@ def replay_episode(start, frames, playback_speed=1.0, save_path=gif_save_path):
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Replay a previously recorded AROOD episode; no new environment is created."
+        description="Replay a previously recorded U.py episode; no new environment is created."
     )
     parser.add_argument("--archive", default=DEFAULT_ARCHIVE, help=f"JSONL archive (default: {DEFAULT_ARCHIVE}).")
-    parser.add_argument("--phase", default="pure_rl", choices=("pure_rl", "reference_collection"),
-                        help="Training phase to replay (default: pure_rl).")
+    parser.add_argument("--phase", default="V2_acceleration_oriented",
+                        help="Recorded phase to replay (default: V2_acceleration_oriented).")
     parser.add_argument("--episode", type=int, default=Episode, help="1-based episode number within the selected phase.")
     parser.add_argument("--run-id", default=None, help="Optional exact run_id; without it, the newest matching episode is used.")
     parser.add_argument("--speed", type=float, default=1.0, help="Playback speed multiplier (default: 1.0).")
     parser.add_argument("--list", action="store_true", help="List recorded episodes and exit.")
-    parser.add_argument("--save", default=None, help="Optional output .mp4 or .gif path.")
+    parser.add_argument("--save", default=DEFAULT_REPLAY_PATH,
+                        help=f"Output .gif path (default: {DEFAULT_REPLAY_PATH}).")
     args = parser.parse_args()
 
     records = load_archive(args.archive)
@@ -331,7 +329,7 @@ def main():
     print(f"[REPLAY] episode key: {key}")
     print(f"[REPLAY] recorded frames: {len(frames)} (including initial state)")
     print("[REPLAY] policy inference: disabled; simulator stepping: disabled")
-    replay_episode(start, frames, playback_speed=args.speed, save_path=gif_save_path)
+    replay_episode(start, frames, playback_speed=args.speed, save_path=args.save)
 
 
 if __name__ == "__main__":
@@ -346,13 +344,13 @@ cd /d F:\Doctoral_2
 # List recorded episodes
 python visible_simulation.py --list
 
-# Replay online RL episode 1
-python visible_simulation.py --phase pure_rl --episode 1
+# Replay U.py episode 50 (the default phase and archive)
+python visible_simulation.py --episode 50
 
-# Replay reference-collection episode 12
-python visible_simulation.py --phase reference_collection --episode 12
+# Replay another U.py episode
+python visible_simulation.py --phase V2_acceleration_oriented --episode 12
 
-# Save a replay as a GIF
-python visible_simulation.py --phase pure_rl --episode 1 --save save_path
+# Save a replay to a custom GIF path
+python visible_simulation.py --episode 50 --save figure/videos/U_episode_50.gif
 
 '''
