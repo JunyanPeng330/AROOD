@@ -88,6 +88,7 @@ POLICY_ACTION_DIM = base.POLICY_ACTION_DIM
 MODEL_PATH = os.path.join("policy", "V2_acceleration_oriented.pt")
 PLOT_PATH = os.path.join("figure", "V2_training_return.png")
 METRICS_PATH = os.path.join("figure", "V2_episode_metrics.jsonl")
+base.EPISODE_TRAJECTORY_PATH = os.path.join("figure", "V2_trajectories.jsonl")
 
 random.seed(SEED)
 np.random.seed(SEED)
