@@ -215,7 +215,10 @@ def _spawn_traffic_vehicle(self, lane_id, longitudinal, speed):
 def _safe_spawn_position(self, lane_id, longitudinal, minimum_gap):
     ego = self.env.unwrapped.vehicle
     ego_s = _road_s(self, ego)
-    if int(lane_id) == int(ego.lane_index[2]) and abs(longitudinal - ego_s) < minimum_gap:
+    # Keep an insertion buffer around ego in every lane, not only the
+    # currently occupied lane, so an adjacent-lane vehicle cannot begin
+    # immediately alongside ego and create an artificial lane-change hazard.
+    if abs(longitudinal - ego_s) < minimum_gap:
         return False
     for other in _traffic_in_lane(self, lane_id):
         gap = abs(_road_s(self, other) - longitudinal)
