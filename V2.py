@@ -73,6 +73,14 @@ EMERGENCY_FRONT_TTC_S = 1.5
 LANE_CHANGE_COST_WEIGHT = 0.2
 COLLISION_PENALTY = 5.0
 
+# Temporal resolution (Hz)
+# Keep these equal in V2: the inherited HighwaySimulator applies one
+# instantaneous lane decision per environment step, so 1 policy decision
+# corresponds to 1 simulator update. Change both together unless the action
+# execution wrapper is redesigned for multiple simulator substeps.
+SIMULATION_FREQUENCY_HZ = 15
+POLICY_FREQUENCY_HZ = 15
+
 # Training
 NUM_EPISODES = 50
 MAX_STEPS_PER_EPISODE = 500
@@ -990,6 +998,17 @@ def main():
     print(f"Reference range: ±{REFERENCE_RANGE_M:.0f}m")
     print(f"Recycling boundary: ±{RECYCLING_BOUNDARY_M:.0f}m")
     print(f"Target background population: {TRAFFIC_TARGET_COUNT}")
+    print(
+        f"Temporal resolution: simulation={SIMULATION_FREQUENCY_HZ}Hz, "
+        f"policy={POLICY_FREQUENCY_HZ}Hz"
+    )
+
+    # V.py reads these module-level values when constructing HighwaySimulator.
+    # Set them before create_highway_simulator() so the top-level V2 settings
+    # are the actual frequencies used by the environment.
+    base.simulation_frequency = SIMULATION_FREQUENCY_HZ
+    base.policy_frequency = POLICY_FREQUENCY_HZ
+
     print("Ego observation: fixed six slots (nearest front/rear in each lane)")
     print("Lane selection: hard safety filter -> predicted acceleration ranking")
     print("Reward: normalized measured acceleration - executed lane-change cost - collision penalty")
