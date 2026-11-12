@@ -145,7 +145,7 @@ def rotated_rectangle(position, heading, length, width):
     ]
 
 
-def replay_episode(start, frames, playback_speed=1.0, save_path=gif_save_path):
+def replay_episode(start, frames, playback_speed=1.0, save_path=DEFAULT_REPLAY_PATH):
     fig, ax = plt.subplots(figsize=(13, 6))
     fig.canvas.manager.set_window_title(
         f"AROOD recorded episode — {start.get('phase')} #{start.get('episode_number')}"
