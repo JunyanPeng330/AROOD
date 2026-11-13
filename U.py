@@ -94,10 +94,9 @@ LANE_CHANGE_COST_WEIGHT = 0.2
 COLLISION_PENALTY = 5.0
 
 # Temporal resolution (Hz)
-# Keep these equal in V2: the inherited HighwaySimulator applies one
-# instantaneous lane decision per environment step, so 1 policy decision
-# corresponds to 1 simulator update. Change both together unless the action
-# execution wrapper is redesigned for multiple simulator substeps.
+# Keep these equal: the inherited HighwaySimulator applies one instantaneous
+# ego lane decision per environment step, so 1 policy decision corresponds to
+# 1 simulator update. Background ADT events are scaled by simulation dt.
 SIMULATION_FREQUENCY_HZ = 15
 POLICY_FREQUENCY_HZ = 15
 
@@ -1219,9 +1218,14 @@ def train(simulator, policy):
             "adt_slot_observations": int(getattr(
                 simulator, "_adt_slot_observation_count", 0
             )),
-            "traffic_profile_counts": dict(getattr(
-                simulator, "_adt_profile_counts", {}
-            )),
+            "traffic_profile_counts": {
+                name: sum(
+                    getattr(vehicle, "_arood_adt_profile", "normal") == name
+                    for vehicle in simulator.env.unwrapped.road.vehicles
+                    if vehicle is not simulator.env.unwrapped.vehicle
+                )
+                for name, _ in ADT_PROFILE_MIX
+            },
             "traffic_spawned_total": int(getattr(simulator, "_traffic_spawn_count", 0)),
             "traffic_removed_total": int(getattr(simulator, "_traffic_removal_count", 0)),
             "episode_time_seconds": float(time.time() - episode_start_time),
@@ -1245,6 +1249,7 @@ def train(simulator, policy):
             f"traffic={row['traffic_population']} "
             f"bg_lane_changes={row['adt_background_lane_changes']} "
             f"slot_replacements={row['adt_six_slot_replacements']} "
+            f"slot_replacement_rate={row['adt_six_slot_replacement_rate_per_slot_observation']:.3%} "
             f"spawned={row['traffic_spawned_total']} "
             f"removed={row['traffic_removed_total']}"
         )
