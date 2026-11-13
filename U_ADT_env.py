@@ -29,20 +29,12 @@ NUM_LANES = 3
 SPEED_LIMIT_MPS = 40.0
 
 # Traffic population and spatial management
-TRAFFIC_TARGET_COUNT = 15
+TRAFFIC_TARGET_COUNT = 20
 REFERENCE_RANGE_M = 500.0
 RECYCLING_BOUNDARY_M = 700.0
-INITIAL_PLACEMENT_RANGE_M = 350.0
+INITIAL_PLACEMENT_RANGE_M = 470.0
 MIN_INITIAL_GAP_M = 32.0
 MIN_INSERTION_GAP_M = 35.0
-
-# Maintain at least one front vehicle in every lane, not only the ego lane.
-# Coverage vehicles are inserted well inside the ±500m observation range.
-FRONT_COVERAGE_MAX_DISTANCE_M = 450.0
-FRONT_COVERAGE_SPAWN_MIN_DISTANCE_M = 180.0
-FRONT_COVERAGE_SPAWN_MAX_DISTANCE_M = 420.0
-FRONT_COVERAGE_SPEED_OFFSET_MIN_MPS = 2.0
-FRONT_COVERAGE_SPEED_OFFSET_MAX_MPS = 7.0
 TRAFFIC_MIN_SPEED_MPS = 15.0
 TRAFFIC_MAX_SPEED_MPS = 42.0
 
@@ -56,29 +48,28 @@ IDM_ACCEL_EXPONENT = 4.0
 # Aggressive Dynamic Traffic (ADT): proportions of mutually exclusive profiles.
 # These are vehicle-type proportions, not per-step event probabilities.
 ADT_PROFILE_MIX = (
-    ("normal", 0.40),
-    ("aggressive", 0.30),
-    ("unstable", 0.20),
-    ("slow", 0.10),
+    ("normal", 0.35),
+    ("tailgater", 0.20),
+    ("lane_changer", 0.20),
+    ("sudden_braker", 0.10),
+    ("fast_overtaker", 0.15),
 )
-ADT_TAILGATE_HEADWAY_S = 0.70
-ADT_TAILGATE_MIN_GAP_M = 3.0
+ADT_TAILGATE_HEADWAY_S = 0.65
+ADT_TAILGATE_MIN_GAP_M = 2.5
 ADT_AGGRESSIVE_MAX_ACCEL_MPS2 = 3.2
 ADT_AGGRESSIVE_BRAKING_MPS2 = 5.5
-ADT_LANE_CHANGE_RATE_PER_S = 0.22
-ADT_OVERTAKER_LANE_CHANGE_RATE_PER_S = 0.28
-ADT_LANE_CHANGE_COOLDOWN_S = 2.5
-ADT_LANE_CHANGE_FRONT_GAP_M = 9.0
-ADT_LANE_CHANGE_REAR_GAP_M = 9.0
+ADT_LANE_CHANGE_RATE_PER_S = 0.16
+ADT_OVERTAKER_LANE_CHANGE_RATE_PER_S = 0.12
+ADT_LANE_CHANGE_COOLDOWN_S = 3.0
+ADT_LANE_CHANGE_FRONT_GAP_M = 8.0
+ADT_LANE_CHANGE_REAR_GAP_M = 8.0
 ADT_LANE_CHANGE_FRONT_TTC_S = 1.5
 ADT_LANE_CHANGE_REAR_TTC_S = 1.2
-ADT_LANE_CHANGE_IMPROVEMENT_MPS = 1.5
-ADT_LANE_CHANGE_TRIGGER_GAP_M = 38.0
-ADT_SUDDEN_BRAKE_EVENT_RATE_PER_S = 0.075
+ADT_LANE_CHANGE_IMPROVEMENT_MPS = 2.0
+ADT_LANE_CHANGE_TRIGGER_GAP_M = 28.0
+ADT_SUDDEN_BRAKE_EVENT_RATE_PER_S = 0.035
 ADT_SUDDEN_BRAKE_ACCEL_MPS2 = -4.5
-ADT_SUDDEN_BRAKE_DURATION_S = 0.7
-ADT_UNSTABLE_ACCEL_EVENT_RATE_PER_S = 0.055
-ADT_UNSTABLE_ACCEL_PULSE_MPS2 = 2.5
+ADT_SUDDEN_BRAKE_DURATION_S = 0.8
 ADT_SPEED_VARIATION_MPS = 5.0
 
 # Ego acceleration-potential prediction
@@ -148,12 +139,12 @@ class ContinuousTrafficVehicle(base.Vehicle):
         profile = getattr(self, "_arood_adt_profile", "normal")
         max_braking = (
             ADT_AGGRESSIVE_BRAKING_MPS2
-            if profile in ("aggressive", "unstable")
+            if profile in ("tailgater", "lane_changer", "sudden_braker", "fast_overtaker")
             else IDM_COMFORTABLE_BRAKING_MPS2
         )
         max_acceleration = (
             ADT_AGGRESSIVE_MAX_ACCEL_MPS2
-            if profile == "aggressive"
+            if profile in ("tailgater", "lane_changer", "fast_overtaker")
             else IDM_MAX_ACCEL_MPS2
         )
         self.action = {
@@ -257,15 +248,18 @@ def _spawn_traffic_vehicle(self, lane_id, longitudinal, speed):
     if profile == "normal":
         headway, min_gap = IDM_TIME_HEADWAY_S, IDM_MIN_GAP_M
         desired_low, desired_high = 30.0, SPEED_LIMIT_MPS
-    elif profile == "aggressive":
+    elif profile == "tailgater":
         headway, min_gap = ADT_TAILGATE_HEADWAY_S, ADT_TAILGATE_MIN_GAP_M
-        desired_low, desired_high = 36.0, TRAFFIC_MAX_SPEED_MPS
-    elif profile == "unstable":
-        headway, min_gap = 1.0, 3.5
-        desired_low, desired_high = 29.0, TRAFFIC_MAX_SPEED_MPS
-    else:
-        headway, min_gap = 1.8, 6.0
-        desired_low, desired_high = 23.0, 30.0
+        desired_low, desired_high = 34.0, TRAFFIC_MAX_SPEED_MPS
+    elif profile == "lane_changer":
+        headway, min_gap = 0.9, 3.5
+        desired_low, desired_high = 34.0, TRAFFIC_MAX_SPEED_MPS
+    elif profile == "sudden_braker":
+        headway, min_gap = 1.2, 4.0
+        desired_low, desired_high = 28.0, SPEED_LIMIT_MPS
+    else:  # fast_overtaker
+        headway, min_gap = 0.9, 3.5
+        desired_low, desired_high = 38.0, TRAFFIC_MAX_SPEED_MPS
     vehicle._arood_idm_headway_s = headway
     vehicle._arood_idm_min_gap_m = min_gap
     vehicle._arood_desired_speed = float(np.clip(
@@ -326,10 +320,6 @@ def _initialize_continuous_traffic(self):
     self._traffic_spawn_count = spawned
     self._traffic_removal_count = 0
     self._traffic_pending_replacements = 0
-    self._adt_front_coverage_spawn_count = 0
-    self._adt_front_coverage_attempt_failures = 0
-    # Fill any lane that lacks a front vehicle before the first observation.
-    _ensure_lane_front_coverage(self)
     self._adt_background_lane_change_count = 0
     self._adt_slot_replacement_count = 0
     self._adt_slot_observation_count = 0
@@ -343,7 +333,6 @@ def _initialize_continuous_traffic(self):
         "[ADT TRAFFIC INITIALIZED]",
         f"vehicles={spawned}",
         f"profiles={self._adt_profile_counts}",
-        "profile_targets=normal:40%, aggressive:30%, unstable:20%, slow:10%",
         f"reference=±{REFERENCE_RANGE_M:.0f}m",
         f"recycling=±{RECYCLING_BOUNDARY_M:.0f}m",
         "ego_observation_slots=6",
@@ -375,12 +364,12 @@ def _adt_vehicle_acceleration(self, vehicle):
     min_gap = float(getattr(vehicle, "_arood_idm_min_gap_m", IDM_MIN_GAP_M))
     max_accel = (
         ADT_AGGRESSIVE_MAX_ACCEL_MPS2
-        if profile == "aggressive"
+        if profile in ("tailgater", "lane_changer", "fast_overtaker")
         else IDM_MAX_ACCEL_MPS2
     )
     comfortable_braking = (
         ADT_AGGRESSIVE_BRAKING_MPS2
-        if profile in ("aggressive", "unstable") else IDM_COMFORTABLE_BRAKING_MPS2
+        if profile != "normal" else IDM_COMFORTABLE_BRAKING_MPS2
     )
     free_term = (speed / max(desired_speed, 1e-3)) ** IDM_ACCEL_EXPONENT
     if front is None or not np.isfinite(front_gap):
@@ -399,10 +388,10 @@ def _adt_vehicle_acceleration(self, vehicle):
             1.0 - free_term - (desired_gap / gap) ** 2
         )
 
-    # Unstable drivers occasionally brake hard or accelerate in short pulses.
-    # Event rates are scaled by simulation dt rather than policy-step count.
+    # A sudden-braker profile occasionally initiates a short, bounded braking
+    # event. Probability is scaled by simulation dt, not applied per episode.
     dt = 1.0 / max(1.0, float(SIMULATION_FREQUENCY_HZ))
-    if profile == "unstable":
+    if profile == "sudden_braker":
         remaining = int(getattr(vehicle, "_arood_brake_steps_remaining", 0))
         if remaining > 0:
             vehicle._arood_brake_steps_remaining = remaining - 1
@@ -412,8 +401,6 @@ def _adt_vehicle_acceleration(self, vehicle):
                 1, int(round(ADT_SUDDEN_BRAKE_DURATION_S / dt))
             )
             acceleration = min(acceleration, ADT_SUDDEN_BRAKE_ACCEL_MPS2)
-        elif random.random() < ADT_UNSTABLE_ACCEL_EVENT_RATE_PER_S * dt:
-            acceleration = max(acceleration, ADT_UNSTABLE_ACCEL_PULSE_MPS2)
 
     self.adt_try_lane_change(vehicle)
     return float(np.clip(acceleration, -comfortable_braking, max_accel))
@@ -422,9 +409,7 @@ def _adt_vehicle_acceleration(self, vehicle):
 def _adt_try_lane_change(self, vehicle):
     """Occasional independent lane changes with explicit collision-avoidance gaps."""
     profile = getattr(vehicle, "_arood_adt_profile", "normal")
-    if getattr(vehicle, "_arood_front_coverage_guard", False):
-        return False
-    if profile != "aggressive":
+    if profile not in ("lane_changer", "fast_overtaker", "tailgater"):
         return False
     cooldown = int(getattr(vehicle, "_arood_lane_change_cooldown", 0))
     if cooldown > 0:
@@ -444,7 +429,11 @@ def _adt_try_lane_change(self, vehicle):
             current_front, current_front_gap = other, gap
 
     dt = 1.0 / max(1.0, float(SIMULATION_FREQUENCY_HZ))
-    rate = ADT_OVERTAKER_LANE_CHANGE_RATE_PER_S
+    rate = (
+        ADT_OVERTAKER_LANE_CHANGE_RATE_PER_S
+        if profile == "fast_overtaker"
+        else ADT_LANE_CHANGE_RATE_PER_S
+    )
     should_consider = (
         current_front is not None
         and current_front_gap < ADT_LANE_CHANGE_TRIGGER_GAP_M
@@ -543,67 +532,6 @@ def _adt_slot_diagnostics(self, slots):
     self._adt_last_slot_uids = current
 
 
-def _lane_has_front_vehicle(self, lane_id, ego_s):
-    """Whether a lane has a front vehicle inside the active reference range."""
-    for vehicle in _traffic_in_lane(self, lane_id):
-        delta = _road_s(self, vehicle) - ego_s
-        if 0.0 < delta <= FRONT_COVERAGE_MAX_DISTANCE_M:
-            return True
-    return False
-
-
-def _ensure_lane_front_coverage(self):
-    """Ensure all three lanes have a front vehicle within the reference range.
-
-    Coverage vehicles are placed 180–420m ahead, subject to safe spacing.
-    They are protected from background lane changes so one lane cannot be
-    repeatedly emptied by the traffic manager's own coverage vehicles.
-    """
-    ego = self.env.unwrapped.vehicle
-    ego_s = _road_s(self, ego)
-    ego_speed = max(0.0, float(ego.speed))
-    inserted = 0
-
-    for lane_id in range(NUM_LANES):
-        if _lane_has_front_vehicle(self, lane_id, ego_s):
-            continue
-
-        # A slower front vehicle creates a future closing/acceleration decision
-        # while remaining far enough away to avoid an artificial immediate hazard.
-        speed = max(
-            TRAFFIC_MIN_SPEED_MPS,
-            ego_speed - random.uniform(
-                FRONT_COVERAGE_SPEED_OFFSET_MIN_MPS,
-                FRONT_COVERAGE_SPEED_OFFSET_MAX_MPS,
-            ),
-        )
-        speed = min(speed, TRAFFIC_MAX_SPEED_MPS)
-
-        spawned = False
-        for _ in range(80):
-            longitudinal = ego_s + random.uniform(
-                FRONT_COVERAGE_SPAWN_MIN_DISTANCE_M,
-                FRONT_COVERAGE_SPAWN_MAX_DISTANCE_M,
-            )
-            if not _safe_spawn_position(
-                self, lane_id, longitudinal, MIN_INSERTION_GAP_M
-            ):
-                continue
-
-            vehicle = _spawn_traffic_vehicle(self, lane_id, longitudinal, speed)
-            vehicle._arood_front_coverage_guard = True
-            self._traffic_spawn_count += 1
-            self._adt_front_coverage_spawn_count += 1
-            inserted += 1
-            spawned = True
-            break
-
-        if not spawned:
-            self._adt_front_coverage_attempt_failures += 1
-
-    return inserted
-
-
 def _spawn_boundary_replacement(self):
     """Insert only beyond the active reference range, with a safe-gap check."""
     ego = self.env.unwrapped.vehicle
@@ -679,15 +607,8 @@ def _maintain_continuous_traffic(self):
         if not _spawn_boundary_replacement(self):
             break
 
-    # Refill lane-specific front coverage after removals and background
-    # lane changes. This runs every simulator step, independent of ego lane.
-    front_coverage_inserted = _ensure_lane_front_coverage(self)
-
     return {
         "population": len(road.vehicles) - 1,
-        "front_coverage_inserted": int(front_coverage_inserted),
-        "front_coverage_spawned_total": int(self._adt_front_coverage_spawn_count),
-        "front_coverage_failures": int(self._adt_front_coverage_attempt_failures),
         "spawned_total": int(self._traffic_spawn_count),
         "removed_total": int(self._traffic_removal_count),
         "pending_replacements": int(self._traffic_pending_replacements),
@@ -1307,19 +1228,6 @@ def train(simulator, policy):
             },
             "traffic_spawned_total": int(getattr(simulator, "_traffic_spawn_count", 0)),
             "traffic_removed_total": int(getattr(simulator, "_traffic_removal_count", 0)),
-            "adt_front_coverage_spawned": int(getattr(
-                simulator, "_adt_front_coverage_spawn_count", 0
-            )),
-            "adt_front_coverage_failures": int(getattr(
-                simulator, "_adt_front_coverage_attempt_failures", 0
-            )),
-            "adt_lanes_with_front_vehicle": sum(
-                _lane_has_front_vehicle(
-                    simulator, lane_id,
-                    _road_s(simulator, simulator.env.unwrapped.vehicle)
-                )
-                for lane_id in range(NUM_LANES)
-            ),
             "episode_time_seconds": float(time.time() - episode_start_time),
         }
         metrics_history.append(row)
@@ -1343,10 +1251,7 @@ def train(simulator, policy):
             f"slot_replacements={row['adt_six_slot_replacements']} "
             f"slot_replacement_rate={row['adt_six_slot_replacement_rate_per_slot_observation']:.3%} "
             f"spawned={row['traffic_spawned_total']} "
-            f"removed={row['traffic_removed_total']} "
-            f"front_refills={row['adt_front_coverage_spawned']} "
-            f"front_lanes={row['adt_lanes_with_front_vehicle']}/3 "
-            f"front_refill_failures={row['adt_front_coverage_failures']}"
+            f"removed={row['traffic_removed_total']}"
         )
 
     torch.save(policy.state_dict(), MODEL_PATH)
@@ -1475,18 +1380,14 @@ def train(simulator, policy):
 
 
 def main():
-    print("[U] Pure RL with Compact Interactive Dynamic Traffic (ADT)")
+    print("[U] Pure RL with Aggressive Dynamic Traffic (ADT)")
     print(f"Reference range: ±{REFERENCE_RANGE_M:.0f}m")
     print(f"Recycling boundary: ±{RECYCLING_BOUNDARY_M:.0f}m")
     print(f"Target background population: {TRAFFIC_TARGET_COUNT}")
     print(f"ADT profile mix: {dict(ADT_PROFILE_MIX)}")
     print(
-        "Traffic design: 15 baseline vehicles plus lane-aware front coverage; "
-        "all 3 lanes are maintained with a front vehicle inside ±450m"
-    )
-    print(
-        "ADT behaviors: interactive IDM, aggressive overtaking/lane changes, "
-        "unstable acceleration/braking, and slower vehicles"
+        "ADT behaviors: profile-conditioned IDM, tailgating, independent lane changes, "
+        "fast overtaking, occasional hard braking"
     )
     print(
         f"Temporal resolution: simulation={SIMULATION_FREQUENCY_HZ}Hz, "
