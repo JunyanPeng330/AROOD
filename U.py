@@ -1,17 +1,10 @@
 """
-V2.py — continuous-traffic, acceleration-oriented RL experiment.
+U.py — pure-RL baseline with Aggressive Dynamic Traffic (ADT).
 
-This is a new experiment file. It imports V.py only to reuse the tested
-HighwayEnv wrapper's instantaneous lane-transition execution, actor-critic
-network, trajectory utilities, and policy-update implementation. It replaces
-the six-vehicle traffic manager, lane utility, safety selection, reward, and
-training loop defined in V.py.
-
-Run:
-    python V2.py
-
-The six-slot observation is retained, but the simulator maintains a larger
-traffic population. Background traffic uses bounded IDM longitudinal control.
+The ego policy, six-slot observation, reward, safety filter, and actor-critic
+training implementation are retained. ADT changes only background-vehicle
+behavior: heterogeneous driving profiles, autonomous lane changes, tailgating,
+fast overtaking, and occasional controlled hard braking.
 """
 
 import os
@@ -45,12 +38,39 @@ MIN_INSERTION_GAP_M = 35.0
 TRAFFIC_MIN_SPEED_MPS = 15.0
 TRAFFIC_MAX_SPEED_MPS = 42.0
 
-# Background IDM parameters
+# Background IDM parameters (normal-driver baseline)
 IDM_MAX_ACCEL_MPS2 = 2.0
 IDM_COMFORTABLE_BRAKING_MPS2 = 3.5
 IDM_MIN_GAP_M = 5.0
 IDM_TIME_HEADWAY_S = 1.5
 IDM_ACCEL_EXPONENT = 4.0
+
+# Aggressive Dynamic Traffic (ADT): proportions of mutually exclusive profiles.
+# These are vehicle-type proportions, not per-step event probabilities.
+ADT_PROFILE_MIX = (
+    ("normal", 0.35),
+    ("tailgater", 0.20),
+    ("lane_changer", 0.20),
+    ("sudden_braker", 0.10),
+    ("fast_overtaker", 0.15),
+)
+ADT_TAILGATE_HEADWAY_S = 0.65
+ADT_TAILGATE_MIN_GAP_M = 2.5
+ADT_AGGRESSIVE_MAX_ACCEL_MPS2 = 3.2
+ADT_AGGRESSIVE_BRAKING_MPS2 = 5.5
+ADT_LANE_CHANGE_RATE_PER_S = 0.16
+ADT_OVERTAKER_LANE_CHANGE_RATE_PER_S = 0.12
+ADT_LANE_CHANGE_COOLDOWN_S = 3.0
+ADT_LANE_CHANGE_FRONT_GAP_M = 8.0
+ADT_LANE_CHANGE_REAR_GAP_M = 8.0
+ADT_LANE_CHANGE_FRONT_TTC_S = 1.5
+ADT_LANE_CHANGE_REAR_TTC_S = 1.2
+ADT_LANE_CHANGE_IMPROVEMENT_MPS = 2.0
+ADT_LANE_CHANGE_TRIGGER_GAP_M = 28.0
+ADT_SUDDEN_BRAKE_EVENT_RATE_PER_S = 0.035
+ADT_SUDDEN_BRAKE_ACCEL_MPS2 = -4.5
+ADT_SUDDEN_BRAKE_DURATION_S = 0.8
+ADT_SPEED_VARIATION_MPS = 5.0
 
 # Ego acceleration-potential prediction
 POTENTIAL_HORIZON_S = 3.0
@@ -109,20 +129,29 @@ torch.manual_seed(SEED)
 # ---------------------------------------------------------------------------
 
 class ContinuousTrafficVehicle(base.Vehicle):
-    """A background vehicle with bounded IDM longitudinal control."""
+    """Background vehicle with an ADT profile and bounded longitudinal control."""
 
     def act(self):
         manager = getattr(self, "_arood_traffic_manager", None)
         if manager is None:
             acceleration = 0.0
         else:
-            acceleration = manager.idm_acceleration(self)
-
+            acceleration = manager.adt_vehicle_acceleration(self)
+        profile = getattr(self, "_arood_adt_profile", "normal")
+        max_braking = (
+            ADT_AGGRESSIVE_BRAKING_MPS2
+            if profile in ("tailgater", "lane_changer", "sudden_braker", "fast_overtaker")
+            else IDM_COMFORTABLE_BRAKING_MPS2
+        )
+        max_acceleration = (
+            ADT_AGGRESSIVE_MAX_ACCEL_MPS2
+            if profile in ("tailgater", "lane_changer", "fast_overtaker")
+            else IDM_MAX_ACCEL_MPS2
+        )
         self.action = {
             "steering": 0.0,
             "acceleration": float(np.clip(
-                acceleration, -IDM_COMFORTABLE_BRAKING_MPS2,
-                IDM_MAX_ACCEL_MPS2
+                acceleration, -max_braking, max_acceleration
             )),
         }
 
@@ -211,10 +240,35 @@ def _spawn_traffic_vehicle(self, lane_id, longitudinal, speed):
         road, lane_index, longitudinal=float(longitudinal), speed=speed
     )
     vehicle._arood_traffic_manager = self
+    profile_names = [item[0] for item in ADT_PROFILE_MIX]
+    profile_weights = [item[1] for item in ADT_PROFILE_MIX]
+    vehicle._arood_adt_profile = random.choices(
+        profile_names, weights=profile_weights, k=1
+    )[0]
+    profile = vehicle._arood_adt_profile
+    if profile == "normal":
+        headway, min_gap = IDM_TIME_HEADWAY_S, IDM_MIN_GAP_M
+        desired_low, desired_high = 30.0, SPEED_LIMIT_MPS
+    elif profile == "tailgater":
+        headway, min_gap = ADT_TAILGATE_HEADWAY_S, ADT_TAILGATE_MIN_GAP_M
+        desired_low, desired_high = 34.0, TRAFFIC_MAX_SPEED_MPS
+    elif profile == "lane_changer":
+        headway, min_gap = 0.9, 3.5
+        desired_low, desired_high = 34.0, TRAFFIC_MAX_SPEED_MPS
+    elif profile == "sudden_braker":
+        headway, min_gap = 1.2, 4.0
+        desired_low, desired_high = 28.0, SPEED_LIMIT_MPS
+    else:  # fast_overtaker
+        headway, min_gap = 0.9, 3.5
+        desired_low, desired_high = 38.0, TRAFFIC_MAX_SPEED_MPS
+    vehicle._arood_idm_headway_s = headway
+    vehicle._arood_idm_min_gap_m = min_gap
     vehicle._arood_desired_speed = float(np.clip(
-        random.uniform(32.0, SPEED_LIMIT_MPS),
+        random.uniform(desired_low, desired_high),
         TRAFFIC_MIN_SPEED_MPS, TRAFFIC_MAX_SPEED_MPS
     ))
+    vehicle._arood_lane_change_cooldown = 0
+    vehicle._arood_brake_steps_remaining = 0
     vehicle._arood_traffic_uid = f"traffic-{time.time_ns()}-{random.randrange(1_000_000)}"
     vehicle.MAX_SPEED = TRAFFIC_MAX_SPEED_MPS
     road.vehicles.append(vehicle)
@@ -267,13 +321,216 @@ def _initialize_continuous_traffic(self):
     self._traffic_spawn_count = spawned
     self._traffic_removal_count = 0
     self._traffic_pending_replacements = 0
+    self._adt_background_lane_change_count = 0
+    self._adt_slot_replacement_count = 0
+    self._adt_slot_observation_count = 0
+    self._adt_last_slot_uids = None
+    self._adt_profile_counts = {
+        name: sum(getattr(v, "_arood_adt_profile", "normal") == name
+                  for v in env.road.vehicles if v is not ego)
+        for name, _ in ADT_PROFILE_MIX
+    }
     print(
-        "[CONTINUOUS TRAFFIC INITIALIZED]",
+        "[ADT TRAFFIC INITIALIZED]",
         f"vehicles={spawned}",
-        f"active_reference=±{REFERENCE_RANGE_M:.0f}m",
-        f"recycling_boundary=±{RECYCLING_BOUNDARY_M:.0f}m",
-        "observation_slots=6",
+        f"profiles={self._adt_profile_counts}",
+        f"reference=±{REFERENCE_RANGE_M:.0f}m",
+        f"recycling=±{RECYCLING_BOUNDARY_M:.0f}m",
+        "ego_observation_slots=6",
     )
+
+
+
+def _adt_vehicle_acceleration(self, vehicle):
+    """Profile-conditioned IDM plus occasional, time-scaled braking events."""
+    profile = getattr(vehicle, "_arood_adt_profile", "normal")
+    speed = max(0.0, float(vehicle.speed))
+    desired_speed = float(getattr(vehicle, "_arood_desired_speed", SPEED_LIMIT_MPS))
+    desired_speed = float(np.clip(
+        desired_speed, TRAFFIC_MIN_SPEED_MPS, TRAFFIC_MAX_SPEED_MPS
+    ))
+    lane_id = int(vehicle.lane_index[2])
+    ego_s = _road_s(self, vehicle)
+    front = None
+    front_gap = float("inf")
+    for other in _traffic_in_lane(self, lane_id, exclude=vehicle):
+        delta = _road_s(self, other) - ego_s
+        if delta <= 0.0:
+            continue
+        gap = delta - 0.5 * (_vehicle_length(vehicle) + _vehicle_length(other))
+        if gap < front_gap:
+            front, front_gap = other, gap
+
+    headway = float(getattr(vehicle, "_arood_idm_headway_s", IDM_TIME_HEADWAY_S))
+    min_gap = float(getattr(vehicle, "_arood_idm_min_gap_m", IDM_MIN_GAP_M))
+    max_accel = (
+        ADT_AGGRESSIVE_MAX_ACCEL_MPS2
+        if profile in ("tailgater", "lane_changer", "fast_overtaker")
+        else IDM_MAX_ACCEL_MPS2
+    )
+    comfortable_braking = (
+        ADT_AGGRESSIVE_BRAKING_MPS2
+        if profile != "normal" else IDM_COMFORTABLE_BRAKING_MPS2
+    )
+    free_term = (speed / max(desired_speed, 1e-3)) ** IDM_ACCEL_EXPONENT
+    if front is None or not np.isfinite(front_gap):
+        acceleration = max_accel * (1.0 - free_term)
+    else:
+        gap = max(front_gap, 0.5)
+        front_speed = max(0.0, float(front.speed))
+        closing_speed = speed - front_speed
+        root = math.sqrt(max_accel * comfortable_braking)
+        dynamic_gap = (
+            speed * headway
+            + speed * closing_speed / max(2.0 * root, 1e-3)
+        )
+        desired_gap = min_gap + max(0.0, dynamic_gap)
+        acceleration = max_accel * (
+            1.0 - free_term - (desired_gap / gap) ** 2
+        )
+
+    # A sudden-braker profile occasionally initiates a short, bounded braking
+    # event. Probability is scaled by simulation dt, not applied per episode.
+    dt = 1.0 / max(1.0, float(SIMULATION_FREQUENCY_HZ))
+    if profile == "sudden_braker":
+        remaining = int(getattr(vehicle, "_arood_brake_steps_remaining", 0))
+        if remaining > 0:
+            vehicle._arood_brake_steps_remaining = remaining - 1
+            acceleration = min(acceleration, ADT_SUDDEN_BRAKE_ACCEL_MPS2)
+        elif random.random() < ADT_SUDDEN_BRAKE_EVENT_RATE_PER_S * dt:
+            vehicle._arood_brake_steps_remaining = max(
+                1, int(round(ADT_SUDDEN_BRAKE_DURATION_S / dt))
+            )
+            acceleration = min(acceleration, ADT_SUDDEN_BRAKE_ACCEL_MPS2)
+
+    self.adt_try_lane_change(vehicle)
+    return float(np.clip(acceleration, -comfortable_braking, max_accel))
+
+
+def _adt_try_lane_change(self, vehicle):
+    """Occasional independent lane changes with explicit collision-avoidance gaps."""
+    profile = getattr(vehicle, "_arood_adt_profile", "normal")
+    if profile not in ("lane_changer", "fast_overtaker", "tailgater"):
+        return False
+    cooldown = int(getattr(vehicle, "_arood_lane_change_cooldown", 0))
+    if cooldown > 0:
+        vehicle._arood_lane_change_cooldown = cooldown - 1
+        return False
+
+    current_lane = int(vehicle.lane_index[2])
+    current_s = _road_s(self, vehicle)
+    current_front = None
+    current_front_gap = float("inf")
+    for other in _traffic_in_lane(self, current_lane, exclude=vehicle):
+        delta = _road_s(self, other) - current_s
+        if delta <= 0.0:
+            continue
+        gap = delta - 0.5 * (_vehicle_length(vehicle) + _vehicle_length(other))
+        if gap < current_front_gap:
+            current_front, current_front_gap = other, gap
+
+    dt = 1.0 / max(1.0, float(SIMULATION_FREQUENCY_HZ))
+    rate = (
+        ADT_OVERTAKER_LANE_CHANGE_RATE_PER_S
+        if profile == "fast_overtaker"
+        else ADT_LANE_CHANGE_RATE_PER_S
+    )
+    should_consider = (
+        current_front is not None
+        and current_front_gap < ADT_LANE_CHANGE_TRIGGER_GAP_M
+        and float(current_front.speed) + ADT_LANE_CHANGE_IMPROVEMENT_MPS
+            < float(vehicle.speed)
+    )
+    if not should_consider or random.random() >= rate * dt:
+        return False
+
+    start_node, end_node, _ = vehicle.lane_index
+    candidates = []
+    for target_lane in (current_lane - 1, current_lane + 1):
+        if target_lane not in range(NUM_LANES):
+            continue
+        front, rear = None, None
+        front_gap, rear_gap = float("inf"), float("inf")
+        for other in _traffic_in_lane(self, target_lane, exclude=vehicle):
+            delta = _road_s(self, other) - current_s
+            bumper_gap = abs(delta) - 0.5 * (
+                _vehicle_length(vehicle) + _vehicle_length(other)
+            )
+            if delta > 0.0 and bumper_gap < front_gap:
+                front, front_gap = other, bumper_gap
+            elif delta < 0.0 and bumper_gap < rear_gap:
+                rear, rear_gap = other, bumper_gap
+
+        front_ttc = float("inf")
+        rear_ttc = float("inf")
+        if front is not None and float(vehicle.speed) > float(front.speed):
+            front_ttc = max(front_gap, 0.0) / max(
+                float(vehicle.speed) - float(front.speed), 1e-6
+            )
+        if rear is not None and float(rear.speed) > float(vehicle.speed):
+            rear_ttc = max(rear_gap, 0.0) / max(
+                float(rear.speed) - float(vehicle.speed), 1e-6
+            )
+        if front_gap < ADT_LANE_CHANGE_FRONT_GAP_M:
+            continue
+        if rear_gap < ADT_LANE_CHANGE_REAR_GAP_M:
+            continue
+        if front_ttc < ADT_LANE_CHANGE_FRONT_TTC_S:
+            continue
+        if rear_ttc < ADT_LANE_CHANGE_REAR_TTC_S:
+            continue
+        front_speed = float(front.speed) if front is not None else SPEED_LIMIT_MPS
+        candidates.append((front_speed, target_lane))
+    if not candidates:
+        return False
+
+    candidates.sort(reverse=True)
+    best_front_speed, target_lane = candidates[0]
+    if best_front_speed < float(current_front.speed) + ADT_LANE_CHANGE_IMPROVEMENT_MPS:
+        return False
+
+    # Apply a discrete background-traffic lane transition. The target lane's
+    # own geometry is used, preserving the road coordinate and heading.
+    target_lane_index = (start_node, end_node, int(target_lane))
+    lane = self.env.unwrapped.road.network.get_lane(target_lane_index)
+    vehicle.lane_index = target_lane_index
+    vehicle.position = np.asarray(lane.position(current_s, 0.0), dtype=float)
+    vehicle.heading = float(lane.heading_at(current_s))
+    vehicle._arood_lane_change_cooldown = int(round(
+        ADT_LANE_CHANGE_COOLDOWN_S * SIMULATION_FREQUENCY_HZ
+    ))
+    self._adt_background_lane_change_count = int(
+        getattr(self, "_adt_background_lane_change_count", 0)
+    ) + 1
+    return True
+
+
+def _adt_slot_diagnostics(self, slots):
+    """Count changes in the identities occupying the six observation slots."""
+    current = {}
+    ego = self.env.unwrapped.vehicle
+    ego_s = _road_s(self, ego)
+    for lane_id in range(NUM_LANES):
+        for side in ("front", "rear"):
+            candidates = []
+            for vehicle in list(self.env.unwrapped.road.vehicles):
+                if vehicle is ego or int(vehicle.lane_index[2]) != lane_id:
+                    continue
+                delta = _road_s(self, vehicle) - ego_s
+                if (side == "front" and delta > 0.0) or (side == "rear" and delta < 0.0):
+                    candidates.append((abs(delta), getattr(
+                        vehicle, "_arood_traffic_uid", str(id(vehicle))
+                    )))
+            candidates.sort(key=lambda item: item[0])
+            current[f"lane{lane_id}_{side}"] = candidates[0][1] if candidates else None
+
+    previous = getattr(self, "_adt_last_slot_uids", None)
+    if previous is not None:
+        self._adt_slot_replacement_count += sum(
+            previous.get(key) != current.get(key) for key in current
+        )
+    self._adt_slot_observation_count += 1
+    self._adt_last_slot_uids = current
 
 
 def _spawn_boundary_replacement(self):
@@ -481,6 +738,8 @@ def _six_slot_state(self, obs=None):
     for lane_id in range(NUM_LANES):
         rows.append(encode_vehicle(slots[(lane_id, "front")]))
         rows.append(encode_vehicle(slots[(lane_id, "rear")]))
+
+    _adt_slot_diagnostics(self, slots)
 
     # The original encoder appends context and per-lane safety features.
     return _ORIGINAL_STATE_ENCODER(
@@ -746,6 +1005,8 @@ base.HighwaySimulator._lane_index_for_id = lambda self, lane_id: (
 )
 base.HighwaySimulator._road_longitudinal_position = _road_s
 base.HighwaySimulator.idm_acceleration = _idm_acceleration
+base.HighwaySimulator.adt_vehicle_acceleration = _adt_vehicle_acceleration
+base.HighwaySimulator.adt_try_lane_change = _adt_try_lane_change
 base.HighwaySimulator._spawn_traffic_vehicle = _spawn_traffic_vehicle
 base.HighwaySimulator._initialize_six_vehicle_traffic = _initialize_continuous_traffic
 base.HighwaySimulator._maintain_six_vehicle_traffic = _maintain_continuous_traffic
@@ -782,11 +1043,11 @@ def train(simulator, policy):
 
     for episode in range(NUM_EPISODES):
         episode_start_time = time.time()
-        simulator._trace_phase = "V2_acceleration_oriented"
+        simulator._trace_phase = "U_ADT_pure_RL"
         simulator._trace_episode = episode + 1
         state = np.asarray(simulator.reset(seed=SEED + episode), dtype=np.float32)
         base.record_episode_start(
-            simulator, "V2_acceleration_oriented", episode + 1, state
+            simulator, "U_ADT_pure_RL", episode + 1, state
         )
 
         episode_return = 0.0
@@ -870,7 +1131,7 @@ def train(simulator, policy):
 
             base.record_episode_transition(
                 simulator=simulator,
-                phase="V2_acceleration_oriented",
+                phase="U_ADT_pure_RL",
                 episode_number=episode + 1,
                 step_number=step + 1,
                 state_before=state,
@@ -945,6 +1206,22 @@ def train(simulator, policy):
             "mean_actor_loss": float(np.mean(actor_losses)) if actor_losses else 0.0,
             "mean_critic_loss": float(np.mean(critic_losses)) if critic_losses else 0.0,
             "traffic_population": len(simulator.env.unwrapped.road.vehicles) - 1,
+            "adt_background_lane_changes": int(getattr(
+                simulator, "_adt_background_lane_change_count", 0
+            )),
+            "adt_six_slot_replacements": int(getattr(
+                simulator, "_adt_slot_replacement_count", 0
+            )),
+            "adt_six_slot_replacement_rate_per_slot_observation": (
+                float(getattr(simulator, "_adt_slot_replacement_count", 0))
+                / max(6 * int(getattr(simulator, "_adt_slot_observation_count", 0)), 1)
+            ),
+            "adt_slot_observations": int(getattr(
+                simulator, "_adt_slot_observation_count", 0
+            )),
+            "traffic_profile_counts": dict(getattr(
+                simulator, "_adt_profile_counts", {}
+            )),
             "traffic_spawned_total": int(getattr(simulator, "_traffic_spawn_count", 0)),
             "traffic_removed_total": int(getattr(simulator, "_traffic_removal_count", 0)),
             "episode_time_seconds": float(time.time() - episode_start_time),
@@ -957,7 +1234,7 @@ def train(simulator, policy):
             f.write(json.dumps(row, ensure_ascii=False) + "\n")
 
         print(
-            f"[V2 EPISODE {episode + 1:03d}/{NUM_EPISODES}] "
+            f"[U ADT EPISODE {episode + 1:03d}/{NUM_EPISODES}] "
             f"steps={steps} return={episode_return:+.3f} "
             f"collisions={collisions} collision_rate={collision_rate:.0f} "
             f"mean_speed={mean_speed:.2f}m/s "
@@ -966,12 +1243,14 @@ def train(simulator, policy):
             f"change_rejection={rejection_count}/{change_requests} "
             f"safe_distance={safe_distance:.1f}m "
             f"traffic={row['traffic_population']} "
+            f"bg_lane_changes={row['adt_background_lane_changes']} "
+            f"slot_replacements={row['adt_six_slot_replacements']} "
             f"spawned={row['traffic_spawned_total']} "
             f"removed={row['traffic_removed_total']}"
         )
 
     torch.save(policy.state_dict(), MODEL_PATH)
-    print(f"[V2 POLICY SAVED] {MODEL_PATH}")
+    print(f"[U POLICY SAVED] {MODEL_PATH}")
 
     plt.figure()
     plt.plot(episode_returns, alpha=0.4, label="episode return")
@@ -986,7 +1265,7 @@ def train(simulator, policy):
         )
     plt.xlabel("Episode")
     plt.ylabel("Return")
-    plt.title("V2 — Acceleration-oriented RL")
+    plt.title("U — Pure RL under ADT")
     plt.legend()
     plt.tight_layout()
     plt.savefig(PLOT_PATH)
@@ -1096,10 +1375,15 @@ def train(simulator, policy):
 
 
 def main():
-    print("[V2] Acceleration-oriented RL with continuous background traffic")
+    print("[U] Pure RL with Aggressive Dynamic Traffic (ADT)")
     print(f"Reference range: ±{REFERENCE_RANGE_M:.0f}m")
     print(f"Recycling boundary: ±{RECYCLING_BOUNDARY_M:.0f}m")
     print(f"Target background population: {TRAFFIC_TARGET_COUNT}")
+    print(f"ADT profile mix: {dict(ADT_PROFILE_MIX)}")
+    print(
+        "ADT behaviors: profile-conditioned IDM, tailgating, independent lane changes, "
+        "fast overtaking, occasional hard braking"
+    )
     print(
         f"Temporal resolution: simulation={SIMULATION_FREQUENCY_HZ}Hz, "
         f"policy={POLICY_FREQUENCY_HZ}Hz"
@@ -1113,6 +1397,7 @@ def main():
 
     print("Ego observation: fixed six slots (nearest front/rear in each lane)")
     print("Lane selection: hard safety filter -> predicted acceleration ranking")
+    print("Background traffic: ADT enabled; ego policy/reward/safety architecture unchanged")
     print("Reward: normalized measured acceleration - executed lane-change cost - collision penalty")
     print(f"PyTorch={torch.__version__} device={base.DEVICE}")
 
