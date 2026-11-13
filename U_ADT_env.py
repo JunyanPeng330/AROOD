@@ -32,7 +32,7 @@ SPEED_LIMIT_MPS = 40.0
 TRAFFIC_TARGET_COUNT = 15
 REFERENCE_RANGE_M = 500.0
 RECYCLING_BOUNDARY_M = 700.0
-INITIAL_PLACEMENT_RANGE_M = 470.0
+INITIAL_PLACEMENT_RANGE_M = 350.0
 MIN_INITIAL_GAP_M = 32.0
 MIN_INSERTION_GAP_M = 35.0
 TRAFFIC_MIN_SPEED_MPS = 15.0
@@ -1382,7 +1382,6 @@ def main():
     print(f"Recycling boundary: ±{RECYCLING_BOUNDARY_M:.0f}m")
     print(f"Target background population: {TRAFFIC_TARGET_COUNT}")
     print(f"ADT profile mix: {dict(ADT_PROFILE_MIX)}")
-    print("Traffic design: 15 active vehicles; behavior diversity prioritized over density")
     print("Traffic design: 15 active vehicles; behavior diversity prioritized over density")
     print(
         "ADT behaviors: interactive IDM, aggressive overtaking/lane changes, "
