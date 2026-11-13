@@ -35,6 +35,14 @@ RECYCLING_BOUNDARY_M = 700.0
 INITIAL_PLACEMENT_RANGE_M = 350.0
 MIN_INITIAL_GAP_M = 32.0
 MIN_INSERTION_GAP_M = 35.0
+
+# Maintain at least one front vehicle in every lane, not only the ego lane.
+# Coverage vehicles are inserted well inside the ±500m observation range.
+FRONT_COVERAGE_MAX_DISTANCE_M = 450.0
+FRONT_COVERAGE_SPAWN_MIN_DISTANCE_M = 180.0
+FRONT_COVERAGE_SPAWN_MAX_DISTANCE_M = 420.0
+FRONT_COVERAGE_SPEED_OFFSET_MIN_MPS = 2.0
+FRONT_COVERAGE_SPEED_OFFSET_MAX_MPS = 7.0
 TRAFFIC_MIN_SPEED_MPS = 15.0
 TRAFFIC_MAX_SPEED_MPS = 42.0
 
@@ -318,6 +326,10 @@ def _initialize_continuous_traffic(self):
     self._traffic_spawn_count = spawned
     self._traffic_removal_count = 0
     self._traffic_pending_replacements = 0
+    self._adt_front_coverage_spawn_count = 0
+    self._adt_front_coverage_attempt_failures = 0
+    # Fill any lane that lacks a front vehicle before the first observation.
+    _ensure_lane_front_coverage(self)
     self._adt_background_lane_change_count = 0
     self._adt_slot_replacement_count = 0
     self._adt_slot_observation_count = 0
@@ -410,6 +422,8 @@ def _adt_vehicle_acceleration(self, vehicle):
 def _adt_try_lane_change(self, vehicle):
     """Occasional independent lane changes with explicit collision-avoidance gaps."""
     profile = getattr(vehicle, "_arood_adt_profile", "normal")
+    if getattr(vehicle, "_arood_front_coverage_guard", False):
+        return False
     if profile != "aggressive":
         return False
     cooldown = int(getattr(vehicle, "_arood_lane_change_cooldown", 0))
@@ -529,6 +543,67 @@ def _adt_slot_diagnostics(self, slots):
     self._adt_last_slot_uids = current
 
 
+def _lane_has_front_vehicle(self, lane_id, ego_s):
+    """Whether a lane has a front vehicle inside the active reference range."""
+    for vehicle in _traffic_in_lane(self, lane_id):
+        delta = _road_s(self, vehicle) - ego_s
+        if 0.0 < delta <= FRONT_COVERAGE_MAX_DISTANCE_M:
+            return True
+    return False
+
+
+def _ensure_lane_front_coverage(self):
+    """Ensure all three lanes have a front vehicle within the reference range.
+
+    Coverage vehicles are placed 180–420m ahead, subject to safe spacing.
+    They are protected from background lane changes so one lane cannot be
+    repeatedly emptied by the traffic manager's own coverage vehicles.
+    """
+    ego = self.env.unwrapped.vehicle
+    ego_s = _road_s(self, ego)
+    ego_speed = max(0.0, float(ego.speed))
+    inserted = 0
+
+    for lane_id in range(NUM_LANES):
+        if _lane_has_front_vehicle(self, lane_id, ego_s):
+            continue
+
+        # A slower front vehicle creates a future closing/acceleration decision
+        # while remaining far enough away to avoid an artificial immediate hazard.
+        speed = max(
+            TRAFFIC_MIN_SPEED_MPS,
+            ego_speed - random.uniform(
+                FRONT_COVERAGE_SPEED_OFFSET_MIN_MPS,
+                FRONT_COVERAGE_SPEED_OFFSET_MAX_MPS,
+            ),
+        )
+        speed = min(speed, TRAFFIC_MAX_SPEED_MPS)
+
+        spawned = False
+        for _ in range(80):
+            longitudinal = ego_s + random.uniform(
+                FRONT_COVERAGE_SPAWN_MIN_DISTANCE_M,
+                FRONT_COVERAGE_SPAWN_MAX_DISTANCE_M,
+            )
+            if not _safe_spawn_position(
+                self, lane_id, longitudinal, MIN_INSERTION_GAP_M
+            ):
+                continue
+
+            vehicle = _spawn_traffic_vehicle(self, lane_id, longitudinal, speed)
+            vehicle._arood_front_coverage_guard = True
+            self._traffic_spawn_count += 1
+            self._adt_front_coverage_spawn_count += 1
+            inserted += 1
+            spawned = True
+            break
+
+        if not spawned:
+            self._adt_front_coverage_attempt_failures += 1
+
+    return inserted
+
+
 def _spawn_boundary_replacement(self):
     """Insert only beyond the active reference range, with a safe-gap check."""
     ego = self.env.unwrapped.vehicle
@@ -604,8 +679,15 @@ def _maintain_continuous_traffic(self):
         if not _spawn_boundary_replacement(self):
             break
 
+    # Refill lane-specific front coverage after removals and background
+    # lane changes. This runs every simulator step, independent of ego lane.
+    front_coverage_inserted = _ensure_lane_front_coverage(self)
+
     return {
         "population": len(road.vehicles) - 1,
+        "front_coverage_inserted": int(front_coverage_inserted),
+        "front_coverage_spawned_total": int(self._adt_front_coverage_spawn_count),
+        "front_coverage_failures": int(self._adt_front_coverage_attempt_failures),
         "spawned_total": int(self._traffic_spawn_count),
         "removed_total": int(self._traffic_removal_count),
         "pending_replacements": int(self._traffic_pending_replacements),
@@ -1225,6 +1307,19 @@ def train(simulator, policy):
             },
             "traffic_spawned_total": int(getattr(simulator, "_traffic_spawn_count", 0)),
             "traffic_removed_total": int(getattr(simulator, "_traffic_removal_count", 0)),
+            "adt_front_coverage_spawned": int(getattr(
+                simulator, "_adt_front_coverage_spawn_count", 0
+            )),
+            "adt_front_coverage_failures": int(getattr(
+                simulator, "_adt_front_coverage_attempt_failures", 0
+            )),
+            "adt_lanes_with_front_vehicle": sum(
+                _lane_has_front_vehicle(
+                    simulator, lane_id,
+                    _road_s(simulator, simulator.env.unwrapped.vehicle)
+                )
+                for lane_id in range(NUM_LANES)
+            ),
             "episode_time_seconds": float(time.time() - episode_start_time),
         }
         metrics_history.append(row)
@@ -1248,7 +1343,10 @@ def train(simulator, policy):
             f"slot_replacements={row['adt_six_slot_replacements']} "
             f"slot_replacement_rate={row['adt_six_slot_replacement_rate_per_slot_observation']:.3%} "
             f"spawned={row['traffic_spawned_total']} "
-            f"removed={row['traffic_removed_total']}"
+            f"removed={row['traffic_removed_total']} "
+            f"front_refills={row['adt_front_coverage_spawned']} "
+            f"front_lanes={row['adt_lanes_with_front_vehicle']}/3 "
+            f"front_refill_failures={row['adt_front_coverage_failures']}"
         )
 
     torch.save(policy.state_dict(), MODEL_PATH)
@@ -1382,7 +1480,10 @@ def main():
     print(f"Recycling boundary: ±{RECYCLING_BOUNDARY_M:.0f}m")
     print(f"Target background population: {TRAFFIC_TARGET_COUNT}")
     print(f"ADT profile mix: {dict(ADT_PROFILE_MIX)}")
-    print("Traffic design: 15 active vehicles; behavior diversity prioritized over density")
+    print(
+        "Traffic design: 15 baseline vehicles plus lane-aware front coverage; "
+        "all 3 lanes are maintained with a front vehicle inside ±450m"
+    )
     print(
         "ADT behaviors: interactive IDM, aggressive overtaking/lane changes, "
         "unstable acceleration/braking, and slower vehicles"
