@@ -16,7 +16,7 @@ import U
 
 DEFAULT_ARCHIVE = U.base.EPISODE_TRAJECTORY_PATH
 DEFAULT_REPLAY_PATH = os.path.join("figure", "videos", "U_2.gif")
-Episode = 48
+Episode = 0
 
 
 def load_archive(path):
@@ -309,8 +309,8 @@ def main():
         description="Replay a previously recorded U.py episode; no new environment is created."
     )
     parser.add_argument("--archive", default=DEFAULT_ARCHIVE, help=f"JSONL archive (default: {DEFAULT_ARCHIVE}).")
-    parser.add_argument("--phase", default="V2_acceleration_oriented",
-                        help="Recorded phase to replay (default: V2_acceleration_oriented; this is the phase label written by U.py).")
+    parser.add_argument("--phase", default="U_acceleration_oriented",
+                        help="Recorded phase to replay (default: U_acceleration_oriented; this is the phase label written by U.py).")
     parser.add_argument("--episode", type=int, default=Episode, help="1-based episode number within the selected phase.")
     parser.add_argument("--run-id", default=None, help="Optional exact run_id; without it, the newest matching episode is used.")
     parser.add_argument("--speed", type=float, default=1.0, help="Playback speed multiplier (default: 1.0).")
@@ -336,23 +336,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-
-'''
-How to use it:
-conda activate highway_rl
-cd /d F:\Doctoral_2
-
-# List recorded episodes
-python U_visible_simulation.py --list
-
-# Replay U.py episode 50 (the default phase and archive)
-python U_visible_simulation.py --episode 50
-
-# Replay another U.py episode
-python U_visible_simulation.py --phase V2_acceleration_oriented --episode 12
-
-# Save a replay to a custom GIF path
-python U_visible_simulation.py --episode 50 --save figure/videos/U_episode_50.gif
-
-'''
