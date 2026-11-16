@@ -1,5 +1,5 @@
 """
-U.py — pure-RL baseline with Aggressive Dynamic Traffic (ADT).
+U_Challenge_env.py — pure-RL challenge environment with Aggressive Dynamic Traffic (ADT).
 
 The ego policy, six-slot observation, reward, safety filter, and actor-critic
 training implementation are retained. ADT changes only background-vehicle
@@ -29,7 +29,7 @@ NUM_LANES = 3
 SPEED_LIMIT_MPS = 40.0
 
 # Traffic population and spatial management
-TRAFFIC_TARGET_COUNT = 15
+TRAFFIC_TARGET_COUNT = 20
 REFERENCE_RANGE_M = 500.0
 RECYCLING_BOUNDARY_M = 700.0
 INITIAL_PLACEMENT_RANGE_M = 350.0
@@ -43,8 +43,8 @@ FRONT_COVERAGE_SPAWN_MIN_DISTANCE_M = 180.0
 FRONT_COVERAGE_SPAWN_MAX_DISTANCE_M = 420.0
 FRONT_COVERAGE_SPEED_OFFSET_MIN_MPS = 2.0
 FRONT_COVERAGE_SPEED_OFFSET_MAX_MPS = 7.0
-TRAFFIC_MIN_SPEED_MPS = 15.0
-TRAFFIC_MAX_SPEED_MPS = 42.0
+TRAFFIC_MIN_SPEED_MPS = 10.0
+TRAFFIC_MAX_SPEED_MPS = 50.0
 
 # Background IDM parameters (normal-driver baseline)
 IDM_MAX_ACCEL_MPS2 = 2.0
@@ -56,30 +56,57 @@ IDM_ACCEL_EXPONENT = 4.0
 # Aggressive Dynamic Traffic (ADT): proportions of mutually exclusive profiles.
 # These are vehicle-type proportions, not per-step event probabilities.
 ADT_PROFILE_MIX = (
-    ("normal", 0.40),
-    ("aggressive", 0.30),
-    ("unstable", 0.20),
-    ("slow", 0.10),
+    ("normal", 0.25),
+    ("aggressive", 0.35),
+    ("unstable", 0.25),
+    ("slow", 0.15),
 )
 ADT_TAILGATE_HEADWAY_S = 0.70
 ADT_TAILGATE_MIN_GAP_M = 3.0
 ADT_AGGRESSIVE_MAX_ACCEL_MPS2 = 3.2
 ADT_AGGRESSIVE_BRAKING_MPS2 = 5.5
-ADT_LANE_CHANGE_RATE_PER_S = 0.22
-ADT_OVERTAKER_LANE_CHANGE_RATE_PER_S = 0.28
-ADT_LANE_CHANGE_COOLDOWN_S = 2.5
-ADT_LANE_CHANGE_FRONT_GAP_M = 9.0
-ADT_LANE_CHANGE_REAR_GAP_M = 9.0
-ADT_LANE_CHANGE_FRONT_TTC_S = 1.5
-ADT_LANE_CHANGE_REAR_TTC_S = 1.2
-ADT_LANE_CHANGE_IMPROVEMENT_MPS = 1.5
-ADT_LANE_CHANGE_TRIGGER_GAP_M = 38.0
-ADT_SUDDEN_BRAKE_EVENT_RATE_PER_S = 0.075
-ADT_SUDDEN_BRAKE_ACCEL_MPS2 = -4.5
-ADT_SUDDEN_BRAKE_DURATION_S = 0.7
-ADT_UNSTABLE_ACCEL_EVENT_RATE_PER_S = 0.055
-ADT_UNSTABLE_ACCEL_PULSE_MPS2 = 2.5
-ADT_SPEED_VARIATION_MPS = 5.0
+# Lane-change rates are per simulated second; attempts require an incentive
+# and a target lane that passes the configured minimum gap/TTC checks.
+ADT_OVERTAKER_LANE_CHANGE_RATE_PER_S = 0.75
+ADT_UNSTABLE_LANE_CHANGE_RATE_PER_S = 0.35
+ADT_LANE_CHANGE_COOLDOWN_S = 1.2
+ADT_LANE_CHANGE_FRONT_GAP_M = 7.0
+ADT_LANE_CHANGE_REAR_GAP_M = 7.0
+ADT_LANE_CHANGE_FRONT_TTC_S = 1.0
+ADT_LANE_CHANGE_REAR_TTC_S = 0.9
+ADT_LANE_CHANGE_IMPROVEMENT_MPS = 0.8
+ADT_LANE_CHANGE_TRIGGER_GAP_M = 55.0
+ADT_SUDDEN_BRAKE_EVENT_RATE_PER_S = 0.12
+ADT_SUDDEN_BRAKE_ACCEL_MPS2 = -5.0
+ADT_SUDDEN_BRAKE_DURATION_S = 0.8
+ADT_UNSTABLE_ACCEL_EVENT_RATE_PER_S = 0.10
+ADT_UNSTABLE_ACCEL_PULSE_MPS2 = 3.0
+ADT_SPEED_VARIATION_MPS = 9.0
+
+# Desired-speed distributions by driver personality (m/s).
+PROFILE_DESIRED_SPEED_RANGES_MPS = {
+    "normal": (28.0, 42.0), "aggressive": (36.0, 50.0),
+    "unstable": (24.0, 49.0), "slow": (16.0, 29.0),
+}
+PROFILE_IDM_HEADWAY_S = {
+    "normal": 1.5, "aggressive": 0.70, "unstable": 0.85, "slow": 1.8,
+}
+PROFILE_IDM_MIN_GAP_M = {
+    "normal": 5.0, "aggressive": 3.0, "unstable": 3.5, "slow": 6.0,
+}
+PROFILE_LANE_CHANGE_RATE_PER_S = {
+    "normal": 0.0, "aggressive": ADT_OVERTAKER_LANE_CHANGE_RATE_PER_S,
+    "unstable": ADT_UNSTABLE_LANE_CHANGE_RATE_PER_S, "slow": 0.0,
+}
+
+# Traffic-manager retry limits and boundary replacement geometry.
+INITIAL_SPAWN_MAX_ATTEMPTS = 10000
+LANE_COVERAGE_SPAWN_MAX_ATTEMPTS = 80
+BOUNDARY_SPAWN_MAX_ATTEMPTS = 60
+BOUNDARY_SPAWN_SPEED_OFFSET_MIN_MPS = 2.0
+BOUNDARY_SPAWN_SPEED_OFFSET_MAX_MPS = 8.0
+BOUNDARY_SPAWN_DISTANCE_BUFFER_M = 10.0
+BOUNDARY_SPAWN_EXTRA_RANGE_M = 100.0
 
 # Ego acceleration-potential prediction
 POTENTIAL_HORIZON_S = 3.0
@@ -254,23 +281,15 @@ def _spawn_traffic_vehicle(self, lane_id, longitudinal, speed):
         profile_names, weights=profile_weights, k=1
     )[0]
     profile = vehicle._arood_adt_profile
-    if profile == "normal":
-        headway, min_gap = IDM_TIME_HEADWAY_S, IDM_MIN_GAP_M
-        desired_low, desired_high = 30.0, SPEED_LIMIT_MPS
-    elif profile == "aggressive":
-        headway, min_gap = ADT_TAILGATE_HEADWAY_S, ADT_TAILGATE_MIN_GAP_M
-        desired_low, desired_high = 36.0, TRAFFIC_MAX_SPEED_MPS
-    elif profile == "unstable":
-        headway, min_gap = 1.0, 3.5
-        desired_low, desired_high = 29.0, TRAFFIC_MAX_SPEED_MPS
-    else:
-        headway, min_gap = 1.8, 6.0
-        desired_low, desired_high = 23.0, 30.0
+    headway = PROFILE_IDM_HEADWAY_S[profile]
+    min_gap = PROFILE_IDM_MIN_GAP_M[profile]
+    desired_low, desired_high = PROFILE_DESIRED_SPEED_RANGES_MPS[profile]
     vehicle._arood_idm_headway_s = headway
     vehicle._arood_idm_min_gap_m = min_gap
+    sampled_desired_speed = random.uniform(desired_low, desired_high)
+    sampled_desired_speed += random.uniform(-ADT_SPEED_VARIATION_MPS, ADT_SPEED_VARIATION_MPS)
     vehicle._arood_desired_speed = float(np.clip(
-        random.uniform(desired_low, desired_high),
-        TRAFFIC_MIN_SPEED_MPS, TRAFFIC_MAX_SPEED_MPS
+        sampled_desired_speed, TRAFFIC_MIN_SPEED_MPS, TRAFFIC_MAX_SPEED_MPS
     ))
     vehicle._arood_lane_change_cooldown = 0
     vehicle._arood_brake_steps_remaining = 0
@@ -304,7 +323,7 @@ def _initialize_continuous_traffic(self):
 
     spawned = 0
     attempts = 0
-    while spawned < TRAFFIC_TARGET_COUNT and attempts < 10000:
+    while spawned < TRAFFIC_TARGET_COUNT and attempts < INITIAL_SPAWN_MAX_ATTEMPTS:
         attempts += 1
         lane_id = random.randrange(NUM_LANES)
         longitudinal = ego_s + random.uniform(
@@ -343,7 +362,7 @@ def _initialize_continuous_traffic(self):
         "[ADT TRAFFIC INITIALIZED]",
         f"vehicles={spawned}",
         f"profiles={self._adt_profile_counts}",
-        "profile_targets=normal:40%, aggressive:30%, unstable:20%, slow:10%",
+        f"profile_targets={dict(ADT_PROFILE_MIX)}",
         f"reference=±{REFERENCE_RANGE_M:.0f}m",
         f"recycling=±{RECYCLING_BOUNDARY_M:.0f}m",
         "ego_observation_slots=6",
@@ -424,7 +443,7 @@ def _adt_try_lane_change(self, vehicle):
     profile = getattr(vehicle, "_arood_adt_profile", "normal")
     if getattr(vehicle, "_arood_front_coverage_guard", False):
         return False
-    if profile != "aggressive":
+    if profile not in ("aggressive", "unstable"):
         return False
     cooldown = int(getattr(vehicle, "_arood_lane_change_cooldown", 0))
     if cooldown > 0:
@@ -444,7 +463,7 @@ def _adt_try_lane_change(self, vehicle):
             current_front, current_front_gap = other, gap
 
     dt = 1.0 / max(1.0, float(SIMULATION_FREQUENCY_HZ))
-    rate = ADT_OVERTAKER_LANE_CHANGE_RATE_PER_S
+    rate = PROFILE_LANE_CHANGE_RATE_PER_S.get(profile, 0.0)
     should_consider = (
         current_front is not None
         and current_front_gap < ADT_LANE_CHANGE_TRIGGER_GAP_M
@@ -580,7 +599,7 @@ def _ensure_lane_front_coverage(self):
         speed = min(speed, TRAFFIC_MAX_SPEED_MPS)
 
         spawned = False
-        for _ in range(80):
+        for _ in range(LANE_COVERAGE_SPAWN_MAX_ATTEMPTS):
             longitudinal = ego_s + random.uniform(
                 FRONT_COVERAGE_SPAWN_MIN_DISTANCE_M,
                 FRONT_COVERAGE_SPAWN_MAX_DISTANCE_M,
@@ -614,15 +633,15 @@ def _spawn_boundary_replacement(self):
     # vehicle is placed behind so it can approach the ego. Both enter gradually.
     if random.random() < 0.5:
         side = 1.0
-        speed = max(TRAFFIC_MIN_SPEED_MPS, ego_speed - random.uniform(2.0, 6.0))
+        speed = max(TRAFFIC_MIN_SPEED_MPS, ego_speed - random.uniform(BOUNDARY_SPAWN_SPEED_OFFSET_MIN_MPS, BOUNDARY_SPAWN_SPEED_OFFSET_MAX_MPS))
     else:
         side = -1.0
         speed = min(TRAFFIC_MAX_SPEED_MPS, ego_speed + random.uniform(2.0, 6.0))
 
-    for _ in range(60):
+    for _ in range(BOUNDARY_SPAWN_MAX_ATTEMPTS):
         lane_id = random.randrange(NUM_LANES)
         longitudinal = ego_s + side * random.uniform(
-            REFERENCE_RANGE_M + 100.0, RECYCLING_BOUNDARY_M - 10.0
+            REFERENCE_RANGE_M + BOUNDARY_SPAWN_EXTRA_RANGE_M, RECYCLING_BOUNDARY_M - BOUNDARY_SPAWN_DISTANCE_BUFFER_M
         )
         if not _safe_spawn_position(self, lane_id, longitudinal, MIN_INSERTION_GAP_M):
             continue
@@ -1479,6 +1498,9 @@ def main():
     print(f"Reference range: ±{REFERENCE_RANGE_M:.0f}m")
     print(f"Recycling boundary: ±{RECYCLING_BOUNDARY_M:.0f}m")
     print(f"Target background population: {TRAFFIC_TARGET_COUNT}")
+    print(f"Background speed range: {TRAFFIC_MIN_SPEED_MPS:.1f}-{TRAFFIC_MAX_SPEED_MPS:.1f} m/s")
+    print(f"Profile desired-speed ranges: {PROFILE_DESIRED_SPEED_RANGES_MPS}")
+    print(f"Profile lane-change rates: {PROFILE_LANE_CHANGE_RATE_PER_S}")
     print(f"ADT profile mix: {dict(ADT_PROFILE_MIX)}")
     print(
         "Traffic design: 15 baseline vehicles plus lane-aware front coverage; "
