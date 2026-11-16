@@ -169,10 +169,10 @@ POLICY_ACTION_DIM = base.POLICY_ACTION_DIM
 
 MODEL_PATH = os.path.join("policy", "U_Challenge_TRAM_1.pt")
 TRAM_MODEL_PATH = os.path.join("policy", "U_Challenge_TRAM_attention_1.pt")
-PLOT_PATH = os.path.join("figure", "U_Challenge_1_return.png")
-PLOT_TXT_PATH = os.path.join("figure", "plot_U_Challenge_1.txt")
-METRICS_PATH = os.path.join("figure", "U_Challenge_1_episode_metrics.jsonl")
-base.EPISODE_TRAJECTORY_PATH = os.path.join("figure", "U_Challenge_1_trajectories.jsonl")
+PLOT_PATH = os.path.join("figure", "U_Challenge_TRAM_1_return.png")
+PLOT_TXT_PATH = os.path.join("figure", "plot_U_Challenge_TRAM_1.txt")
+METRICS_PATH = os.path.join("figure", "U_Challenge_TRAM_1_episode_metrics.jsonl")
+base.EPISODE_TRAJECTORY_PATH = os.path.join("figure", "U_Challenge_TRAM_1_trajectories.jsonl")
 
 random.seed(SEED)
 np.random.seed(SEED)
