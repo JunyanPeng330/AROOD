@@ -144,9 +144,11 @@ TRAM_ENTROPY_COEF = 1e-3
 TRAM_WEIGHT_FLOOR = 0.05
 TRAM_BASELINE_RATE = 0.10
 # Safety-first external objective; safe distance is the secondary criterion.
-TRAM_META_W_COLLISION_FREE_EPISODE = 0.55
-TRAM_META_W_SAFE_STEP_RATIO = 0.30
+TRAM_META_W_COLLISION_FREE_EPISODE = 0.40
+TRAM_META_W_COLLISION_FREQUENCY = 0.25
+TRAM_META_W_SAFE_STEP_RATIO = 0.20
 TRAM_META_W_SAFE_DISTANCE = 0.15
+TRAM_COLLISION_FREQUENCY_SCALE_PER_1000_STEPS = 5.0
 
 # Temporal resolution (Hz)
 # Keep these equal: the inherited HighwaySimulator applies one instantaneous
@@ -1436,6 +1438,10 @@ def train(simulator, policy):
         normalized_safe_distance = float(np.clip(
             safe_distance / safe_distance_reference_m, 0.0, 1.0
         ))
+        collision_frequency_score = float(math.exp(
+            -collision_frequency_per_1000_steps
+            / max(TRAM_COLLISION_FREQUENCY_SCALE_PER_1000_STEPS, 1e-6)
+        ))
         speed_target_fraction = (
             float(np.mean(np.asarray(speeds) >= 0.9 * SPEED_LIMIT_MPS))
             if speeds else 0.0
@@ -1448,6 +1454,7 @@ def train(simulator, policy):
             "collision_rate": collision_rate,
             "collision_free_episode": int(collisions == 0),
             "collision_frequency_per_1000_steps": float(collision_frequency_per_1000_steps),
+            "collision_frequency_score": float(collision_frequency_score),
             "safe_steps": int(safe_steps),
             "safe_step_ratio": float(safe_step_ratio),
             "normalized_safe_distance": float(normalized_safe_distance),
@@ -1513,6 +1520,7 @@ def train(simulator, policy):
         # Safety dominates the outer-loop objective; safely travelled distance is secondary.
         tram_meta_score = float(np.clip(
             TRAM_META_W_COLLISION_FREE_EPISODE * float(collisions == 0)
+            + TRAM_META_W_COLLISION_FREQUENCY * collision_frequency_score
             + TRAM_META_W_SAFE_STEP_RATIO * safe_step_ratio
             + TRAM_META_W_SAFE_DISTANCE * normalized_safe_distance,
             0.0, 1.0,
@@ -1716,7 +1724,8 @@ def main():
     print("Background traffic: ADT enabled; six-slot observation and independent safety filter retained")
     print("Attention: temporal self-attention over reward-component history, not vehicle slots")
     print(f"TRAM history={TRAM_HISTORY_LENGTH}, d_model={TRAM_D_MODEL}, heads={TRAM_NUM_HEADS}, layers={TRAM_NUM_LAYERS}")
-    print("Evaluation priority: safety first; safely travelled distance second")
+    print("Evaluation priority: collision outcomes/frequency first; safe-step ratio next; safely travelled distance secondary")
+    print(f"TRAM meta weights: collision-free={TRAM_META_W_COLLISION_FREE_EPISODE:.2f}, collision-frequency={TRAM_META_W_COLLISION_FREQUENCY:.2f}, safe-steps={TRAM_META_W_SAFE_STEP_RATIO:.2f}, safe-distance={TRAM_META_W_SAFE_DISTANCE:.2f}")
     print("Reward: TRAM-weighted normalized acceleration + relative speed - lane-change cost - fixed collision penalty")
     print(f"PyTorch={torch.__version__} device={base.DEVICE}")
 
