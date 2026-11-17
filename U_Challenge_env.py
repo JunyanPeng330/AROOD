@@ -1364,7 +1364,7 @@ def train(simulator, policy):
             f"change_rejection={rejection_count}/{change_requests} "
             f"safe_distance={safe_distance:.1f}m "
             f"safe_steps={safe_steps}/{steps} "
-            f"traffic={row['traffic_population']} 
+            f"traffic={row['traffic_population']} "
             f"bg_lane_changes={row['adt_background_lane_changes']} "
             f"slot_replacements={row['adt_six_slot_replacements']} "
             f"slot_replacement_rate={row['adt_six_slot_replacement_rate_per_slot_observation']:.3%} "
