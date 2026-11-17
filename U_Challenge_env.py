@@ -1154,6 +1154,7 @@ def train(simulator, policy):
         acceleration_rewards = []
         lane_costs = []
         safe_distance = 0.0
+        safe_steps = 0
         previous_position = np.asarray(
             simulator.env.unwrapped.vehicle.position, dtype=float
         ).copy()
@@ -1221,7 +1222,10 @@ def train(simulator, policy):
             new_position = np.asarray(
                 simulator.env.unwrapped.vehicle.position, dtype=float
             )
-            safe_distance += float(np.linalg.norm(new_position - previous_position))
+            step_distance = float(np.linalg.norm(new_position - previous_position))
+            if not collision:
+                safe_distance += step_distance
+                safe_steps += 1
             previous_position = new_position
             speed = float(simulator.env.unwrapped.vehicle.speed)
             speeds.append(speed)
@@ -1294,6 +1298,8 @@ def train(simulator, policy):
             "mean_speed_mps": mean_speed,
             "speed_at_least_90pct_limit": speed_target_fraction,
             "safe_travel_distance_m": float(safe_distance),
+            "safe_steps": int(safe_steps),
+            "safe_step_ratio": float(safe_steps / max(steps, 1)),
             "mean_acceleration_reward": (
                 float(np.mean(acceleration_rewards)) if acceleration_rewards else 0.0
             ),
@@ -1357,7 +1363,8 @@ def train(simulator, policy):
             f"lane_changes={lane_changes} "
             f"change_rejection={rejection_count}/{change_requests} "
             f"safe_distance={safe_distance:.1f}m "
-            f"traffic={row['traffic_population']} "
+            f"safe_steps={safe_steps}/{steps} "
+            f"traffic={row['traffic_population']} 
             f"bg_lane_changes={row['adt_background_lane_changes']} "
             f"slot_replacements={row['adt_six_slot_replacements']} "
             f"slot_replacement_rate={row['adt_six_slot_replacement_rate_per_slot_observation']:.3%} "
@@ -1442,11 +1449,7 @@ def train(simulator, policy):
         )
         f.write(
             "safe_step_count:\n"
-            + str([
-                int(item["steps"]) if item["collisions"] == 0
-                else max(0, int(item["steps"]) - 1)
-                for item in metrics_history
-            ]) + "\n"
+            + str([int(item["safe_steps"]) for item in metrics_history]) + "\n"
         )
         f.write(
             "lane_change:\n"
