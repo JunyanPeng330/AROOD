@@ -1192,8 +1192,11 @@ class TRAMRewardController:
         sampled = distribution.sample()
         log_prob = distribution.log_prob(sampled).squeeze(0)
         entropy = distribution.entropy().squeeze(0)
-        weights = TRAM_WEIGHT_FLOOR + (1.0 - TRAM_COMPONENT_DIM * TRAM_WEIGHT_FLOOR) * sampled
-        weights = TRAM_COMPONENT_DIM * weights / weights.sum()
+        # Affine simplex mapping: weights sum to 2 and each remains >= the configured floor.
+        weights = (
+            TRAM_WEIGHT_FLOOR
+            + (TRAM_COMPONENT_DIM - TRAM_COMPONENT_DIM * TRAM_WEIGHT_FLOOR) * sampled
+        )
         self.episode_log_probs.append(log_prob)
         self.episode_entropies.append(entropy)
         result = weights.detach().cpu().numpy().reshape(TRAM_COMPONENT_DIM).astype(np.float32)
