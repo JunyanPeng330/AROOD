@@ -1716,8 +1716,14 @@ def main():
     print("Attention: temporal self-attention over reward-component history, not vehicle slots")
     print(f"TRAM history={TRAM_HISTORY_LENGTH}, d_model={TRAM_D_MODEL}, heads={TRAM_NUM_HEADS}, layers={TRAM_NUM_LAYERS}")
     print("Evaluation priority: collision outcomes/frequency first; safe-step ratio next; safely travelled distance secondary")
-    print(f"TRAM meta weights: collision-free={TRAM_META_W_COLLISION_FREE_EPISODE:.2f}, collision-frequency={TRAM_META_W_COLLISION_FREQUENCY:.2f}, safe-steps={TRAM_META_W_SAFE_STEP_RATIO:.2f}, safe-distance={TRAM_META_W_SAFE_DISTANCE:.2f}")
-    print("Reward: TRAM-weighted normalized acceleration + relative speed - lane-change cost - fixed collision penalty")
+    print(
+        f"TRAM meta weights: safety={TRAM_META_W_SAFETY:.2f}, "
+        f"safe-distance={TRAM_META_W_SAFE_DISTANCE:.2f}; "
+        f"safety subweights=({TRAM_SAFETY_W_COLLISION_FREE_EPISODE:.2f}, "
+        f"{TRAM_SAFETY_W_COLLISION_FREQUENCY:.2f}, "
+        f"{TRAM_SAFETY_W_SAFE_STEP_RATIO:.2f})"
+    )
+    print("Reward: TRAM-weighted acceleration + negative lane-change cost + fixed collision penalty")
     print(f"PyTorch={torch.__version__} device={base.DEVICE}")
 
     simulator = base.create_highway_simulator()
