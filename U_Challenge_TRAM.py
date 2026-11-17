@@ -129,12 +129,12 @@ MIN_LANE_CHANGE_REAR_TTC_S = 4.0
 EMERGENCY_FRONT_GAP_M = 8.0
 EMERGENCY_FRONT_TTC_S = 1.5
 
-# Reward and temporal-attention configuration
+# Reward and temporal-attention configuration (kept identical to U baseline).
 LANE_CHANGE_COST_WEIGHT = 0.2
 COLLISION_PENALTY = 5.0
-ACCELERATION_REWARD_MIN_MPS2 = -EGO_MAX_ACCEL_MPS2
-ACCELERATION_REWARD_MAX_MPS2 = EGO_MAX_ACCEL_MPS2
 TRAM_ENABLED = True
+TRAM_COMPONENT_NAMES = ("acceleration", "lane_change_cost")
+TRAM_COMPONENT_DIM = len(TRAM_COMPONENT_NAMES)
 TRAM_HISTORY_LENGTH = 10
 TRAM_D_MODEL = 32
 TRAM_NUM_HEADS = 2
@@ -143,11 +143,13 @@ TRAM_META_LR = 1e-4
 TRAM_ENTROPY_COEF = 1e-3
 TRAM_WEIGHT_FLOOR = 0.05
 TRAM_BASELINE_RATE = 0.10
-# Safety-first external objective; safe distance is the secondary criterion.
-TRAM_META_W_COLLISION_FREE_EPISODE = 0.40
-TRAM_META_W_COLLISION_FREQUENCY = 0.25
-TRAM_META_W_SAFE_STEP_RATIO = 0.20
-TRAM_META_W_SAFE_DISTANCE = 0.15
+# Meta-objective: safety is primary (60%); safe distance is secondary (40%).
+# Safety combines collision-free episodes, collision frequency, and safe-step ratio.
+TRAM_META_W_SAFETY = 0.60
+TRAM_META_W_SAFE_DISTANCE = 0.40
+TRAM_SAFETY_W_COLLISION_FREE_EPISODE = 0.40
+TRAM_SAFETY_W_COLLISION_FREQUENCY = 0.30
+TRAM_SAFETY_W_SAFE_STEP_RATIO = 0.30
 TRAM_COLLISION_FREQUENCY_SCALE_PER_1000_STEPS = 5.0
 
 # Temporal resolution (Hz)
@@ -1093,44 +1095,35 @@ def _filter_acceleration_and_lane_action(self, sampled_action, selected_target_l
 # 6. Reward: measured acceleration, executed lane-change cost, collision cost
 # ---------------------------------------------------------------------------
 
-def calculate_reward(actual_acceleration, current_speed, lane_change_executed, collision, tram_controller=None):
-    """TRAM-weighted acceleration/speed/lane-cost reward; collision penalty is fixed."""
-    clipped_acceleration = float(np.clip(
-        actual_acceleration, ACCELERATION_REWARD_MIN_MPS2, ACCELERATION_REWARD_MAX_MPS2
-    ))
-    acceleration_reward = float(
-        2.0 * (clipped_acceleration - ACCELERATION_REWARD_MIN_MPS2)
-        / (ACCELERATION_REWARD_MAX_MPS2 - ACCELERATION_REWARD_MIN_MPS2) - 1.0
-    )
-    speed_reward = float(np.clip(
-        (float(current_speed) - SPEED_LIMIT_MPS) / max(SPEED_LIMIT_MPS, 1e-6),
-        -1.0, 1.0
+def calculate_reward(actual_acceleration, lane_change_executed, collision, tram_controller=None):
+    """U-baseline reward with temporal weights on its two adaptive components.
+
+    The collision penalty is fixed and deliberately excluded from TRAM.
+    """
+    acceleration_reward = float(np.clip(
+        float(actual_acceleration) / EGO_MAX_ACCEL_MPS2, -1.0, 1.0
     ))
     lane_change_cost = (
-        LANE_CHANGE_COST_WEIGHT * abs(acceleration_reward) if lane_change_executed else 0.0
+        -LANE_CHANGE_COST_WEIGHT * abs(acceleration_reward)
+        if lane_change_executed else 0.0
     )
     weights = (
-        tram_controller.select_weights([acceleration_reward, speed_reward, lane_change_cost])
+        tram_controller.select_weights([acceleration_reward, lane_change_cost])
         if TRAM_ENABLED and tram_controller is not None
-        else np.ones(3, dtype=np.float32)
+        else np.ones(TRAM_COMPONENT_DIM, dtype=np.float32)
     )
     collision_cost = COLLISION_PENALTY if collision else 0.0
     weighted_acceleration = float(weights[0] * acceleration_reward)
-    weighted_speed = float(weights[1] * speed_reward)
-    weighted_lane_cost = float(weights[2] * lane_change_cost)
-    total = weighted_acceleration + weighted_speed - weighted_lane_cost - collision_cost
+    weighted_lane_cost = float(weights[1] * lane_change_cost)
+    total = weighted_acceleration + weighted_lane_cost - collision_cost
     return total, {
         "acceleration_reward": acceleration_reward,
-        "speed_reward": speed_reward,
         "lane_change_cost": float(lane_change_cost),
         "weight_acceleration": float(weights[0]),
-        "weight_speed": float(weights[1]),
-        "weight_lane_change_cost": float(weights[2]),
+        "weight_lane_change_cost": float(weights[1]),
         "weighted_acceleration_reward": weighted_acceleration,
-        "weighted_speed_reward": weighted_speed,
         "weighted_lane_change_cost": weighted_lane_cost,
         "actual_acceleration_mps2": float(actual_acceleration),
-        "current_speed_mps": float(current_speed),
         "lane_change_executed": bool(lane_change_executed),
         "collision_penalty": float(collision_cost),
         "total_reward": float(total),
@@ -1142,9 +1135,9 @@ def calculate_reward(actual_acceleration, current_speed, lane_change_executed, c
 # ---------------------------------------------------------------------------
 
 class TemporalRewardAttention(nn.Module):
-    """Self-attention over time; each time token contains 3 reward components."""
+    """Self-attention over time; each token contains the 2 U reward components."""
 
-    def __init__(self, component_dim=3, history_length=TRAM_HISTORY_LENGTH):
+    def __init__(self, component_dim=TRAM_COMPONENT_DIM, history_length=TRAM_HISTORY_LENGTH):
         super().__init__()
         self.history_length = int(history_length)
         self.input_projection = nn.Linear(component_dim, TRAM_D_MODEL)
@@ -1171,7 +1164,7 @@ class TemporalRewardAttention(nn.Module):
 class TRAMRewardController:
     """Per-step Dirichlet reward-weight sampling with episodic REINFORCE updates."""
 
-    component_names = ("acceleration", "speed", "lane_change_cost")
+    component_names = TRAM_COMPONENT_NAMES
 
     def __init__(self):
         self.model = TemporalRewardAttention().to(base.DEVICE)
@@ -1190,7 +1183,7 @@ class TRAMRewardController:
         self.episode_weights.clear()
 
     def select_weights(self, components):
-        values = np.asarray(components, dtype=np.float32).reshape(3)
+        values = np.asarray(components, dtype=np.float32).reshape(TRAM_COMPONENT_DIM)
         values = np.nan_to_num(values, nan=0.0, posinf=1.0, neginf=-1.0)
         self.history.append(values)
         sequence = np.asarray(list(self.history), dtype=np.float32)
@@ -1199,11 +1192,11 @@ class TRAMRewardController:
         sampled = distribution.sample()
         log_prob = distribution.log_prob(sampled).squeeze(0)
         entropy = distribution.entropy().squeeze(0)
-        weights = TRAM_WEIGHT_FLOOR + (1.0 - 3.0 * TRAM_WEIGHT_FLOOR) * sampled
-        weights = 3.0 * weights / weights.sum()
+        weights = TRAM_WEIGHT_FLOOR + (1.0 - TRAM_COMPONENT_DIM * TRAM_WEIGHT_FLOOR) * sampled
+        weights = TRAM_COMPONENT_DIM * weights / weights.sum()
         self.episode_log_probs.append(log_prob)
         self.episode_entropies.append(entropy)
-        result = weights.detach().cpu().numpy().reshape(3).astype(np.float32)
+        result = weights.detach().cpu().numpy().reshape(TRAM_COMPONENT_DIM).astype(np.float32)
         self.episode_weights.append(result.copy())
         return result
 
@@ -1360,7 +1353,7 @@ def train(simulator, policy):
             collision = bool(step_info.get("collision", False))
             speed = float(simulator.env.unwrapped.vehicle.speed)
             reward, reward_components = calculate_reward(
-                actual_acceleration, speed, lane_change_executed, collision,
+                actual_acceleration, lane_change_executed, collision,
                 tram_controller=tram_controller,
             )
 
@@ -1469,9 +1462,7 @@ def train(simulator, policy):
             "speed_at_least_90pct_limit": speed_target_fraction,
             "safe_travel_distance_m": float(safe_distance),
             "mean_acceleration_reward": float(np.mean(acceleration_rewards)) if acceleration_rewards else 0.0,
-            "mean_speed_reward": float(np.mean([x["speed_reward"] for x in reward_component_history])) if reward_component_history else 0.0,
             "mean_weight_acceleration": float(np.mean([x["weight_acceleration"] for x in reward_component_history])) if reward_component_history else 1.0,
-            "mean_weight_speed": float(np.mean([x["weight_speed"] for x in reward_component_history])) if reward_component_history else 1.0,
             "mean_weight_lane_change_cost": float(np.mean([x["weight_lane_change_cost"] for x in reward_component_history])) if reward_component_history else 1.0,
             "mean_lane_change_cost": (
                 float(np.mean(lane_costs)) if lane_costs else 0.0
@@ -1518,10 +1509,14 @@ def train(simulator, policy):
             "episode_time_seconds": float(time.time() - episode_start_time),
         }
         # Safety dominates the outer-loop objective; safely travelled distance is secondary.
+        safety_score = float(np.clip(
+            TRAM_SAFETY_W_COLLISION_FREE_EPISODE * float(collisions == 0)
+            + TRAM_SAFETY_W_COLLISION_FREQUENCY * collision_frequency_score
+            + TRAM_SAFETY_W_SAFE_STEP_RATIO * safe_step_ratio,
+            0.0, 1.0,
+        ))
         tram_meta_score = float(np.clip(
-            TRAM_META_W_COLLISION_FREE_EPISODE * float(collisions == 0)
-            + TRAM_META_W_COLLISION_FREQUENCY * collision_frequency_score
-            + TRAM_META_W_SAFE_STEP_RATIO * safe_step_ratio
+            TRAM_META_W_SAFETY * safety_score
             + TRAM_META_W_SAFE_DISTANCE * normalized_safe_distance,
             0.0, 1.0,
         ))
@@ -1640,11 +1635,7 @@ def train(simulator, policy):
         )
         f.write(
             "safe_step_count:\n"
-            + str([
-                int(item["steps"]) if item["collisions"] == 0
-                else max(0, int(item["steps"]) - 1)
-                for item in metrics_history
-            ]) + "\n"
+            + str([int(item["safe_steps"]) for item in metrics_history]) + "\n"
         )
         f.write(
             "lane_change:\n"
