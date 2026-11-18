@@ -108,7 +108,7 @@ BOUNDARY_SPAWN_SPEED_OFFSET_MAX_MPS = 8.0
 BOUNDARY_SPAWN_DISTANCE_BUFFER_M = 10.0
 BOUNDARY_SPAWN_EXTRA_RANGE_M = 100.0
 
-# Ego acceleration-potential prediction
+# Legacy lane-potential configuration (inactive in pure-RL mode)
 POTENTIAL_HORIZON_S = 3.0
 POTENTIAL_DT_S = 0.2
 EGO_MAX_ACCEL_MPS2 = 5.0
@@ -117,7 +117,7 @@ EGO_MIN_GAP_M = 15.0
 EGO_TIME_HEADWAY_S = 1.5
 MIN_ACCELERATION_GAIN_MPS2 = 0.25
 
-# Independent lane-change safety constraints
+# Legacy traffic-safety thresholds (inactive for ego action selection)
 MIN_LANE_CHANGE_FRONT_GAP_M = 25.0
 MIN_LANE_CHANGE_REAR_GAP_M = 25.0
 MIN_LANE_CHANGE_FRONT_TTC_S = 6.0
@@ -845,197 +845,67 @@ def _six_slot_state(self, obs=None):
 
 
 # ---------------------------------------------------------------------------
-# 5. Lane safety and predictive acceleration-potential evaluator
+# 5. Pure-RL lane action masks: physical reachability only
 # ---------------------------------------------------------------------------
 
-def _lane_neighbors(self, lane_id):
+def _valid_candidate_lanes(self):
+    """Return all physically reachable adjacent lanes, with no traffic filtering.
+
+    The mask encodes road topology only: the ego may KEEP its current lane or
+    CHANGE one lane left/right when that lane exists. TTC, gaps, predicted
+    acceleration, lane utility, and emergency rules do not remove candidates.
+    """
     ego = self.env.unwrapped.vehicle
-    ego_s = _road_s(self, ego)
-    front = None
-    rear = None
-    front_gap = float("inf")
-    rear_gap = float("inf")
-
-    for vehicle in _traffic_in_lane(self, lane_id):
-        delta = _road_s(self, vehicle) - ego_s
-        bumper_gap = abs(delta) - 0.5 * (
-            _vehicle_length(ego) + _vehicle_length(vehicle)
-        )
-        if delta > 0.0 and bumper_gap < front_gap:
-            front, front_gap = vehicle, bumper_gap
-        elif delta < 0.0 and bumper_gap < rear_gap:
-            rear, rear_gap = vehicle, bumper_gap
-
-    ego_speed = max(0.0, float(ego.speed))
-    front_ttc = float("inf")
-    rear_ttc = float("inf")
-    if front is not None and ego_speed > float(front.speed):
-        front_ttc = max(front_gap, 0.0) / max(
-            ego_speed - float(front.speed), 1e-6
-        )
-    if rear is not None and float(rear.speed) > ego_speed:
-        rear_ttc = max(rear_gap, 0.0) / max(
-            float(rear.speed) - ego_speed, 1e-6
-        )
-
-    return {
-        "front": front, "rear": rear,
-        "front_gap": float(front_gap), "rear_gap": float(rear_gap),
-        "front_ttc": float(front_ttc), "rear_ttc": float(rear_ttc),
-        "front_speed": float(front.speed) if front is not None else SPEED_LIMIT_MPS,
-        "rear_speed": float(rear.speed) if rear is not None else 0.0,
-    }
-
-
-def _lane_is_safe(self, lane_id):
-    current_lane = int(self.env.unwrapped.vehicle.lane_index[2])
-    if int(lane_id) == current_lane:
-        return True, "current_lane"
-
-    values = _lane_neighbors(self, lane_id)
-    reasons = []
-    if values["front"] is not None:
-        if values["front_gap"] < MIN_LANE_CHANGE_FRONT_GAP_M:
-            reasons.append("front_gap")
-        if values["front_ttc"] < MIN_LANE_CHANGE_FRONT_TTC_S:
-            reasons.append("front_ttc")
-    if values["rear"] is not None:
-        if values["rear_gap"] < MIN_LANE_CHANGE_REAR_GAP_M:
-            reasons.append("rear_gap")
-        if values["rear_ttc"] < MIN_LANE_CHANGE_REAR_TTC_S:
-            reasons.append("rear_ttc")
-    return len(reasons) == 0, ",".join(reasons) if reasons else "safe"
-
-
-def _predict_lane_acceleration(self, lane_id):
-    """Roll out ego IDM response for a candidate lane over a short horizon."""
-    ego = self.env.unwrapped.vehicle
-    ego_speed = max(0.0, float(ego.speed))
-    desired_speed = min(SPEED_LIMIT_MPS, float(getattr(ego, "MAX_SPEED", SPEED_LIMIT_MPS)))
-    neighbors = _lane_neighbors(self, lane_id)
-    front = neighbors["front"]
-    front_speed = (
-        max(0.0, float(front.speed)) if front is not None else desired_speed
-    )
-    gap = float(neighbors["front_gap"])
-    dt = POTENTIAL_DT_S
-    steps = max(1, int(round(POTENTIAL_HORIZON_S / dt)))
-    acceleration_samples = []
-
-    for _ in range(steps):
-        free_term = (ego_speed / max(desired_speed, 1e-3)) ** IDM_ACCEL_EXPONENT
-        if front is None:
-            interaction_term = 0.0
-        else:
-            safe_dynamic_gap = (
-                ego_speed * EGO_TIME_HEADWAY_S
-                + ego_speed * (ego_speed - front_speed)
-                / max(2.0 * math.sqrt(EGO_MAX_ACCEL_MPS2 * EGO_COMFORTABLE_BRAKING_MPS2), 1e-3)
-            )
-            desired_gap = EGO_MIN_GAP_M + max(0.0, safe_dynamic_gap)
-            interaction_term = (desired_gap / max(gap, 0.5)) ** 2
-
-        acceleration = EGO_MAX_ACCEL_MPS2 * (
-            1.0 - free_term - interaction_term
-        )
-        acceleration = float(np.clip(
-            acceleration, -EGO_COMFORTABLE_BRAKING_MPS2,
-            EGO_MAX_ACCEL_MPS2
-        ))
-        if ego_speed >= desired_speed and acceleration > 0.0:
-            acceleration = 0.0
-
-        acceleration_samples.append(acceleration)
-        next_speed = max(0.0, ego_speed + acceleration * dt)
-        if front is not None:
-            gap = max(0.1, gap + (front_speed - 0.5 * (ego_speed + next_speed)) * dt)
-        ego_speed = min(desired_speed, next_speed)
-
-    return float(np.mean(acceleration_samples))
-
-
-def _rank_safe_lanes(self):
-    ego = self.env.unwrapped.vehicle
-    current = int(ego.lane_index[2])
-    current_potential = _predict_lane_acceleration(self, current)
-    candidates = []
-
-    for lane_id in (current - 1, current + 1):
-        if lane_id not in range(NUM_LANES):
-            continue
-        safe, reason = _lane_is_safe(self, lane_id)
-        if not safe:
-            continue
-        potential = _predict_lane_acceleration(self, lane_id)
-        gain = potential - current_potential
-        candidates.append({
-            "target_lane": int(lane_id),
-            "current_lane": current,
-            "current_acceleration_potential": float(current_potential),
-            "candidate_acceleration_potential": float(potential),
-            "acceleration_gain": float(gain),
-            "safety": reason,
-        })
-
-    candidates.sort(key=lambda item: item["candidate_acceleration_potential"], reverse=True)
-    beneficial = [
-        item for item in candidates
-        if item["acceleration_gain"] >= MIN_ACCELERATION_GAIN_MPS2
+    current_lane = int(ego.lane_index[2])
+    lane_count = int(self.env.unwrapped.config.get("lanes_count", NUM_LANES))
+    return [
+        lane_id for lane_id in (current_lane - 1, current_lane + 1)
+        if 0 <= lane_id < lane_count
     ]
-    return current_potential, beneficial, candidates
 
 
 def _valid_lane_action_mask(self):
-    _, beneficial, _ = _rank_safe_lanes(self)
-    return np.asarray([True, bool(beneficial)], dtype=bool)
+    """Binary policy mask [KEEP, CHANGE], constrained only by road boundaries."""
+    return np.asarray([True, bool(_valid_candidate_lanes(self))], dtype=bool)
 
 
 def _valid_target_lane_mask(self):
-    _, beneficial, _ = _rank_safe_lanes(self)
+    """Allow the policy to learn among every physically reachable adjacent lane."""
     mask = np.zeros(NUM_LANES, dtype=bool)
-    if beneficial:
-        # Exactly one target is eligible: the safest candidate among those
-        # that pass hard safety checks and provide the greatest acceleration.
-        mask[int(beneficial[0]["target_lane"])] = True
+    for lane_id in _valid_candidate_lanes(self):
+        if 0 <= int(lane_id) < NUM_LANES:
+            mask[int(lane_id)] = True
     return mask
 
 
-def _filter_acceleration_and_lane_action(self, sampled_action, selected_target_lane=None):
+def _validate_policy_action(self, sampled_action, selected_target_lane=None):
+    """Pass policy actions through; validate only lane topology, never traffic safety."""
     action = np.asarray(sampled_action, dtype=np.float32).reshape(-1).copy()
     if action.size != 2:
         raise ValueError("Expected [normalized acceleration, binary KEEP/CHANGE].")
 
     ego = self.env.unwrapped.vehicle
-    current = int(ego.lane_index[2])
+    current_lane = int(ego.lane_index[2])
     requested = int(np.clip(np.rint(action[1]), 0, 1))
-    current_values = _lane_neighbors(self, current)
-    emergency = (
-        current_values["front"] is not None
-        and (
-            current_values["front_gap"] <= EMERGENCY_FRONT_GAP_M
-            or current_values["front_ttc"] <= EMERGENCY_FRONT_TTC_S
-        )
-    )
-
-    current_potential, beneficial, all_safe_candidates = _rank_safe_lanes(self)
-    best = beneficial[0] if beneficial else None
-    target = current
+    candidates = _valid_candidate_lanes(self)
+    target_lane = current_lane
     executed = requested
-    blocked = False
-    reason = "none"
+    invalid_target = False
 
     if requested == 1:
-        selected = None if selected_target_lane is None else int(selected_target_lane)
-        if best is None:
-            blocked, executed, reason = True, 0, "no_safe_beneficial_adjacent_lane"
-        elif selected != int(best["target_lane"]):
-            blocked, executed, reason = True, 0, "target_not_highest_acceleration_candidate"
+        try:
+            selected = int(selected_target_lane)
+        except (TypeError, ValueError):
+            selected = current_lane
+        if selected not in candidates:
+            # Defensive fallback for malformed/external callers. The policy's
+            # target mask prevents this during normal training.
+            executed = 0
+            invalid_target = True
         else:
-            target = int(best["target_lane"])
+            target_lane = selected
 
-    if emergency:
-        action[0] = min(float(action[0]), -0.8)
-
+    action[0] = float(np.clip(action[0], -1.0, 1.0))
     action[1] = float(executed)
     request_id = None
     if requested:
@@ -1043,22 +913,30 @@ def _filter_acceleration_and_lane_action(self, sampled_action, selected_target_l
         self._lane_request_trace_sequence = request_id
 
     info = {
-        "current_lane_id": current,
-        "requested_target_lane_id": int(selected_target_lane if selected_target_lane is not None else current),
-        "selected_target_lane_id": int(selected_target_lane if selected_target_lane is not None else current),
-        "executed_target_lane_id": target,
+        "current_lane_id": current_lane,
+        "candidate_lanes": [int(x) for x in candidates],
+        "requested_target_lane_id": int(
+            selected_target_lane if selected_target_lane is not None else current_lane
+        ),
+        "selected_target_lane_id": int(
+            selected_target_lane if selected_target_lane is not None else current_lane
+        ),
+        "executed_target_lane_id": int(target_lane),
         "policy_requested_lane_action": "CHANGE" if requested else "KEEP",
         "executed_lane_action": "CHANGE" if executed else "KEEP",
-        "lane_change_blocked": bool(blocked),
-        "lane_change_rejection_reason": reason,
+        "lane_change_blocked": bool(invalid_target),
+        "lane_change_rejection_reason": (
+            "target_outside_physical_adjacent_lanes" if invalid_target else "none"
+        ),
         "lane_request_trace_id": request_id,
-        "target_selector_mode": "highest_safe_predicted_acceleration_potential",
-        "current_lane_acceleration_potential": float(current_potential),
-        "ranked_safe_lane_candidates": all_safe_candidates,
-        "selected_candidate": best,
-        "emergency_braking": bool(emergency),
-        "safety_filter_applied": bool(blocked or emergency),
-        "overridden": bool(blocked or emergency),
+        "action_validation_mode": "physical_lane_reachability_only",
+        "traffic_safety_filter_applied": False,
+        "ttc_filter_applied": False,
+        "gap_filter_applied": False,
+        "acceleration_override_applied": False,
+        "emergency_braking": False,
+        "safety_filter_applied": False,
+        "overridden": bool(invalid_target),
         "sampled_action": np.asarray(sampled_action, dtype=np.float32).copy(),
         "filtered_action": action.copy(),
         "proposed_policy_acceleration": float(sampled_action[0]),
@@ -1112,13 +990,10 @@ base.HighwaySimulator._sanitize_traffic_slot_speeds = _sanitize_all_traffic_spee
 base.HighwaySimulator._snapshot_managed_traffic_slots = _snapshot_all_traffic
 base.HighwaySimulator._record_first_negative_speed_transition = _no_negative_transition_record
 base.HighwaySimulator._encode_state = _six_slot_state
-base.HighwaySimulator._lane_neighbors = _lane_neighbors
-base.HighwaySimulator._lane_is_safe = _lane_is_safe
-base.HighwaySimulator._predict_lane_acceleration = _predict_lane_acceleration
-base.HighwaySimulator._rank_safe_lanes = _rank_safe_lanes
+base.HighwaySimulator.get_valid_candidate_lanes = _valid_candidate_lanes
 base.HighwaySimulator.get_valid_lane_action_mask = _valid_lane_action_mask
 base.HighwaySimulator.get_valid_target_lane_mask = _valid_target_lane_mask
-base.HighwaySimulator.filter_ttc_action = _filter_acceleration_and_lane_action
+base.HighwaySimulator.filter_ttc_action = _validate_policy_action
 
 # Keep the original state/action dimensions and the policy implementation.
 base.POLICY_LR = POLICY_LR
@@ -1525,9 +1400,9 @@ def main():
     base.policy_frequency = POLICY_FREQUENCY_HZ
 
     print("Ego observation: fixed six slots (nearest front/rear in each lane)")
-    print("Lane selection: hard safety filter -> predicted acceleration ranking")
-    print("Background traffic: ADT enabled; ego policy/reward/safety architecture unchanged")
-    print("Reward: normalized measured acceleration - executed lane-change cost - collision penalty")
+    print("Lane selection: pure RL over physically reachable adjacent lanes only; no TTC/gap or acceleration-ranking filter")
+    print("Background traffic: ADT enabled; ego action is controlled by RL without a traffic-safety shield")
+    print("Reward: normalized measured acceleration - 0.2*|acceleration reward| for executed lane changes - collision penalty")
     print(f"PyTorch={torch.__version__} device={base.DEVICE}")
 
     simulator = base.create_highway_simulator()
