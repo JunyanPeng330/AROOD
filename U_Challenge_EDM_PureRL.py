@@ -1294,6 +1294,10 @@ def train(simulator, policy, tram_controller=None):
         critic_losses = []
         rejection_count = 0
         change_requests = 0
+        lane_action_overrides = 0
+        acceleration_overrides = 0
+        actor_updates_applied = 0
+        actor_updates_skipped = 0
 
         for step in range(MAX_STEPS_PER_EPISODE):
             ego = simulator.env.unwrapped.vehicle
@@ -1422,6 +1426,8 @@ def train(simulator, policy, tram_controller=None):
             acceleration_overridden = not np.isclose(
                 float(filtered_action[0]), float(sampled_action[0]), atol=1e-6
             )
+            lane_action_overrides += int(lane_action_overridden)
+            acceleration_overrides += int(acceleration_overridden)
             update = base.update_policy(
                 policy=policy,
                 state=state,
@@ -1440,6 +1446,10 @@ def train(simulator, policy, tram_controller=None):
             )
             actor_losses.append(update["actor_loss"])
             critic_losses.append(update["critic_loss"])
+            if update.get("actor_update_valid", True):
+                actor_updates_applied += 1
+            else:
+                actor_updates_skipped += 1
             episode_return += reward
             state = np.asarray(next_state, dtype=np.float32)
 
@@ -1465,6 +1475,10 @@ def train(simulator, policy, tram_controller=None):
             "lane_change_rate": float(lane_change_rate),
             "lane_change_requests": int(change_requests),
             "lane_change_rejections": int(rejection_count),
+            "lane_action_overrides": int(lane_action_overrides),
+            "acceleration_overrides": int(acceleration_overrides),
+            "actor_updates_applied": int(actor_updates_applied),
+            "actor_updates_skipped": int(actor_updates_skipped),
             "lane_change_rejection_rate": (
                 rejection_count / change_requests if change_requests else 0.0
             ),
@@ -1559,6 +1573,8 @@ def train(simulator, policy, tram_controller=None):
             f"speed>=90%limit={speed_target_fraction:.1%} "
             f"lane_changes={lane_changes} "
             f"change_rejection={rejection_count}/{change_requests} "
+            f"overrides(lane/accel)={lane_action_overrides}/{acceleration_overrides} "
+            f"actor_updates(applied/skipped)={actor_updates_applied}/{actor_updates_skipped} "
             f"safe_distance={safe_distance:.1f}m "
             f"safe_steps={safe_steps}/{steps} "
             f"EDM={row['mean_environment_danger']:.3f} "
