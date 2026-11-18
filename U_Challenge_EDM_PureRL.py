@@ -1412,10 +1412,20 @@ def train(simulator, policy, tram_controller=None):
                 truncated=bool(step_info.get("truncated", False)),
             )
 
+            # The actor must not receive policy-gradient credit for an action
+            # that the safety filter did not allow the environment to execute.
+            lane_action_overridden = bool(
+                safety_info.get("lane_change_blocked", False)
+                or int(round(float(filtered_action[1])))
+                   != int(round(float(sampled_action[1])))
+            )
+            acceleration_overridden = not np.isclose(
+                float(filtered_action[0]), float(sampled_action[0]), atol=1e-6
+            )
             update = base.update_policy(
                 policy=policy,
                 state=state,
-                action=sampled_action,
+                action=sampled_action,  # retain the original sampled action for its log-probability
                 reward=reward,
                 next_state=next_state,
                 done=done,
@@ -1425,6 +1435,8 @@ def train(simulator, policy, tram_controller=None):
                 selected_target_lane=selected_target_lane,
                 valid_target_lane_mask=target_lane_mask,
                 current_lane_id=current_lane,
+                lane_action_overridden=lane_action_overridden,
+                acceleration_overridden=acceleration_overridden,
             )
             actor_losses.append(update["actor_loss"])
             critic_losses.append(update["critic_loss"])
