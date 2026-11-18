@@ -17,7 +17,7 @@ import numpy as np
 import torch
 import matplotlib.pyplot as plt
 
-import V_old as base
+import V as base
 
 
 # ---------------------------------------------------------------------------
@@ -148,11 +148,11 @@ STATE_DIM = base.STATE_DIM
 ACTION_DIM = base.ACTION_DIM
 POLICY_ACTION_DIM = base.POLICY_ACTION_DIM
 
-MODEL_PATH = os.path.join("policy", "U_Challenge_3.pt")
-PLOT_PATH = os.path.join("figure", "U_Challenge_3_return.png")
-PLOT_TXT_PATH = os.path.join("figure", "plot_U_Challenge_3.txt")
-METRICS_PATH = os.path.join("figure", "U_Challenge_3_episode_metrics.jsonl")
-base.EPISODE_TRAJECTORY_PATH = os.path.join("figure", "U_Challenge_3_trajectories.jsonl")
+MODEL_PATH = os.path.join("policy", "U_Challenge_4.pt")
+PLOT_PATH = os.path.join("figure", "U_Challenge_4_return.png")
+PLOT_TXT_PATH = os.path.join("figure", "plot_U_Challenge_4.txt")
+METRICS_PATH = os.path.join("figure", "U_Challenge_4_episode_metrics.jsonl")
+base.EPISODE_TRAJECTORY_PATH = os.path.join("figure", "U_Challenge_4_trajectories.jsonl")
 
 random.seed(SEED)
 np.random.seed(SEED)
