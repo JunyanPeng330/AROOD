@@ -1174,9 +1174,15 @@ def calculate_reward(
     danger_after=0.0, collision=False, reward_weights=None,
 ):
     """Acceleration + environmental safety + collision, with a cost for executed lane changes."""
-    acceleration_reward = float(np.clip(
-        float(actual_acceleration) / max(EGO_MAX_ACCEL_MPS2, 1e-6), -1.0, 1.0
-    ))
+    # Once the ego vehicle reaches the speed limit, give the maximum
+    # acceleration reward. Below the limit, reward the executed acceleration.
+    if current_speed is not None and float(current_speed) >= SPEED_LIMIT_MPS:
+        acceleration_reward = 1.0
+    else:
+        acceleration_reward = float(np.clip(
+            float(actual_acceleration) / max(EGO_MAX_ACCEL_MPS2, 1e-6),
+            -1.0, 1.0
+        ))
     environmental_safety_reward = float(np.clip(
         float(danger_before) - float(danger_after), -1.0, 1.0
     ))
