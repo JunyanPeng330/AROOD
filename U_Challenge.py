@@ -1398,6 +1398,7 @@ def main():
     # are the actual frequencies used by the environment.
     base.simulation_frequency = SIMULATION_FREQUENCY_HZ
     base.policy_frequency = POLICY_FREQUENCY_HZ
+    base.SPEED_LIMIT = SPEED_LIMIT_MPS
 
     print("Ego observation: fixed six slots (nearest front/rear in each lane)")
     print("Lane selection: pure RL over physically reachable adjacent lanes only; no TTC/gap or acceleration-ranking filter")
