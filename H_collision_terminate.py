@@ -949,8 +949,16 @@ def _validate_policy_action(self, sampled_action, selected_target_lane=None):
 # 6. Reward: measured acceleration, executed lane-change cost, collision cost
 # ---------------------------------------------------------------------------
 
-def calculate_reward(actual_acceleration, lane_change_executed, collision):
-    acceleration_reward = float(np.clip(float(actual_acceleration) / EGO_MAX_ACCEL_MPS2, -1.0, 1.0))
+def calculate_reward(actual_acceleration, current_speed, lane_change_executed, collision):
+    # Once ego reaches the speed limit, reward maintaining that speed on every
+    # subsequent step. This deliberately gives +1.0 even when acceleration is
+    # zero because the vehicle is cruising at its maximum speed.
+    if float(current_speed) >= SPEED_LIMIT_MPS - 1e-3:
+        acceleration_reward = 1.0
+    else:
+        acceleration_reward = float(np.clip(
+            float(actual_acceleration) / EGO_MAX_ACCEL_MPS2, -1.0, 1.0
+        ))
     #acceleration_reward = float(actual_acceleration)
     #acceleration_reward = float(np.clip(float(abs(actual_acceleration)+ actual_acceleration) / 2*EGO_MAX_ACCEL_MPS2, -1.0, 1.0))
     lane_change_cost = (
@@ -1117,8 +1125,10 @@ def train(simulator, policy):
             lane_change_executed = bool(
                 step_info.get("lane_change_completed_instantly", False)
             )
+            speed = float(simulator.env.unwrapped.vehicle.speed)
             reward, reward_components = calculate_reward(
                 actual_acceleration,
+                speed,
                 lane_change_executed,
                 collision,
             )
@@ -1444,7 +1454,7 @@ def main():
     print("Ego observation: fixed six slots (nearest front/rear in each lane)")
     print("Lane selection: pure RL over physically reachable adjacent lanes only; no TTC/gap or acceleration-ranking filter")
     print("Background traffic: ADT enabled; ego action is controlled by RL without a traffic-safety shield")
-    print("Reward: normalized measured acceleration - 0.2*|acceleration reward| for executed lane changes - collision penalty")
+    print("Reward: normalized measured acceleration below speed limit; +1.0 acceleration reward at speed limit, including zero-acceleration cruising; existing collision term retained")
     print(f"PyTorch={torch.__version__} device={base.DEVICE}")
 
     simulator = base.create_highway_simulator()
