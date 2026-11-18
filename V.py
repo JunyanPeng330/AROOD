@@ -3827,15 +3827,19 @@ def update_policy(policy, state, action, reward, next_state, done,
     accel_dist = policy.acceleration_distribution(st, sampled_lane_action, sampled_target)
     acceleration_log_prob = policy.squashed_normal_log_prob(accel_dist, pre_tanh)
 
-    # A blocked lane request is neither treated as an executed CHANGE nor
-    # falsely relabelled as a policy-selected KEEP. Its lane-policy gradient
-    # is omitted for this transition. Likewise, omit acceleration likelihood
-    # when an emergency/safety override changed the sampled acceleration.
+    # This is a joint, hierarchically conditioned policy: acceleration is
+    # conditioned on the sampled lane decision. If the filter changes ANY
+    # part of the sampled action, the observed return belongs to the filtered
+    # action, not the sampled joint action. Therefore skip the entire actor
+    # likelihood-ratio term for this transition rather than crediting a
+    # partially mismatched action. The critic still learns from the real
+    # state transition and reward.
     actor_log_prob = torch.zeros(1, dtype=torch.float32, device=DEVICE)
-    if not lane_action_overridden:
-        actor_log_prob = actor_log_prob + binary_log_prob + target_log_prob
-    if not acceleration_overridden:
-        actor_log_prob = actor_log_prob + acceleration_log_prob
+    actor_update_valid = not (
+        bool(lane_action_overridden) or bool(acceleration_overridden)
+    )
+    if actor_update_valid:
+        actor_log_prob = binary_log_prob + target_log_prob + acceleration_log_prob
 
     actor_loss = -(actor_log_prob * adv.detach()).mean()
     loss = actor_loss + critic_loss
@@ -3850,8 +3854,7 @@ def update_policy(policy, state, action, reward, next_state, done,
         "binary_log_prob": float(binary_log_prob.detach().mean().item()),
         "target_lane_log_prob": float(target_log_prob.detach().mean().item()),
         "acceleration_log_prob": float(acceleration_log_prob.detach().mean().item()),
-        "lane_actor_term_used": not bool(lane_action_overridden),
-        "acceleration_actor_term_used": not bool(acceleration_overridden),
+        "actor_update_valid": bool(actor_update_valid),
     }
 
 
