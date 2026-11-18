@@ -3763,8 +3763,16 @@ def compute_reward(
 def update_policy(policy, state, action, reward, next_state, done,
                   valid_action_mask=None, terminated=None, pre_tanh_accel=None,
                   selected_target_lane=-1, valid_target_lane_mask=None,
-                  current_lane_id=None):
-    """Update lane choice, conditional target lane, and learned acceleration jointly."""
+                  current_lane_id=None, lane_action_overridden=False,
+                  acceleration_overridden=False):
+    """
+    One-step actor-critic update with intervention-aware actor credit assignment.
+
+    The critic always learns from the observed transition. The actor only gets
+    a policy-gradient term for action dimensions that were actually allowed
+    through the safety filter. The sampled action is retained for computing
+    the likelihood of the policy's original sample.
+    """
     st, nst = to_tensor(state).reshape(1, -1), to_tensor(next_state).reshape(1, -1)
     act, rew = to_tensor(action).reshape(1, -1), to_tensor([reward])
     value = policy.value(st)
@@ -3774,41 +3782,78 @@ def update_policy(policy, state, action, reward, next_state, done,
         target = rew if terminal else rew + 0.99 * nv
     adv = target - value
     critic_loss = F.mse_loss(value, target)
-    binary_action = int(np.clip(np.rint(float(act[0, 1].detach().cpu().item())), 0, 1))
+
+    # Use the sampled action to evaluate the policy distribution that generated it.
+    sampled_lane_action = int(np.clip(
+        np.rint(float(act[0, 1].detach().cpu().item())), 0, 1
+    ))
     current = int(current_lane_id) if current_lane_id is not None else 0
-    effective_target = int(selected_target_lane) if binary_action == 1 and int(selected_target_lane) >= 0 else current
-    effective_target = int(np.clip(effective_target, 0, NUM_LANES - 1))
+    sampled_target = (
+        int(selected_target_lane)
+        if sampled_lane_action == 1 and int(selected_target_lane) >= 0
+        else current
+    )
+    sampled_target = int(np.clip(sampled_target, 0, NUM_LANES - 1))
+
     binary_dist = policy.action_distributions(
         st, torch.as_tensor(valid_action_mask, dtype=torch.bool, device=DEVICE).reshape(1, -1)
         if valid_action_mask is not None else None
     )
-    binary_log_prob = binary_dist.log_prob(torch.as_tensor([binary_action], dtype=torch.long, device=DEVICE))
+    binary_log_prob = binary_dist.log_prob(torch.as_tensor(
+        [sampled_lane_action], dtype=torch.long, device=DEVICE
+    ))
+
     target_log_prob = torch.zeros(1, dtype=torch.float32, device=DEVICE)
-    if binary_action == 1 and int(selected_target_lane) >= 0 and valid_target_lane_mask is not None:
-        lane_mask = torch.as_tensor(valid_target_lane_mask, dtype=torch.bool, device=DEVICE).reshape(1, -1).clone()
+    if (not lane_action_overridden and sampled_lane_action == 1
+            and int(selected_target_lane) >= 0 and valid_target_lane_mask is not None):
+        lane_mask = torch.as_tensor(
+            valid_target_lane_mask, dtype=torch.bool, device=DEVICE
+        ).reshape(1, -1).clone()
         if current_lane_id is not None and 0 <= int(current_lane_id) < lane_mask.shape[-1]:
             lane_mask[:, int(current_lane_id)] = False
         if lane_mask.any(dim=-1).all():
             lane_dist = policy.lane_distributions(st, lane_mask)
-            target_log_prob = lane_dist.log_prob(torch.as_tensor([int(selected_target_lane)], dtype=torch.long, device=DEVICE))
-    accel_value = (float(pre_tanh_accel) if pre_tanh_accel is not None else
-                   float(np.arctanh(np.clip(float(act[0, 0].detach().cpu().item()), -0.999, 0.999))))
+            target_log_prob = lane_dist.log_prob(torch.as_tensor(
+                [int(selected_target_lane)], dtype=torch.long, device=DEVICE
+            ))
+
+    accel_value = (
+        float(pre_tanh_accel) if pre_tanh_accel is not None else
+        float(np.arctanh(np.clip(
+            float(act[0, 0].detach().cpu().item()), -0.999, 0.999
+        )))
+    )
     pre_tanh = torch.as_tensor([accel_value], dtype=torch.float32, device=DEVICE)
-    accel_dist = policy.acceleration_distribution(st, binary_action, effective_target)
+    accel_dist = policy.acceleration_distribution(st, sampled_lane_action, sampled_target)
     acceleration_log_prob = policy.squashed_normal_log_prob(accel_dist, pre_tanh)
-    action_log_prob = binary_log_prob + target_log_prob + acceleration_log_prob
-    actor_loss = -(action_log_prob * adv.detach()).mean()
+
+    # A blocked lane request is neither treated as an executed CHANGE nor
+    # falsely relabelled as a policy-selected KEEP. Its lane-policy gradient
+    # is omitted for this transition. Likewise, omit acceleration likelihood
+    # when an emergency/safety override changed the sampled acceleration.
+    actor_log_prob = torch.zeros(1, dtype=torch.float32, device=DEVICE)
+    if not lane_action_overridden:
+        actor_log_prob = actor_log_prob + binary_log_prob + target_log_prob
+    if not acceleration_overridden:
+        actor_log_prob = actor_log_prob + acceleration_log_prob
+
+    actor_loss = -(actor_log_prob * adv.detach()).mean()
     loss = actor_loss + critic_loss
     policy.optimizer.zero_grad()
     loss.backward()
     torch.nn.utils.clip_grad_norm_(policy.parameters(), max_norm=1.0)
     policy.optimizer.step()
-    return {"actor_loss": float(actor_loss.detach().item()),
-            "critic_loss": float(critic_loss.detach().item()),
-            "advantage": float(adv.detach().mean().item()),
-            "binary_log_prob": float(binary_log_prob.detach().mean().item()),
-            "target_lane_log_prob": float(target_log_prob.detach().mean().item()),
-            "acceleration_log_prob": float(acceleration_log_prob.detach().mean().item())}
+    return {
+        "actor_loss": float(actor_loss.detach().item()),
+        "critic_loss": float(critic_loss.detach().item()),
+        "advantage": float(adv.detach().mean().item()),
+        "binary_log_prob": float(binary_log_prob.detach().mean().item()),
+        "target_lane_log_prob": float(target_log_prob.detach().mean().item()),
+        "acceleration_log_prob": float(acceleration_log_prob.detach().mean().item()),
+        "lane_actor_term_used": not bool(lane_action_overridden),
+        "acceleration_actor_term_used": not bool(acceleration_overridden),
+    }
+
 
 
 
