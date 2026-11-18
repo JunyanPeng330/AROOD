@@ -993,7 +993,7 @@ base.HighwaySimulator._encode_state = _six_slot_state
 base.HighwaySimulator.get_valid_candidate_lanes = _valid_candidate_lanes
 base.HighwaySimulator.get_valid_lane_action_mask = _valid_lane_action_mask
 base.HighwaySimulator.get_valid_target_lane_mask = _valid_target_lane_mask
-base.HighwaySimulator.filter_ttc_action = _validate_policy_action
+base.HighwaySimulator.validate_policy_action = _validate_policy_action
 
 # Keep the original state/action dimensions and the policy implementation.
 base.POLICY_LR = POLICY_LR
@@ -1056,7 +1056,7 @@ def train(simulator, policy):
             if int(round(float(sampled_action[1]))) == 1:
                 change_requests += 1
 
-            filtered_action, safety_info = simulator.filter_ttc_action(
+            filtered_action, safety_info = simulator.validate_policy_action(
                 sampled_action,
                 selected_target_lane=selected_target_lane,
             )
