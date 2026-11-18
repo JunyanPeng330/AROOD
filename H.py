@@ -1066,12 +1066,47 @@ def train(simulator, policy):
                 base.snapshot_simulator_vehicles(simulator)
                 if base.TRAJECTORY_RECORDING_ENABLED else []
             )
-            next_state, _, done, step_info = simulator.step(
+            next_state, _, simulator_done, step_info = simulator.step(
                 filtered_action,
                 apply_safety_filter=False,
                 sampled_action=sampled_action,
                 safety_info=safety_info,
             )
+
+            # Collision is an episode-terminal event for this experiment.
+            # V.HighwaySimulator normally clears ego.crashed after recording the
+            # collision so that collision-continuation experiments can proceed.
+            # H.py overrides that continuation policy at the training-loop level:
+            # record the first collision, mark it terminal for the RL update, and
+            # reset before another simulator action is taken.
+            step_info = dict(step_info or {})
+            collision = bool(step_info.get("collision", False))
+            episode_terminated = bool(
+                collision or step_info.get("terminated", False)
+            )
+            episode_truncated = bool(
+                step_info.get("truncated", False) and not episode_terminated
+            )
+            episode_done = bool(
+                simulator_done or episode_terminated or episode_truncated
+            )
+
+            if collision:
+                step_info.update({
+                    "terminated": True,
+                    "truncated": False,
+                    "episode_terminated_by_collision": True,
+                    "termination_reason": "collision",
+                    "collision_continuation_enabled": False,
+                })
+            else:
+                step_info["terminated"] = episode_terminated
+                step_info["truncated"] = episode_truncated
+                step_info["episode_terminated_by_collision"] = False
+                if episode_done:
+                    step_info["termination_reason"] = (
+                        "time_limit" if episode_truncated else "environment_terminal"
+                    )
 
             actual_acceleration = float(
                 step_info.get("observed_acceleration", 0.0)
@@ -1079,7 +1114,6 @@ def train(simulator, policy):
             lane_change_executed = bool(
                 step_info.get("lane_change_completed_instantly", False)
             )
-            collision = bool(step_info.get("collision", False))
             reward, reward_components = calculate_reward(
                 actual_acceleration,
                 lane_change_executed,
@@ -1121,9 +1155,9 @@ def train(simulator, policy):
                 step_info=step_info,
                 reward=reward,
                 reward_components=reward_components,
-                done=done,
-                terminated=bool(step_info.get("terminated", False)),
-                truncated=bool(step_info.get("truncated", False)),
+                done=episode_done,
+                terminated=episode_terminated,
+                truncated=episode_truncated,
             )
 
             update = base.update_policy(
@@ -1132,9 +1166,9 @@ def train(simulator, policy):
                 action=sampled_action,
                 reward=reward,
                 next_state=next_state,
-                done=done,
+                done=episode_done,
                 valid_action_mask=valid_action_mask,
-                terminated=bool(step_info.get("terminated", False)),
+                terminated=episode_terminated,
                 pre_tanh_accel=aux.get("pre_tanh_accel"),
                 selected_target_lane=selected_target_lane,
                 valid_target_lane_mask=target_lane_mask,
@@ -1145,7 +1179,7 @@ def train(simulator, policy):
             episode_return += reward
             state = np.asarray(next_state, dtype=np.float32)
 
-            if done:
+            if episode_done:
                 break
 
         steps = step + 1
@@ -1159,6 +1193,11 @@ def train(simulator, policy):
         row = {
             "episode": episode + 1,
             "steps": steps,
+            "terminated_by_collision": bool(collisions > 0),
+            "termination_reason": (
+                "collision" if collisions > 0
+                else step_info.get("termination_reason", "max_steps")
+            ),
             "return": float(episode_return),
             "collisions": int(collisions),
             "collision_rate": collision_rate,
