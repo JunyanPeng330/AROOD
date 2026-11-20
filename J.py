@@ -129,10 +129,12 @@ EDM_TTC_WARNING_S = 6.0
 EDM_GAP_CRITICAL_M = 5.0
 EDM_GAP_WARNING_M = 50.0
 
-# Reward: per-policy-decision speed change, plus collision penalty only.
+# Reward: positive acceleration utility + non-negative speed utility + collision penalty.
 # No explicit lane-change cost: one subsequent processing decision creates
-# the intended implicit temporal cost.
+# the intended implicit temporal cost. Both ordinary rewards are suspended
+# during the lane-change processing decision.
 LANE_CHANGE_COST_WEIGHT = 0.0
+SPEED_REWARD_WEIGHT = 1.0
 COLLISION_PENALTY = 5
 LANE_CHANGE_PROCESSING_STEPS = 1
 
@@ -1155,52 +1157,71 @@ def _edm_augmented_state(self, obs=None):
     current_lane = int(self.env.unwrapped.vehicle.lane_index[2])
     # Relative utilities make the opportunity (or disadvantage) of changing
     # lanes explicit: current lane is zero; positive values favour alternatives.
-    relative_utilities = np.clip(scores - float(scores[current_lane]), -1.0, 1.0)
-    return np.concatenate([base_state, relative_utilities]).astype(np.float32)
-
-
-# ---------------------------------------------------------------------------
-# 7. Reward: per-decision acceleration utility + collision penalty
+    relative_utilities = np.clip(score# ---------------------------------------------------------------------------
+# 7. Reward: acceleration utility + non-negative speed utility + collision penalty
 # ---------------------------------------------------------------------------
 
 def calculate_reward(
     actual_delta_v, current_speed, lane_change_executed, collision,
     lane_change_processing_step=False,
 ):
-    """Reward positive speed gain without directly penalizing deceleration.
+    """Combine non-negative acceleration and speed rewards with collision cost.
 
-    Below the speed limit, use the normalized positive part of the actual
-    per-decision speed change:
-        R_acc = (abs(delta_v) + delta_v) / (2 * max_delta_v_per_decision)
-    This is equivalent to max(delta_v, 0) / max_delta_v_per_decision.
-    At/above the speed limit, reward remains 1.0. During subsequent lane-change
-    processing steps, ordinary reward is zero; collision penalty remains active.
+    Acceleration reward preserves the existing per-decision design:
+        R_acc = max(delta_v, 0) / max_delta_v_per_decision
+    and remains 1.0 at/above the speed limit, as in the previous model.
+
+    Speed reward is independently non-negative:
+        R_speed = clip(current_speed / speed_limit, 0, 1)
+
+    Both ordinary rewards are suspended during the lane-change processing
+    decision. The collision penalty remains active, including during processing.
     """
     if lane_change_processing_step:
         acceleration_reward = 0.0
-    elif float(current_speed) >= SPEED_LIMIT_MPS - 1e-3:
-        acceleration_reward = 1.0
+        speed_reward = 0.0
     else:
-        denominator = max(float(MAX_ACCEL_DELTA_V_PER_DECISION_MPS), 1e-8)
-        delta_v = float(actual_delta_v)
-        positive_delta_v = (abs(delta_v) + delta_v) / 2.0
-        acceleration_reward = float(np.clip(
-            positive_delta_v / denominator, 0.0, 1.0
+        if float(current_speed) >= SPEED_LIMIT_MPS - 1e-3:
+            acceleration_reward = 1.0
+        else:
+            denominator = max(float(MAX_ACCEL_DELTA_V_PER_DECISION_MPS), 1e-8)
+            delta_v = float(actual_delta_v)
+            positive_delta_v = (abs(delta_v) + delta_v) / 2.0
+            acceleration_reward = float(np.clip(
+                positive_delta_v / denominator, 0.0, 1.0
+            ))
+
+        speed_reward = float(SPEED_REWARD_WEIGHT) * float(np.clip(
+            float(current_speed) / max(float(SPEED_LIMIT_MPS), 1e-8),
+            0.0, 1.0,
         ))
+
     collision_cost = -float(COLLISION_PENALTY) if collision else 0.0
-    total = acceleration_reward + collision_cost
+    total = acceleration_reward + speed_reward + collision_cost
+    delta_v = float(actual_delta_v)
+    positive_delta_v = (abs(delta_v) + delta_v) / 2.0
     return total, {
-        "acceleration_reward": acceleration_reward,
+        "acceleration_reward": float(acceleration_reward),
+        "speed_reward": float(speed_reward),
+        "speed_reward_weight": float(SPEED_REWARD_WEIGHT),
+        "speed_reward_raw": float(np.clip(
+            float(current_speed) / max(float(SPEED_LIMIT_MPS), 1e-8),
+            0.0, 1.0,
+        )),
         "ordinary_reward_suspended": bool(lane_change_processing_step),
         "lane_change_processing_step": bool(lane_change_processing_step),
-        "actual_delta_v_mps_per_decision": float(actual_delta_v),
-        "positive_delta_v_mps_per_decision": float(
-            (abs(float(actual_delta_v)) + float(actual_delta_v)) / 2.0
-        ),
+        "actual_delta_v_mps_per_decision": delta_v,
+        "positive_delta_v_mps_per_decision": float(positive_delta_v),
         "max_acceleration_delta_v_mps_per_decision": float(MAX_ACCEL_DELTA_V_PER_DECISION_MPS),
         "policy_decision_interval_s": float(POLICY_DECISION_INTERVAL_S),
         "lane_change_cost": 0.0,
         "lane_change_executed": bool(lane_change_executed),
+        "collision_penalty": float(collision_cost),
+        "total_reward": float(total),
+    }
+
+
+ool(lane_change_executed),
         "collision_penalty": float(collision_cost),
         "total_reward": float(total),
     }
@@ -2011,7 +2032,7 @@ def main():
     print(f"EDM weights: safety={EDM_SAFETY_WEIGHT:.2f}, acceleration={EDM_ACCELERATION_WEIGHT:.2f}; TTC critical/warning={EDM_TTC_CRITICAL_S:.1f}/{EDM_TTC_WARNING_S:.1f}s; gap critical/warning={EDM_GAP_CRITICAL_M:.1f}/{EDM_GAP_WARNING_M:.1f}m")
     print(f"EDM prediction horizon={EDM_PREDICTION_HORIZON_S:.2f}s; state features are relative lane utilities (candidate score minus current-lane score)")
     print("Safety intervention: none; only physical lane-existence validity is enforced")
-    print("Reward: measured per-decision delta-v normalized by max_acceleration / policy_frequency; +1.0 at/above speed limit; collision penalty terminates episode")
+    print("Reward: non-negative per-decision acceleration utility + clipped non-negative speed utility (0 to 1); both suspended during lane-change processing; collision penalty terminates episode")
     print(f"Decision interval={POLICY_DECISION_INTERVAL_S:.6f}s; max delta-v/decision={MAX_ACCEL_DELTA_V_PER_DECISION_MPS:.6f}m/s")
     print(
         f"Lane-change processing={LANE_CHANGE_PROCESSING_STEPS} policy step(s) "
