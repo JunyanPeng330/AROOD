@@ -129,7 +129,7 @@ EDM_GAP_WARNING_M = 50.0
 # Reward: per-policy-decision speed change, plus collision penalty only.
 # No explicit lane-change cost: processing steps create an implicit temporal cost.
 LANE_CHANGE_COST_WEIGHT = 0.0
-COLLISION_PENALTY = 500.0
+COLLISION_PENALTY = 5
 LANE_CHANGE_PROCESSING_DURATION_S = 2.0
 
 # Temporal resolution (Hz). Change these at the top for frequency experiments.
