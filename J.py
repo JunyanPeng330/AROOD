@@ -1157,7 +1157,29 @@ def _edm_augmented_state(self, obs=None):
     current_lane = int(self.env.unwrapped.vehicle.lane_index[2])
     # Relative utilities make the opportunity (or disadvantage) of changing
     # lanes explicit: current lane is zero; positive values favour alternatives.
-    relative_utilities = np.clip(score# ---------------------------------------------------------------------------
+    scores = np.asarray(scores, dtype=np.float32).reshape(NUM_LANES)
+    if current_lane < 0 or current_lane >= NUM_LANES:
+        raise ValueError(f"Invalid current lane ID for EDM state: {current_lane}")
+
+    # Express each lane's utility relative to the lane currently occupied.
+    # This keeps the current-lane feature at zero and preserves all three lanes.
+    relative_utilities = np.clip(
+        scores - float(scores[current_lane]), -1.0, 1.0
+    ).astype(np.float32)
+
+    augmented_state = np.concatenate(
+        (base_state, relative_utilities)
+    ).astype(np.float32)
+
+    if augmented_state.size != STATE_DIM:
+        raise ValueError(
+            f"EDM state dimension mismatch: expected {STATE_DIM}, "
+            f"got {augmented_state.size}"
+        )
+    return augmented_state
+
+
+# ---------------------------------------------------------------------------
 # 7. Reward: acceleration utility + non-negative speed utility + collision penalty
 # ---------------------------------------------------------------------------
 
@@ -1216,12 +1238,6 @@ def calculate_reward(
         "policy_decision_interval_s": float(POLICY_DECISION_INTERVAL_S),
         "lane_change_cost": 0.0,
         "lane_change_executed": bool(lane_change_executed),
-        "collision_penalty": float(collision_cost),
-        "total_reward": float(total),
-    }
-
-
-ool(lane_change_executed),
         "collision_penalty": float(collision_cost),
         "total_reward": float(total),
     }
