@@ -1,5 +1,5 @@
 """
-H_EDM_PureRL.py — EDM-informed pure-RL autonomous-driving experiment.
+J.py — EDM-informed pure-RL autonomous-driving experiment.
 
 Based on the I.py simulator module. Keeps the six-slot observation,
 continuous ADT background traffic, physical lane-validity mask, collision
@@ -1420,11 +1420,11 @@ def train(simulator, policy):
 
     for episode in range(NUM_EPISODES):
         episode_start_time = time.time()
-        simulator._trace_phase = "H_EDM_PureRL"
+        simulator._trace_phase = "J_EDM_PureRL"
         simulator._trace_episode = episode + 1
         state = np.asarray(simulator.reset(seed=SEED + episode), dtype=np.float32)
         base.record_episode_start(
-            simulator, "H_EDM_PureRL", episode + 1, state
+            simulator, "J_EDM_PureRL", episode + 1, state
         )
 
         episode_return = 0.0
@@ -1730,7 +1730,7 @@ def train(simulator, policy):
 
             base.record_episode_transition(
                 simulator=simulator,
-                phase="H_EDM_PureRL",
+                phase="J_EDM_PureRL",
                 episode_number=episode + 1,
                 step_number=step + 1,
                 state_before=state,
@@ -1917,7 +1917,7 @@ def train(simulator, policy):
         )
 
     torch.save(policy.state_dict(), MODEL_PATH)
-    print(f"[U POLICY SAVED] {MODEL_PATH}")
+    print(f"[J POLICY SAVED] {MODEL_PATH}")
 
     plt.figure()
     plt.plot(episode_returns, alpha=0.4, label="episode return")
@@ -1932,7 +1932,7 @@ def train(simulator, policy):
         )
     plt.xlabel("Episode")
     plt.ylabel("Return")
-    plt.title("U — Pure RL under ADT")
+    plt.title("J — EDM-informed Pure RL under ADT")
     plt.legend()
     plt.tight_layout()
     plt.savefig(PLOT_PATH)
@@ -2038,7 +2038,7 @@ def train(simulator, policy):
 
 
 def main():
-    print("[H_EDM] EDM-informed pure RL with Aggressive Dynamic Traffic (ADT)")
+    print("[J_EDM] EDM-informed pure RL with Aggressive Dynamic Traffic (ADT)")
     print(f"Reference range: ±{REFERENCE_RANGE_M:.0f}m")
     print(f"Recycling boundary: ±{RECYCLING_BOUNDARY_M:.0f}m")
     print(f"Target background population: {TRAFFIC_TARGET_COUNT}")
