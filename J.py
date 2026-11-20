@@ -163,7 +163,7 @@ POLICY_LR = 3e-4
 HIDDEN_DIM = 128
 
 # Keep I.py's six-slot state layout and append three EDM relative-utility
-# features (left/current/right absolute lane IDs). The current lane has utility 0.
+# features in ascending absolute lane-ID order. The current lane has utility 0.
 BASE_STATE_DIM = base.STATE_DIM
 STATE_DIM = BASE_STATE_DIM + NUM_LANES
 base.STATE_DIM = STATE_DIM
@@ -1469,7 +1469,9 @@ def train(simulator, policy):
                 valid_action_mask = simulator.get_valid_lane_action_mask()
                 target_lane_mask = simulator.get_valid_target_lane_mask()
             edm_scores = compute_edm_lane_scores(simulator)
-            edm_score_history.append(edm_scores.copy())
+            # Scores are indexed by absolute lane ID. Preserve the ego lane at
+            # this decision so episode metrics can report relative left/current/right.
+            edm_score_history.append((edm_scores.copy(), current_lane))
             # Capture the pre-action values now. The next_state encoder will
             # refresh _last_edm_lane_details after the simulator update.
             edm_details_before = deepcopy(getattr(simulator, "_last_edm_lane_details", {}))
@@ -1778,6 +1780,25 @@ def train(simulator, policy):
             float(np.mean(np.asarray(speeds) >= 0.9 * SPEED_LIMIT_MPS))
             if speeds else 0.0
         )
+
+        # Lane IDs increase toward the left in the retained HighwayEnv road
+        # convention. Only include left/right observations when that adjacent
+        # lane physically exists for the ego's lane at that decision.
+        edm_left_scores = [
+            float(scores[lane_id + 1])
+            for scores, lane_id in edm_score_history
+            if lane_id + 1 < NUM_LANES
+        ]
+        edm_current_scores = [
+            float(scores[lane_id])
+            for scores, lane_id in edm_score_history
+        ]
+        edm_right_scores = [
+            float(scores[lane_id - 1])
+            for scores, lane_id in edm_score_history
+            if lane_id - 1 >= 0
+        ]
+
         row = {
             "episode": episode + 1,
             "steps": steps,
@@ -1818,13 +1839,13 @@ def train(simulator, policy):
             ),
             "mean_lane_change_cost": 0.0,
             "mean_edm_left_score": (
-                float(np.mean([x[0] for x in edm_score_history])) if edm_score_history else 0.0
+                float(np.mean(edm_left_scores)) if edm_left_scores else 0.0
             ),
             "mean_edm_current_score": (
-                float(np.mean([x[1] for x in edm_score_history])) if edm_score_history else 0.0
+                float(np.mean(edm_current_scores)) if edm_current_scores else 0.0
             ),
             "mean_edm_right_score": (
-                float(np.mean([x[2] for x in edm_score_history])) if edm_score_history else 0.0
+                float(np.mean(edm_right_scores)) if edm_right_scores else 0.0
             ),
             "mean_actor_loss": float(np.mean(actor_losses)) if actor_losses else 0.0,
             "mean_critic_loss": float(np.mean(critic_losses)) if critic_losses else 0.0,
