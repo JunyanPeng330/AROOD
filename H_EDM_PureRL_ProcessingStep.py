@@ -127,15 +127,9 @@ EDM_GAP_CRITICAL_M = 5.0
 EDM_GAP_WARNING_M = 50.0
 
 # Reward: per-policy-decision speed change, plus collision penalty only.
-# No explicit numerical lane-change cost is used. The manoeuvre has an implicit
-# temporal opportunity cost through reward-suspended processing steps.
+# No explicit lane-change cost: processing steps create an implicit temporal cost.
 LANE_CHANGE_COST_WEIGHT = 0.0
 COLLISION_PENALTY = 500.0
-
-# Ego lane-change processing: after an accepted lane transition, the ego must
-# complete this manoeuvre interval before another CHANGE action is available.
-# During the processing interval, ordinary rewards are suspended; collision
-# detection and the collision penalty remain active.
 LANE_CHANGE_PROCESSING_DURATION_S = 2.0
 
 # Temporal resolution (Hz). Change these at the top for frequency experiments.
@@ -168,11 +162,11 @@ base.STATE_DIM = STATE_DIM
 ACTION_DIM = base.ACTION_DIM
 POLICY_ACTION_DIM = base.POLICY_ACTION_DIM
 
-MODEL_PATH = os.path.join("policy", "H_EDM_PureRL_PS.pt")
-PLOT_PATH = os.path.join("figure", "H_EDM_PureRL_PS_return.png")
-PLOT_TXT_PATH = os.path.join("figure", "plot_H_EDM_PureRL_PS.txt")
-METRICS_PATH = os.path.join("figure", "H_EDM_PureRL_PS_episode_metrics.jsonl")
-base.EPISODE_TRAJECTORY_PATH = os.path.join("figure", "H_EDM_PureRL_PS_trajectories.jsonl")
+MODEL_PATH = os.path.join("policy", "H_EDM_PureRL_PS_1.pt")
+PLOT_PATH = os.path.join("figure", "H_EDM_PureRL_PS_1_return.png")
+PLOT_TXT_PATH = os.path.join("figure", "plot_H_EDM_PureRL_PS_1.txt")
+METRICS_PATH = os.path.join("figure", "H_EDM_PureRL_PS_1_episode_metrics.jsonl")
+base.EPISODE_TRAJECTORY_PATH = os.path.join("figure", "H_EDM_PureRL_PS_1_trajectories.jsonl")
 
 random.seed(SEED)
 np.random.seed(SEED)
@@ -1120,17 +1114,13 @@ def _edm_target_lane_mask(self):
 # ---------------------------------------------------------------------------
 
 def calculate_reward(
-    actual_delta_v,
-    current_speed,
-    lane_change_executed,
-    collision,
+    actual_delta_v, current_speed, lane_change_executed, collision,
     lane_change_processing_step=False,
 ):
-    """Calculate reward while treating lane-change processing as a temporal cost.
+    """Suspend ordinary acceleration reward during lane-change processing.
 
-    Ordinary acceleration reward is suspended during processing steps. A
-    collision penalty is never suspended, including during lane-change
-    processing. The lane-change initiation step itself is a normal reward step.
+    The initiation decision is rewarded normally. During subsequent processing
+    steps, ordinary reward is zero; collision penalty is never suspended.
     """
     if lane_change_processing_step:
         acceleration_reward = 0.0
@@ -1141,7 +1131,6 @@ def calculate_reward(
         acceleration_reward = float(np.clip(
             float(actual_delta_v) / denominator, -1.0, 1.0
         ))
-
     collision_cost = -float(COLLISION_PENALTY) if collision else 0.0
     total = acceleration_reward + collision_cost
     return total, {
@@ -1240,14 +1229,18 @@ def train(simulator, policy):
         lane_change_processing_steps = 0
         lane_change_processing_steps_remaining = 0
 
+        # Use road-longitudinal coordinates for distance metrics. Euclidean
+        # position deltas can include lateral lane displacement and distort
+        # the reported travel distance.
+        previous_road_s = _road_s(
+            simulator, simulator.env.unwrapped.vehicle
+        )
+
         for step in range(MAX_STEPS_PER_EPISODE):
             ego = simulator.env.unwrapped.vehicle
             current_lane = int(ego.lane_index[2])
             in_lane_change_processing = lane_change_processing_steps_remaining > 0
-
             if in_lane_change_processing:
-                # The vehicle can still control longitudinal acceleration, but
-                # cannot initiate another lane change until processing ends.
                 valid_action_mask = np.asarray([True, False], dtype=bool)
                 target_lane_mask = np.zeros(NUM_LANES, dtype=bool)
                 target_lane_mask[current_lane] = True
@@ -1265,10 +1258,6 @@ def train(simulator, policy):
                 current_lane_id=current_lane,
                 return_aux=True,
             )
-            sampled_action = np.asarray(sampled_action, dtype=np.float32).copy()
-            if in_lane_change_processing:
-                # Defensive guarantee in addition to the policy action mask.
-                sampled_action[1] = 0.0
             selected_target_lane = int(aux.get("selected_target_lane", current_lane))
             if int(round(float(sampled_action[1]))) == 1:
                 change_requests += 1
@@ -1281,6 +1270,7 @@ def train(simulator, policy):
                 rejection_count += 1
 
             speed_before = float(ego.speed)
+            road_s_before = _road_s(simulator, ego)
             lane_before_step = int(ego.lane_index[2])
             vehicles_before = (
                 base.snapshot_simulator_vehicles(simulator)
@@ -1330,12 +1320,9 @@ def train(simulator, policy):
 
             ego_after_step = simulator.env.unwrapped.vehicle
             lane_after_step = int(ego_after_step.lane_index[2])
-            # Detect the actual lane transition rather than relying on a
-            # simulator-specific informational flag.
             lane_change_executed = bool(lane_after_step != lane_before_step)
             speed = float(ego_after_step.speed)
             actual_delta_v = speed - speed_before
-
             reward, reward_components = calculate_reward(
                 actual_delta_v,
                 speed,
@@ -1344,8 +1331,8 @@ def train(simulator, policy):
                 lane_change_processing_step=in_lane_change_processing,
             )
 
-            # The accepted CHANGE decision is rewarded normally on its
-            # initiation step. The following N decisions are processing steps.
+            # The initiation step keeps its normal reward. The following
+            # processing steps mask CHANGE and suspend ordinary reward.
             if in_lane_change_processing:
                 lane_change_processing_steps += 1
                 lane_change_processing_steps_remaining = max(
@@ -1385,14 +1372,16 @@ def train(simulator, policy):
                 acceleration_rewards.append(reward_components["acceleration_reward"])
             lane_costs.append(0.0)
 
-            new_position = np.asarray(
-                simulator.env.unwrapped.vehicle.position, dtype=float
+            # Measure forward road progress in metres, not 2-D Euclidean
+            # displacement. This excludes lateral lane-change displacement.
+            road_s_after = _road_s(
+                simulator, simulator.env.unwrapped.vehicle
             )
-            step_distance = float(np.linalg.norm(new_position - previous_position))
+            step_distance_m = max(0.0, float(road_s_after - road_s_before))
             if not collision:
-                safe_distance += step_distance
+                safe_distance += step_distance_m
                 safe_steps += 1
-            previous_position = new_position
+            previous_road_s = road_s_after
             speed = float(simulator.env.unwrapped.vehicle.speed)
             speeds.append(speed)
 
@@ -1465,12 +1454,8 @@ def train(simulator, policy):
             "lane_change_processing_step_ratio": float(
                 lane_change_processing_steps / max(steps, 1)
             ),
-            "lane_change_processing_duration_s": float(
-                LANE_CHANGE_PROCESSING_DURATION_S
-            ),
-            "lane_change_processing_total_steps": int(
-                LANE_CHANGE_PROCESSING_STEPS
-            ),
+            "lane_change_processing_duration_s": float(LANE_CHANGE_PROCESSING_DURATION_S),
+            "lane_change_processing_total_steps": int(LANE_CHANGE_PROCESSING_STEPS),
             "lane_change_requests": int(change_requests),
             "lane_change_rejections": int(rejection_count),
             "lane_change_rejection_rate": (
@@ -1612,12 +1597,6 @@ def train(simulator, policy):
         )
         f.write(f"mean_lane_change_cost={_mean_metric('mean_lane_change_cost'):.4f}\n")
         f.write(
-            f"mean_lane_change_processing_steps={_mean_metric('lane_change_processing_steps'):.2f}\n"
-        )
-        f.write(
-            f"mean_lane_change_processing_step_ratio={_mean_metric('lane_change_processing_step_ratio'):.4f}\n"
-        )
-        f.write(
             f"mean_actor_loss={_mean_metric('mean_actor_loss'):.6f}\n"
         )
         f.write(
@@ -1725,8 +1704,7 @@ def main():
     print(f"Decision interval={POLICY_DECISION_INTERVAL_S:.6f}s; max delta-v/decision={MAX_ACCEL_DELTA_V_PER_DECISION_MPS:.6f}m/s")
     print(
         f"Lane-change processing={LANE_CHANGE_PROCESSING_DURATION_S:.2f}s "
-        f"({LANE_CHANGE_PROCESSING_STEPS} policy steps); ordinary rewards "
-        "suspended during processing, collision penalty remains active"
+        f"({LANE_CHANGE_PROCESSING_STEPS} policy steps)"
     )
     print(f"State dimension: base={BASE_STATE_DIM} + EDM={NUM_LANES} -> {STATE_DIM}")
     print(f"PyTorch={torch.__version__} device={base.DEVICE}")
