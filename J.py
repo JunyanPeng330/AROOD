@@ -2026,7 +2026,7 @@ def main():
     print(f"Profile lane-change rates: {PROFILE_LANE_CHANGE_RATE_PER_S}")
     print(f"ADT profile mix: {dict(ADT_PROFILE_MIX)}")
     print(
-        "Traffic design: 15 baseline vehicles plus lane-aware front coverage; "
+        "Traffic design: {TRAFFIC_TARGET_COUNT} baseline vehicles plus any required lane-aware front-coverage vehicles; "
         "all 3 lanes are maintained with a front vehicle inside ±450m"
     )
     print(
