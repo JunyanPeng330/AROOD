@@ -3037,10 +3037,9 @@ class HighwaySimulator:
         lane_after_env_update = int(ego_after.lane_index[2])
         position_after_env_update = np.asarray(ego_after.position, dtype=np.float64).copy()
 
-        # Separate a new collision event from continued contact. highway-env's
-        # crashed flag can remain true while two vehicles overlap. We clear that
-        # simulator latch after every update to preserve episode continuation,
-        # but count/penalise only the onset of an uninterrupted contact episode.
+        # Collision is an episode-terminal event in this experiment. Count the
+        # onset once, preserve the native crashed state, and stop immediately;
+        # there are no post-collision overlap transitions in the RL trajectory.
         raw_collision_contact = bool(getattr(ego_after, "crashed", False))
         collision_contact_was_active = bool(
             getattr(self, "_collision_contact_active", False)
@@ -3051,17 +3050,9 @@ class HighwaySimulator:
         )
         self._collision_contact_active = raw_collision_contact
         ego_crashed_after_step = raw_collision_contact
-        if raw_collision_contact:
-            try:
-                ego_after.crashed = False
-            except (AttributeError, TypeError):
-                raise RuntimeError(
-                    "Could not clear highway-env crash latch; collision continuation "
-                    "would otherwise repeatedly terminate the episode."
-                )
-        # Native termination caused by an active collision must not end the RL
-        # episode. A genuine non-collision native termination is still honoured.
-        effective_terminated = bool(native_terminated and not raw_collision_contact)
+        # Also terminate on the observed crash flag in case a particular
+        # highway-env version does not propagate it through native_terminated.
+        effective_terminated = bool(native_terminated or raw_collision_contact)
 
         if lane_changed and lane_after_env_update != int(requested_target_lane_id):
             print(
@@ -3139,7 +3130,8 @@ class HighwaySimulator:
             "collision_contact_was_active": bool(collision_contact_was_active),
             "ego_crashed_after_step": bool(ego_crashed_after_step),
             "crashed_before_step": bool(crashed_before_step),
-            "collision_continuation_enabled": True,
+            "collision_continuation_enabled": False,
+            "collision_terminates_episode": bool(raw_collision_contact),
             "truncated": bool(truncated),
             "env_reward": float(env_reward),
             "lane_action_id": lane_action_id,
@@ -3770,10 +3762,10 @@ def calculate_min_ttc(simulator):
 
 
 def construct_reward(reward_specification, embedding_model=None):
-    """Reward positive per-policy-step speed gain, relative speed, and collision outcome.
+    """Reward acceleration below the speed limit and a fixed 1.0 at/above it.
 
-    Deceleration receives zero acceleration reward rather than a negative reward.
-    The acceleration scale is the maximum physical speed increment in one policy step.
+    The separate speed reward is disabled. The unchanged collision penalty is
+    applied on collision, and collision terminates the episode.
     """
     def reward_function(
         behavior_description, safety_violation, action, lane_deviation, offroad,
@@ -3795,44 +3787,49 @@ def construct_reward(reward_specification, embedding_model=None):
         clipped_speed_change = float(np.clip(
             raw_speed_change, -max_acceleration_per_step, max_acceleration_per_step
         ))
-        # Agreed formula: (|Δv_step| + Δv_step) / (2 * max_Δv_step).
-        # It is 0 for deceleration/non-positive speed change and 1 at the
-        # maximum physically possible positive speed increment in one policy step.
-        acceleration_reward = float(
-            (abs(clipped_speed_change) + clipped_speed_change)
-            / (2.0 * max_acceleration_per_step)
-        )
-
         current_speed = float(ego_speed)
-        # Exact user-specified formula: deliberately no clipping or normalization.
-        speed_reward = float((current_speed - speed_limit) / speed_limit)
+        # Below the speed limit, retain the normal normalized positive-
+        # acceleration reward. At/above the limit, assign exactly 1.0,
+        # including when maintaining speed or decelerating.
+        if current_speed >= speed_limit:
+            acceleration_reward = 1.0
+        else:
+            acceleration_reward = float(
+                (abs(clipped_speed_change) + clipped_speed_change)
+                / (2.0 * max_acceleration_per_step)
+            )
+
+        # The separate speed reward is deliberately disabled for this run.
+        speed_reward = 0.0
 
         collision_penalty = (
             max(0.0, float(reward_specification.get("safety_weight", INITIAL_COLLISION_PENALTY)))
             if bool(safety_violation) else 0.0
         )
-        reward = float(acceleration_reward + speed_reward - collision_penalty)
+        reward = float(acceleration_reward - collision_penalty)
         if reward_diagnostics is not None:
             reward_diagnostics.update({
-                "reward_objective": "positive_policy_step_speed_gain_plus_unbounded_speed_minus_collision_penalty",
+                "reward_objective": "acceleration_reward_at_or_below_speed_limit_minus_unchanged_collision_penalty",
                 "acceleration_reward": acceleration_reward,
                 "ego_speed_change_per_step_mps": raw_speed_change,
                 "clipped_speed_change_per_step_mps": clipped_speed_change,
                 "max_acceleration_per_step_mps": float(max_acceleration_per_step),
-                "speed_reward": speed_reward,
+                "speed_reward": 0.0,
+                "speed_reward_enabled": False,
                 "ego_speed_mps": current_speed,
                 "speed_limit_mps": speed_limit,
                 "safety_penalty": float(collision_penalty),
                 "collision_penalty": float(collision_penalty),
                 "offroad_penalty": 0.0,  # Off-road remains a terminal safeguard, not a reward term.
+                "collision_terminates_episode": bool(safety_violation),
                 "total_reward": reward,
             })
         print(
             f"[REWARD DEBUG] acceleration_reward={acceleration_reward:+.3f}, "
             f"speed_change_per_step={raw_speed_change:+.4f}m/s "
             f"(clipped={clipped_speed_change:+.4f}), "
-            f"speed_reward={speed_reward:+.3f} "
-            f"(speed={current_speed:.3f}m/s, limit={speed_limit:.3f}m/s), "
+            f"speed_reward=DISABLED, "
+            f"speed={current_speed:.3f}m/s, limit={speed_limit:.3f}m/s, "
             f"collision_penalty={collision_penalty:.3f}, total={reward:+.3f}"
         )
         return reward
@@ -4007,17 +4004,20 @@ def build_fixed_reward_function():
     reward_specification = {
         "name": "pure_rl_episode_adaptive_reward",
         "target_behavior": (
-            "Reward positive speed change per policy step using (abs(delta_v_step) + delta_v_step) "
-            "/ (2 * max_acceleration_per_step), add the unbounded relative-speed reward "
-            "(current_speed - speed_limit) / "
-            "speed_limit, and apply the existing penalty when a collision/safety violation occurs. "
-            "Do not include a progress reward or lane-change reward/cost. Do not add an off-road "
-            "reward penalty. TTC and minimum-gap checks remain independent safety constraints."
+            "Below the speed limit, reward positive speed change per policy step using "
+            "(abs(delta_v_step) + delta_v_step) / (2 * max_acceleration_per_step). "
+            "At or above the speed limit, acceleration_reward is exactly 1.0. "
+            "The separate speed reward is disabled. Apply the existing collision penalty "
+            "unchanged and terminate the episode immediately on collision. Do not include "
+            "a progress reward or lane-change reward/cost. Do not add an off-road reward "
+            "penalty. EDM/TTC remain diagnostic only."
         ),
         "safety_weight": INITIAL_COLLISION_PENALTY,
         "max_acceleration_per_step_mps": float(MAX_ACCELERATION_PER_STEP_MPS),
         "policy_step_duration_s": float(POLICY_STEP_DURATION_S),
         "speed_limit_mps": float(SPEED_LIMIT),
+        "speed_reward_enabled": False,
+        "collision_terminates_episode": True,
     }
     reward_function = construct_reward(reward_specification)
     # The closure and evaluator share this mutable specification. Only the
@@ -5029,13 +5029,14 @@ def main():
     print(f"Dimensions: state={STATE_DIM}, policy_action={POLICY_ACTION_DIM} [KEEP/CHANGE], execution_action={ACTION_DIM}.")
     print("Control: hierarchical stochastic policy selects KEEP/CHANGE, then a physically valid adjacent target, then conditional acceleration.")
     print("EDM/TTC: interpretation and diagnostics only; no action veto or acceleration override.")
+    print("Episode termination: ENABLED on the first collision; no post-collision overlap transitions.")
     print("Lane-change processing: DISABLED (no reward suspension after lane changes).")
     print(f"CSV metrics: {METRICS_CSV_PATH}")
     print(f"Simulator: {NUM_LANES} lanes, {NUM_SURROUNDING_VEHICLES} managed traffic slots, {policy_frequency} Hz policy / {simulation_frequency} Hz simulation.")
     print(f"Acceleration bounds: ±{MAX_PHYSICAL_ACCELERATION:.1f} m/s²; speed limit: {SPEED_LIMIT:.1f} m/s.")
     print(f"Episode evaluator enabled: {ENABLE_EPISODE_EVALUATOR} (fixed reward baseline).")
     #print(f"Diagnostics: {DIAGNOSTIC_LOG_PATH}; trajectories: {EPISODE_TRAJECTORY_PATH if TRAJECTORY_RECORDING_ENABLED else 'disabled'}.")
-    print("[REWARD CONFIG] TTC/EDM are diagnostic only; reward remains the configured acceleration + speed - collision objective.")
+    print("[REWARD CONFIG] speed reward DISABLED; acceleration reward is 1.0 at/above the speed limit; unchanged collision penalty; collision terminates episode.")
     simulator = create_highway_simulator()
     simulator.reset(seed=SEED)
     policy = create_initial_policy(
