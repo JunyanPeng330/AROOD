@@ -1290,8 +1290,8 @@ class HighwaySimulator:
         vehicle has TTC=inf. This method is diagnostic/state information only:
         it does not veto, replace, or modify the RL agent's action.
 
-        The same snapshot is consumed by EDM so that TTC and lane utility do
-        not independently select different neighbours or use different gaps.
+        EDM consumes this same snapshot, ensuring its front/rear risk
+        interpretation uses the same neighbours and bumper gaps.
         """
         base_env = self.env.unwrapped
         road = base_env.road
@@ -1883,12 +1883,6 @@ class HighwaySimulator:
             "executed_acceleration": float(acceleration),
             "executed_steering": 0.0,
             "policy_action_context": safety_info,
-            "episode_evaluator_assessment": {
-                "target_selector_mode": safety_info.get("target_selector_mode"),
-                "lane_change_candidate_front_ttc": safety_info.get("lane_change_candidate_front_ttc"),
-                "lane_change_candidate_rear_ttc": safety_info.get("lane_change_candidate_rear_ttc"),
-                "lane_change_candidate_utility": safety_info.get("lane_change_candidate_utility"),
-            },
             "instant_lane_change_mode": True,
             "observed_acceleration": (speed_after - speed_before) / policy_dt,
             "ttc_risk_diagnostics": ttc_risk_diagnostics,
