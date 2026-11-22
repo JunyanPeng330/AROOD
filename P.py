@@ -181,14 +181,55 @@ if not getattr(Vehicle, "_arood_simulator_nonnegative_speed_guard", False):
 # ============================================================
 # 1. Configuration — instantaneous lane-change pure-RL mode
 # ============================================================
+
+# Explicit EDM configuration (kept together at the top for easy experiment tuning).
+# These values affect EDM interpretation/diagnostics only; they do not veto or
+# rewrite the hierarchical RL policy's lane or acceleration decisions.
+EDM_TTC_COMFORTABLE_S = 8.0
+EDM_TTC_DANGER_S = 6.0
+EDM_TTC_CRITICAL_S = 4.0
+EDM_HIGH_RISK_SCORE_THRESHOLD = 0.6
+EDM_MIN_GAP_REFERENCE_M = 20.0  # Declared for EDM gap scaling; currently not consumed elsewhere in this file.
+
 INSTANT_LANE_CHANGE_MODE = True
 steering_scale = 0.5
 offroad_penalty = 0.0  # No separate off-road reward penalty
 
-# Instantaneous lane-transition abstraction: one policy decision advances exactly
-# one simulator update. There are no intermediate lateral-motion substeps.
-policy_frequency = 15
-simulation_frequency = 15
+# Physical simulation and policy operate on one shared clock.
+# HighwayEnv advances simulation_frequency / policy_frequency physics updates
+# for each env.step() policy transition.
+simulation_frequency = 15  # Hz: physical vehicle dynamics update every 1/15 s
+policy_frequency = 5        # Hz: RL chooses a new action every 0.2 s
+if simulation_frequency % policy_frequency != 0:
+    raise ValueError(
+        "simulation_frequency must be an integer multiple of policy_frequency"
+    )
+SIMULATION_SUBSTEPS_PER_POLICY = simulation_frequency // policy_frequency
+SIMULATION_STEP_DURATION_S = 1.0 / float(simulation_frequency)
+POLICY_STEP_DURATION_S = 1.0 / float(policy_frequency)
+
+# Preserve the original 15Hz discount rate in physical seconds. One 5Hz
+# transition spans three original 15Hz transitions, so gamma is 0.99**3.
+GAMMA_REFERENCE_POLICY_FREQUENCY_HZ = 15.0
+GAMMA_REFERENCE_PER_STEP = 0.99
+GAMMA = GAMMA_REFERENCE_PER_STEP ** (
+    GAMMA_REFERENCE_POLICY_FREQUENCY_HZ / float(policy_frequency)
+)
+DISCOUNT_TIME_CONSTANT_S = -1.0 / (
+    GAMMA_REFERENCE_POLICY_FREQUENCY_HZ * math.log(GAMMA_REFERENCE_PER_STEP)
+)
+
+# Episode duration is specified in physical seconds. MAX_STEPS is derived in
+# policy transitions, so changing policy frequency does not change duration.
+EPISODE_DURATION_S = 300.0
+MAX_STEPS = int(round(EPISODE_DURATION_S * policy_frequency))
+if not math.isclose(MAX_STEPS / float(policy_frequency), EPISODE_DURATION_S):
+    raise ValueError("Episode duration must map to an integer number of policy steps")
+
+# The continuous actor controls physical acceleration through [-1, +1], mapped
+# linearly to [-5, +5] m/s^2 by HighwayEnv ContinuousAction.
+MAX_PHYSICAL_ACCELERATION = 5.0  # m/s^2
+MAX_ACCELERATION_PER_STEP_MPS = MAX_PHYSICAL_ACCELERATION * POLICY_STEP_DURATION_S
 
 lane_keeping_weight = 0.20
 
@@ -203,36 +244,43 @@ INITIAL_COLLISION_PENALTY = 5.0
 # still handled as a defensive episode terminal in the training loops.
 INITIAL_OFFROAD_PENALTY = 0.0
 
-TTC_RISK_CRITICAL = 2.0         # Shared continuous-risk scale: full risk at/below this TTC
-TTC_RISK_WARNING = 5.0          # Shared continuous-risk scale: zero risk at/above this TTC
+# Aggressive Dynamic Traffic (ADT) configuration.
+# The simulator maintains every vehicle in a moving ego-relative population
+# window plus entry buffers. The policy independently observes six nearest slots.
+NUM_LANES = 3
+TRAFFIC_REFERENCE_FRONT_M = 1000.0
+TRAFFIC_REFERENCE_REAR_M = 500.0
+TRAFFIC_ENTRY_BUFFER_M = 200.0
+TRAFFIC_RECYCLING_BUFFER_M = 200.0
+TRAFFIC_FRONT_RECYCLE_BOUNDARY_M = (
+    TRAFFIC_REFERENCE_FRONT_M + TRAFFIC_ENTRY_BUFFER_M + TRAFFIC_RECYCLING_BUFFER_M
+)
+TRAFFIC_REAR_RECYCLE_BOUNDARY_M = (
+    TRAFFIC_REFERENCE_REAR_M + TRAFFIC_ENTRY_BUFFER_M + TRAFFIC_RECYCLING_BUFFER_M
+)
+# New vehicles are created only in the outer half of each entry buffer. They
+# therefore cross into the observation reference range through normal motion.
+TRAFFIC_FRONT_SPAWN_MIN_M = TRAFFIC_REFERENCE_FRONT_M + 0.5 * TRAFFIC_ENTRY_BUFFER_M
+TRAFFIC_FRONT_SPAWN_MAX_M = TRAFFIC_REFERENCE_FRONT_M + TRAFFIC_ENTRY_BUFFER_M
+TRAFFIC_REAR_SPAWN_MIN_M = TRAFFIC_REFERENCE_REAR_M + 0.5 * TRAFFIC_ENTRY_BUFFER_M
+TRAFFIC_REAR_SPAWN_MAX_M = TRAFFIC_REFERENCE_REAR_M + TRAFFIC_ENTRY_BUFFER_M
 
-
-
-# Traffic scenario diversity for training.
-# Randomized traffic gaps create varied lane-change opportunities.
-
-REFERENCE_GAP_MIN = 20.0
-REFERENCE_GAP_MAX = 500.0
-RANDOMIZED_FRONT_GAP_MIN = 50.0
-RANDOMIZED_FRONT_GAP_MAX = 500.0
-RANDOMIZED_REAR_GAP_MIN = 20.0
-RANDOMIZED_REAR_GAP_MAX = 500.0
-
-# Aggressive Dynamic Traffic (ADT) simulator configuration.
-# The simulator maintains a distributed background population; the policy
-# observation remains exactly six surrounding slots (front/rear in each lane).
-TRAFFIC_TARGET_COUNT = 12
-REFERENCE_RANGE_M = 500.0
-RECYCLING_BOUNDARY_M = 700.0
-INITIAL_PLACEMENT_RANGE_M = 350.0
-MIN_INITIAL_GAP_M = 50.0
+TRAFFIC_DENSITY_PER_KM_PER_LANE = 15.0
+TRAFFIC_INITIAL_LONGITUDINAL_SPAN_M = (
+    TRAFFIC_FRONT_RECYCLE_BOUNDARY_M + TRAFFIC_REAR_RECYCLE_BOUNDARY_M
+)
+TRAFFIC_TARGET_COUNT = int(round(
+    TRAFFIC_DENSITY_PER_KM_PER_LANE
+    * TRAFFIC_INITIAL_LONGITUDINAL_SPAN_M / 1000.0
+    * NUM_LANES
+))
+TRAFFIC_EXPECTED_REFERENCE_POPULATION = int(round(
+    TRAFFIC_DENSITY_PER_KM_PER_LANE
+    * (TRAFFIC_REFERENCE_FRONT_M + TRAFFIC_REFERENCE_REAR_M) / 1000.0
+    * NUM_LANES
+))
+MIN_INITIAL_GAP_M = 35.0
 MIN_INSERTION_GAP_M = 35.0
-
-FRONT_COVERAGE_MAX_DISTANCE_M = 450.0
-FRONT_COVERAGE_SPAWN_MIN_DISTANCE_M = 180.0
-FRONT_COVERAGE_SPAWN_MAX_DISTANCE_M = 420.0
-FRONT_COVERAGE_SPEED_OFFSET_MIN_MPS = 2.0
-FRONT_COVERAGE_SPEED_OFFSET_MAX_MPS = 7.0
 TRAFFIC_MIN_SPEED_MPS = 10.0
 TRAFFIC_MAX_SPEED_MPS = 50.0
 
@@ -283,45 +331,10 @@ PROFILE_LANE_CHANGE_RATE_PER_S = {
     "unstable": ADT_UNSTABLE_LANE_CHANGE_RATE_PER_S, "slow": 0.0,
 }
 
-INITIAL_SPAWN_MAX_ATTEMPTS = 10000
-LANE_COVERAGE_SPAWN_MAX_ATTEMPTS = 80
-BOUNDARY_SPAWN_MAX_ATTEMPTS = 60
-BOUNDARY_SPAWN_SPEED_OFFSET_MIN_MPS = 2.0
-BOUNDARY_SPAWN_SPEED_OFFSET_MAX_MPS = 8.0
-BOUNDARY_SPAWN_DISTANCE_BUFFER_M = 10.0
-BOUNDARY_SPAWN_EXTRA_RANGE_M = 100.0
-
-Traffic_relevant_range = REFERENCE_RANGE_M
-TRAFFIC_SPEED_MIN = TRAFFIC_MIN_SPEED_MPS
-TRAFFIC_SPEED_MAX = TRAFFIC_MAX_SPEED_MPS
-
-# Legacy helper compatibility only; the active simulator now uses ADT profiles.
-TRAFFIC_SPEED_MATCHED_PROB = 0.60
-TRAFFIC_SPEED_POSITION_CHALLENGE_PROB = 0.25
-TRAFFIC_SPEED_MATCHED_DELTA_MIN = -3.0
-TRAFFIC_SPEED_MATCHED_DELTA_MAX = 3.0
-TRAFFIC_FRONT_SLOW_DELTA_MIN = -8.0
-TRAFFIC_FRONT_SLOW_DELTA_MAX = -3.0
-TRAFFIC_REAR_FAST_DELTA_MIN = 3.0
-TRAFFIC_REAR_FAST_DELTA_MAX = 6.0
-TRAFFIC_SPEED_BROAD_DELTA_MIN = -8.0
-TRAFFIC_SPEED_BROAD_DELTA_MAX = 6.0
-LANE_CHANGE_COST = 0.0
-LANE_CHANGE_COOLDOWN_STEPS = 0
-
-SIMULATION_FREQUENCY_HZ = 15
-POLICY_FREQUENCY_HZ = 15
-simulation_frequency = SIMULATION_FREQUENCY_HZ
-policy_frequency = POLICY_FREQUENCY_HZ
-
-# Speed-matching controller
-
-MAX_PHYSICAL_ACCELERATION = 5.0  # m/s^2; matches ContinuousAction acceleration_range [-5, 5].
-POLICY_STEP_DURATION_S = 1.0 / float(policy_frequency)
-MAX_ACCELERATION_PER_STEP_MPS = MAX_PHYSICAL_ACCELERATION * POLICY_STEP_DURATION_S
+INITIAL_SPAWN_MAX_ATTEMPTS = 50000
+BOUNDARY_SPAWN_MAX_ATTEMPTS = 200
 
 
-NUM_LANES = 3
 NUM_SURROUNDING_VEHICLES = 6
 VEHICLE_FEATURES = 7
 NUM_VEHICLE_ROWS = NUM_SURROUNDING_VEHICLES + 1
@@ -329,13 +342,7 @@ VEHICLE_STATE_DIM = NUM_VEHICLE_ROWS * VEHICLE_FEATURES
 CONTEXT_DIM = 5
 # Per lane: six physical measurements plus front/rear EDM risk scores and
 # normalized categorical severity codes. These are observations only.
-EDM_TTC_COMFORTABLE_S = 6.0
-EDM_TTC_DANGER_S = 4.0
-EDM_TTC_CRITICAL_S = 2.0
-# A transition is counted as high-risk exposure when the pre-action lane EDM
-# risk score reaches this threshold. This is independent of category labels.
-EDM_HIGH_RISK_SCORE_THRESHOLD = 0.5
-EDM_MIN_GAP_REFERENCE_M = 15.0
+# EDM thresholds are declared in the top-level configuration block above.
 EDM_FEATURES_PER_LANE = 4
 SAFETY_FEATURES_PER_LANE = 6 + EDM_FEATURES_PER_LANE
 SAFETY_FEATURES_DIM = NUM_LANES * SAFETY_FEATURES_PER_LANE
@@ -350,9 +357,8 @@ HIDDEN_DIM = 128
 NUM_REFERENCE_EPISODES = 0
 REFERENCE_TRAINING_EPOCHS = 0
 REFERENCE_BATCH_SIZE = 256
-NUM_ONLINE_EPISODES = 50
+NUM_ONLINE_EPISODES = 200
 
-MAX_STEPS = 500
 
 
 TTC_PROXY_THRESHOLD = 0.2
@@ -380,18 +386,17 @@ EVALUATOR_MIN_SAFETY_WEIGHT = 0.5
 # only when a lane change completes; rejected requests are not charged this cost.
 
 
-reward_path = os.path.join("P_hierarchical_output", "training_return.png")
-#reward_per_step_path = 'figure/Re_E_new_per_step_' + '2.png'
-plot_path = os.path.join("P_hierarchical_output", "training_summary.txt")
-MODEL_PATH = os.path.join("policy", "P_hierarchical_actor_critic.pt")
-EPISODE_TRAJECTORY_PATH = os.path.join("P_hierarchical_output", "episode_trajectories_P.jsonl")
-TRAJECTORY_RECORDING_ENABLED = os.environ.get("AROOD_RECORD_TRAJECTORIES_P", "1").strip().lower() not in {"0", "false", "no", "off"}
+reward_path = os.path.join("P_hierarchical_output", "training_return_2.png")
+plot_path = os.path.join("P_hierarchical_output", "training_summary_2.txt")
+MODEL_PATH = os.path.join("policy", "P_hierarchical_2.pt")
+EPISODE_TRAJECTORY_PATH = os.path.join("P_hierarchical_output", "episode_trajectories_P_2.jsonl")
+TRAJECTORY_RECORDING_ENABLED = os.environ.get("TRAJECTORIES_P", "2").strip().lower() not in {"0", "false", "no", "off"}
 
 # Consolidated I experiment outputs and agreed policy-processing mechanism.
 OUTPUT_DIR = os.path.join("P_hierarchical_output")
-METRICS_CSV_PATH = os.path.join(OUTPUT_DIR, "training_metrics_P.csv")
-METRICS_JSONL_PATH = os.path.join(OUTPUT_DIR, "training_metrics_P.jsonl")
-CONFIG_PATH = os.path.join(OUTPUT_DIR, "experiment_config_P.json")
+METRICS_CSV_PATH = os.path.join(OUTPUT_DIR, "training_metrics_P_2.csv")
+METRICS_JSONL_PATH = os.path.join(OUTPUT_DIR, "training_metrics_P_2.jsonl")
+CONFIG_PATH = os.path.join(OUTPUT_DIR, "experiment_config_P_2.json")
 LANE_CHANGE_PROCESSING_STEPS = 0  # disabled: every transition receives its normal reward
 ENABLE_EPISODE_EVALUATOR = False  # fixed reward for a clean baseline; no automatic reward adaptation
 
@@ -485,8 +490,20 @@ def record_episode_start(simulator, phase, episode_number, initial_state):
         "recorded_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
         "seed_base": int(SEED),
         "max_steps": int(getattr(simulator, "max_steps", MAX_STEPS)),
+        "episode_duration_s": float(EPISODE_DURATION_S),
         "policy_frequency_hz": int(policy_frequency),
+        "policy_step_duration_s": float(POLICY_STEP_DURATION_S),
         "simulation_frequency_hz": int(simulation_frequency),
+        "simulation_step_duration_s": float(SIMULATION_STEP_DURATION_S),
+        "simulation_substeps_per_policy_action": int(SIMULATION_SUBSTEPS_PER_POLICY),
+        "episode_duration_s": float(EPISODE_DURATION_S),
+        "discount_gamma_per_policy_step": float(GAMMA),
+        "traffic_reference_front_m": float(TRAFFIC_REFERENCE_FRONT_M),
+        "traffic_reference_rear_m": float(TRAFFIC_REFERENCE_REAR_M),
+        "traffic_front_recycle_boundary_m": float(TRAFFIC_FRONT_RECYCLE_BOUNDARY_M),
+        "traffic_rear_recycle_boundary_m": float(TRAFFIC_REAR_RECYCLE_BOUNDARY_M),
+        "traffic_density_vehicles_per_km_per_lane": float(TRAFFIC_DENSITY_PER_KM_PER_LANE),
+        "traffic_population_target": int(TRAFFIC_TARGET_COUNT),
         "num_lanes": int(NUM_LANES),
         "managed_surrounding_vehicle_slots": int(NUM_SURROUNDING_VEHICLES),
         "speed_limit_mps": float(SPEED_LIMIT),
@@ -513,6 +530,8 @@ def record_episode_transition(
         "episode_number": int(episode_number),
         "episode_key": f"{TRAJECTORY_RUN_ID}:{phase}:{int(episode_number)}",
         "step": int(step_number),
+        "simulated_time_s": float(step_number * POLICY_STEP_DURATION_S),
+        "physics_simulation_step": int(step_number * SIMULATION_SUBSTEPS_PER_POLICY),
         "state_before": np.asarray(state_before, dtype=np.float32).tolist(),
         "state_after": np.asarray(state_after, dtype=np.float32).tolist(),
         "vehicles_before": vehicles_before,
@@ -769,31 +788,12 @@ def lane_policy_diagnostic(policy, state, valid_action_mask, sampled_action, pha
 
 
 def ttc_to_risk(ttc_seconds):
-    """Map TTC in seconds to a continuous [0, 1] risk score.
-
-    This is a diagnostic signal only in this revision: it does not modify
-    reward construction, policy actions, or existing safety thresholds.
-    Missing/non-closing traffic (TTC=inf) maps to zero risk; invalid NaN
-    values conservatively map to full risk.
-    """
-    try:
-        ttc = float(ttc_seconds)
-    except (TypeError, ValueError):
-        return 1.0
-    if np.isnan(ttc):
-        return 1.0
-    if ttc <= TTC_RISK_CRITICAL:
-        return 1.0
-    if ttc >= TTC_RISK_WARNING or np.isinf(ttc):
-        return 0.0
-    return float(np.clip(
-        (TTC_RISK_WARNING - ttc) / (TTC_RISK_WARNING - TTC_RISK_CRITICAL),
-        0.0, 1.0,
-    ))
+    """Compatibility wrapper around the single canonical EDM TTC risk scale."""
+    return edm_ttc_risk_score(ttc_seconds)
 
 
 def edm_ttc_risk_score(ttc_seconds):
-    """Continuous descriptive risk score: 0 at 6s, 1 at 0s or below."""
+    """Continuous descriptive risk: zero at/above 8s, one at/below 0s."""
     try:
         ttc = float(ttc_seconds)
     except (TypeError, ValueError):
@@ -843,7 +843,7 @@ class HighwaySimulator:
     """
 
     def __init__(self, state_dim=STATE_DIM, action_dim=ACTION_DIM,
-                 max_steps=MAX_STEPS, render_mode=None, vehicles_count=TRAFFIC_TARGET_COUNT):
+                 max_steps=MAX_STEPS, render_mode=None):
         if gym is None or highway_env is None:
             raise ImportError(
                 "Highway-env dependencies are missing. Install with: "
@@ -853,13 +853,15 @@ class HighwaySimulator:
             raise ValueError(f"HighwaySimulator expects STATE_DIM={STATE_DIM} and execution ACTION_DIM={ACTION_DIM}")
         self.state_dim = state_dim
         self.action_dim = action_dim
-        self.max_steps = max_steps
+        self.max_steps = int(max_steps)
+        expected_policy_steps = int(round(EPISODE_DURATION_S * policy_frequency))
+        if self.max_steps != expected_policy_steps:
+            raise ValueError(
+                f"max_steps={self.max_steps} does not match "
+                f"EPISODE_DURATION_S * policy_frequency={expected_policy_steps}"
+            )
         self.step_count = 0
         self.render_mode = render_mode
-        self.vehicles_count = TRAFFIC_TARGET_COUNT
-        self.traffic_front_gap = 45.0
-        self.traffic_rear_gap = 45.0
-        self.randomize_traffic_gaps = False
         self.env = gym.make(
             "highway-v0",
             render_mode=render_mode,
@@ -883,14 +885,15 @@ class HighwaySimulator:
                 "steering_range": [-0.1745329, 0.1745329],
                 },
 
-                "lanes_count": 3,
-                "vehicles_count": TRAFFIC_TARGET_COUNT,
-                "duration": max_steps,
+                "lanes_count": NUM_LANES,
+                # Background traffic is created exclusively by the continuous
+                # population manager after reset; disable HighwayEnv random cars.
+                "vehicles_count": 0,
+                "duration": EPISODE_DURATION_S,
                 "offroad_terminal": False,
 
-                # Instantaneous lane transitions are applied by the adapter before
-                # this single environment update. Keep both frequencies equal so
-                # one policy decision maps to exactly one simulator update.
+                # HighwayEnv advances an integer number of physical updates per
+                # policy action: 15 Hz / 5 Hz = 3 simulator updates per decision.
                 "simulation_frequency": simulation_frequency,
                 "policy_frequency": policy_frequency,
 
@@ -976,27 +979,27 @@ class HighwaySimulator:
 
 
 
-    def reset(self, seed=None, randomize_traffic_gaps=True):
+    def reset(self, seed=None):
 
         if seed is None:
             obs, info = self.env.reset()
         else:
             obs, info = self.env.reset(seed=seed)
 
-        # ADT uses a distributed population and continuous boundary recycling;
-        # randomize_traffic_gaps is retained only for call compatibility.
-        self.randomize_traffic_gaps = False
-        self.traffic_front_gap = float("nan")
-        self.traffic_rear_gap = float("nan")
+        # ADT uses a density-based continuous population and side-specific
+        # boundary recycling; there is no six-slot refill mode.
         print(
             "[ADT TRAFFIC SCENARIO]",
             f"target_population={TRAFFIC_TARGET_COUNT}",
-            f"initial_placement=±{INITIAL_PLACEMENT_RANGE_M:.0f}m",
-            f"reference_range=±{REFERENCE_RANGE_M:.0f}m",
-            f"recycling_boundary=±{RECYCLING_BOUNDARY_M:.0f}m",
+            f"density={TRAFFIC_DENSITY_PER_KM_PER_LANE:.1f} vehicles/km/lane",
+            f"reference_front=+{TRAFFIC_REFERENCE_FRONT_M:.0f}m",
+            f"reference_rear=-{TRAFFIC_REFERENCE_REAR_M:.0f}m",
+            f"entry_buffer={TRAFFIC_ENTRY_BUFFER_M:.0f}m",
+            f"recycle_front=+{TRAFFIC_FRONT_RECYCLE_BOUNDARY_M:.0f}m",
+            f"recycle_rear=-{TRAFFIC_REAR_RECYCLE_BOUNDARY_M:.0f}m",
             f"speed_range={TRAFFIC_MIN_SPEED_MPS:.0f}-{TRAFFIC_MAX_SPEED_MPS:.0f}m/s",
             f"profile_mix={dict(ADT_PROFILE_MIX)}",
-            f"simulation_frequency={SIMULATION_FREQUENCY_HZ}Hz",
+            f"simulation_frequency={simulation_frequency}Hz",
             "ego_observation_slots=6",
         )
 
@@ -1007,7 +1010,7 @@ class HighwaySimulator:
         # a fresh impact on every subsequent policy step.
         self._collision_contact_active = False
         base_env = self.env.unwrapped
-        self._initialize_six_vehicle_traffic()
+        self._initialize_continuous_traffic()
         obs = base_env.observation_type.observe()
 
         # Store the target lane once at the beginning of this episode.
@@ -1041,7 +1044,7 @@ class HighwaySimulator:
         )
 
         self.state = self._encode_state(obs)
-        self._assert_traffic_invariant("reset")
+        self._assert_continuous_traffic_invariant("reset")
         return self.state.copy()
 
 
@@ -1051,9 +1054,6 @@ class HighwaySimulator:
     # In highway-v0, the three lanes share the same road segment and longitudinal
     # axis; using one reference lane avoids comparing independently projected s
     # values from different lane geometries.
-    TRAFFIC_RELEVANT_RANGE = Traffic_relevant_range  # metres ahead/behind; farther vehicles are recycled
-    TRAFFIC_CROSSING_EPSILON = 0.5  # metres; avoids unstable front/rear classification at ego
-
     def _lane_longitudinal_position(self, vehicle, lane_index):
         lane = self.env.unwrapped.road.network.get_lane(lane_index)
         longitudinal, _ = lane.local_coordinates(np.asarray(vehicle.position, dtype=float))
@@ -1068,197 +1068,6 @@ class HighwaySimulator:
     def _lane_index_for_id(self, lane_id):
         ego_lane_index = self.env.unwrapped.vehicle.lane_index
         return (ego_lane_index[0], ego_lane_index[1], int(lane_id))
-
-    def _sample_surrounding_speed(self, ego_speed, side):
-        """Sample traffic speed relative to ego, with position-aware diversity.
-
-        Mixture:
-          60% speed-matched: delta-v in [-3, +3] m/s;
-          25% position-specific challenge: slower front or faster rear;
-          15% broad diversity: delta-v in [-8, +6] m/s.
-        The final absolute speed is clipped to simulator bounds.
-        """
-        ego_speed = float(ego_speed)
-        draw = random.random()
-
-        if draw < TRAFFIC_SPEED_MATCHED_PROB:
-            delta_v = random.uniform(
-                TRAFFIC_SPEED_MATCHED_DELTA_MIN,
-                TRAFFIC_SPEED_MATCHED_DELTA_MAX,
-            )
-            regime = "matched"
-        elif draw < TRAFFIC_SPEED_MATCHED_PROB + TRAFFIC_SPEED_POSITION_CHALLENGE_PROB:
-            if side == "front":
-                delta_v = random.uniform(
-                    TRAFFIC_FRONT_SLOW_DELTA_MIN,
-                    TRAFFIC_FRONT_SLOW_DELTA_MAX,
-                )
-            else:
-                delta_v = random.uniform(
-                    TRAFFIC_REAR_FAST_DELTA_MIN,
-                    TRAFFIC_REAR_FAST_DELTA_MAX,
-                )
-            regime = "position_challenge"
-        else:
-            delta_v = random.uniform(
-                TRAFFIC_SPEED_BROAD_DELTA_MIN,
-                TRAFFIC_SPEED_BROAD_DELTA_MAX,
-            )
-            regime = "broad"
-
-        requested_speed = ego_speed + delta_v
-        speed = float(np.clip(
-            requested_speed, TRAFFIC_SPEED_MIN, TRAFFIC_SPEED_MAX
-        ))
-        return speed, float(delta_v), regime
-
-    def _spawn_slot_vehicle(self, lane_id, side):
-        """Spawn a replacement at the configured gap with ego-relative speed."""
-        base_env = self.env.unwrapped
-        ego = base_env.vehicle
-        lane_index = self._lane_index_for_id(lane_id)
-        # Compute s in the target lane's own parameterization for placement;
-        # classification and distance comparisons use the shared road frame.
-        ego_s_target_lane = self._lane_longitudinal_position(ego, lane_index)
-        # Keep the existing independent per-lane/per-side gap randomization.
-        if self.randomize_traffic_gaps:
-            if side == "front":
-                gap = random.uniform(
-                    RANDOMIZED_FRONT_GAP_MIN, RANDOMIZED_FRONT_GAP_MAX)
-            else:
-                gap = random.uniform(
-                    RANDOMIZED_REAR_GAP_MIN, RANDOMIZED_REAR_GAP_MAX)
-        else:
-            gap = self.traffic_front_gap if side == "front" else self.traffic_rear_gap
-        longitudinal = ego_s_target_lane + gap if side == "front" else ego_s_target_lane - gap
-
-        # Generate speed from ego speed rather than independently sampling
-        # the full [TRAFFIC_SPEED_MIN, TRAFFIC_SPEED_MAX] range. Do not apply
-        # the old front/rear pairwise speed constraint: it biased the intended
-        # ego-relative mixture and could override position-aware sampling.
-        speed, delta_v, speed_regime = self._sample_surrounding_speed(
-            ego_speed=float(ego.speed), side=side
-        )
-        traffic_vehicle = Vehicle.make_on_lane(
-            base_env.road, lane_index, longitudinal=longitudinal, speed=speed
-        )
-        traffic_vehicle._arood_traffic_side = side
-        traffic_vehicle._arood_speed_delta_from_ego = delta_v
-        traffic_vehicle._arood_speed_regime = speed_regime
-        base_env.road.vehicles.append(traffic_vehicle)
-        print(
-            "[TRAFFIC SPAWN]",
-            f"lane={lane_id}", f"side={side}",
-            f"gap={gap:.1f}m", f"range={self.TRAFFIC_RELEVANT_RANGE:.1f}m",
-            f"ego_speed={float(ego.speed):.2f}m/s",
-            f"speed={speed:.2f}m/s", f"delta_v_sample={delta_v:+.2f}m/s",
-            f"regime={speed_regime}",
-            f"id={id(traffic_vehicle)}",
-        )
-        return traffic_vehicle
-
-    def _initialize_six_vehicle_traffic(self):
-        """Start with exactly one front and one rear vehicle in each lane."""
-        base_env = self.env.unwrapped
-        ego = base_env.vehicle
-        base_env.road.vehicles = [vehicle for vehicle in base_env.road.vehicles if vehicle is ego]
-        for lane_id in range(NUM_LANES):
-            self._spawn_slot_vehicle(lane_id, "front")
-            self._spawn_slot_vehicle(lane_id, "rear")
-        self._assert_traffic_invariant("initialized")
-
-    def _maintain_six_vehicle_traffic(self):
-        """Maintain nearest in-range front/rear neighbors in every lane.
-
-        A vehicle qualifies only when its lane is valid, it is within the
-        longitudinal relevance range, and it is strictly on one side of ego.
-        When it crosses ego, leaves range, changes into an invalid lane, or
-        becomes a duplicate in a slot, it is removed/reclassified and the
-        missing slot is immediately replenished.
-        """
-        road = self.env.unwrapped.road
-        ego = self.env.unwrapped.vehicle
-        ego_s = self._road_longitudinal_position(ego)
-        slots = {(lane, side): [] for lane in range(NUM_LANES) for side in ("front", "rear")}
-        valid_vehicle_ids = set()
-
-        for vehicle in list(road.vehicles):
-            if vehicle is ego:
-                continue
-            try:
-                lane_id = int(vehicle.lane_index[2])
-                if lane_id not in range(NUM_LANES):
-                    continue
-                longitudinal = self._road_longitudinal_position(vehicle)
-                signed_gap = longitudinal - ego_s
-            except (AttributeError, TypeError, ValueError, IndexError):
-                continue
-
-            distance = abs(signed_gap)
-            if distance > self.TRAFFIC_RELEVANT_RANGE:
-                continue
-            if abs(signed_gap) <= self.TRAFFIC_CROSSING_EPSILON:
-                # Avoid assigning a nearly overlapping vehicle inconsistently
-                # to front/rear from tiny numerical sign changes.
-                continue
-
-            side = "front" if signed_gap > 0 else "rear"
-            slots[(lane_id, side)].append((distance, vehicle))
-            valid_vehicle_ids.add(id(vehicle))
-
-        keep_ids = set()
-        for slot_key, candidates in slots.items():
-            candidates.sort(key=lambda item: item[0])
-            if candidates:
-                nearest = candidates[0][1]
-                keep_ids.add(id(nearest))
-                if len(candidates) > 1:
-                    print("[TRAFFIC DUPLICATE SLOT]", f"slot={slot_key}",
-                          f"removed={len(candidates) - 1}")
-
-        # Remove vehicles that crossed ego, left the relevant range, changed
-        # to an unsupported lane, or lost a nearest-neighbor slot.
-        road.vehicles = [
-            vehicle for vehicle in road.vehicles
-            if vehicle is ego or id(vehicle) in keep_ids
-        ]
-
-        # Replenish each missing slot immediately. Each spawn is placed using
-        # the target lane's longitudinal coordinate, while slot selection uses
-        # the shared road-coordinate frame above.
-        for lane_id in range(NUM_LANES):
-            for side in ("front", "rear"):
-                if not slots[(lane_id, side)]:
-                    self._spawn_slot_vehicle(lane_id, side)
-
-        self._assert_traffic_invariant("maintained")
-
-    def _assert_traffic_invariant(self, where):
-        ego = self.env.unwrapped.vehicle
-        ego_s = self._road_longitudinal_position(ego)
-        counts = {(lane, side): 0 for lane in range(NUM_LANES) for side in ("front", "rear")}
-        traffic_count = 0
-        for vehicle in list(self.env.unwrapped.road.vehicles):
-            if vehicle is ego:
-                continue
-            traffic_count += 1
-            try:
-                lane_id = int(vehicle.lane_index[2])
-                signed_gap = self._road_longitudinal_position(vehicle) - ego_s
-            except (AttributeError, TypeError, ValueError, IndexError):
-                continue
-            if lane_id in range(NUM_LANES) and abs(signed_gap) > self.TRAFFIC_CROSSING_EPSILON:
-                if abs(signed_gap) <= self.TRAFFIC_RELEVANT_RANGE:
-                    counts[(lane_id, "front" if signed_gap > 0 else "rear")] += 1
-        expected_slots = NUM_LANES * 2
-        occupied_slots = sum(count > 0 for count in counts.values())
-        invariant_ok = (
-            traffic_count == expected_slots
-            and occupied_slots == expected_slots
-            and all(count == 1 for count in counts.values())
-        )
-        if not invariant_ok:
-            print("[TRAFFIC INVARIANT WARNING] Expected exactly one in-range vehicle in every lane/side slot.")
 
     def _relevant_lane_ids(self, include_active_lane_change=True):
         """Return the single canonical lane set relevant to ego safety/reward.
@@ -1341,6 +1150,11 @@ class HighwaySimulator:
                 continue
 
             center_gap = other_s - ego_s
+            if (
+                center_gap > TRAFFIC_REFERENCE_FRONT_M
+                or center_gap < -TRAFFIC_REFERENCE_REAR_M
+            ):
+                continue
             if center_gap == 0.0:
                 # Longitudinal overlap/alignment is represented as an immediate
                 # collision-risk signal on both sides of this lane.
@@ -1411,24 +1225,8 @@ class HighwaySimulator:
             values["rear_risk"] = ttc_to_risk(values["rear_ttc"])
             values["lane_risk"] = max(values["front_risk"], values["rear_risk"])
 
-        occupied_slots = sum(
-            lane_ttc[lane_id][f"{side}_vehicle_id"] is not None
-            for lane_id in range(lanes_count)
-            for side in ("front", "rear")
-        )
-        if occupied_slots != NUM_SURROUNDING_VEHICLES:
-            write_diagnostic_event(
-                "traffic_slot_snapshot_incomplete", self,
-                occupied_slots=int(occupied_slots),
-                expected_slots=NUM_SURROUNDING_VEHICLES,
-                lane_slots={
-                    str(lane_id): {
-                        "front_vehicle_id": lane_ttc[lane_id]["front_vehicle_id"],
-                        "rear_vehicle_id": lane_ttc[lane_id]["rear_vehicle_id"],
-                    }
-                    for lane_id in range(lanes_count)
-                },
-            )
+        # Empty slots are valid: the reference window does not force the
+        # simulator to manufacture a front/rear vehicle in every lane.
         return lane_ttc
 
     def _edm_interpretation_by_lane(self, lane_metrics=None):
@@ -1460,7 +1258,6 @@ class HighwaySimulator:
     # Legacy TTC/speed-matching intervention code removed; EDM remains diagnostic/state input only.
 
 
-#???????????????????????????????????????????????????????????????????????????????????????????????????????????
     def _snapshot_managed_traffic_slots(self):
         """Capture every ADT background vehicle around one native env.step()."""
         base_env = self.env.unwrapped
@@ -1532,7 +1329,13 @@ class HighwaySimulator:
             "event": "FIRST_NEGATIVE_MANAGED_TRAFFIC_SPEED",
             "phase": getattr(self, "_trace_phase", None),
             "episode": getattr(self, "_trace_episode", None),
-            "simulator_step": int(getattr(self, "step_count", 0)),
+            "policy_step": int(getattr(self, "step_count", 0)),
+            "physics_simulation_step": int(
+                getattr(self, "step_count", 0) * SIMULATION_SUBSTEPS_PER_POLICY
+            ),
+            "simulated_time_s": float(
+                getattr(self, "step_count", 0) * POLICY_STEP_DURATION_S
+            ),
             "native_call": "self.env.step(physical_action)",
             "physical_action_applied_to_ego": np.asarray(physical_action, dtype=float).tolist(),
             "env_info": repr(env_info),
@@ -1563,67 +1366,8 @@ class HighwaySimulator:
         write_diagnostic_event("negative_managed_traffic_speed_observed", self, **report_fields)
 
 
-    def _sanitize_traffic_slot_speeds(self, where):
-        """Prevent managed traffic-slot vehicles from retaining negative/non-finite speed.
-
-        highway-env updates surrounding vehicles during env.step(). A traffic
-        vehicle that acquires a negative scalar speed must be clamped immediately
-        after that update, before slot maintenance or safety-mask evaluation.
-        """
-        base_env = self.env.unwrapped
-        ego = base_env.vehicle
-        for traffic_vehicle in list(base_env.road.vehicles):
-            if traffic_vehicle is ego:
-                continue
-            if getattr(traffic_vehicle, "_arood_traffic_side", None) not in ("front", "rear"):
-                continue
-            try:
-                raw_speed = float(traffic_vehicle.speed)
-            except (AttributeError, TypeError, ValueError):
-                raw_speed = float("nan")
-            if np.isfinite(raw_speed) and raw_speed >= 0.0:
-                continue
-
-            safe_speed = 0.0
-            try:
-                traffic_vehicle.speed = safe_speed
-            except (AttributeError, TypeError, ValueError) as exc:
-                raise RuntimeError(
-                    f"Cannot clamp invalid traffic-slot speed at {where}: "
-                    f"vehicle_id={id(traffic_vehicle)}, speed={raw_speed}"
-                ) from exc
-
-            # Keep the kinematic velocity consistent with the clamped scalar
-            # speed. Zeroing velocity avoids one more backward displacement
-            # from a stale negative velocity vector on the next update.
-            if hasattr(traffic_vehicle, "velocity"):
-                try:
-                    velocity = np.asarray(traffic_vehicle.velocity, dtype=float)
-                    traffic_vehicle.velocity = np.zeros_like(velocity)
-                except (AttributeError, TypeError, ValueError):
-                    pass
-
-            print(
-                "[TRAFFIC SLOT SPEED CLAMP]",
-                f"where={where}",
-                f"lane={getattr(traffic_vehicle, 'lane_index', None)}",
-                f"side={getattr(traffic_vehicle, '_arood_traffic_side', None)}",
-                f"vehicle_id={id(traffic_vehicle)}",
-                f"raw_speed_mps={raw_speed}",
-                f"clamped_speed_mps={safe_speed}",
-            )
-            write_diagnostic_event(
-                "traffic_slot_speed_clamped", self,
-                where=where,
-                vehicle_id=id(traffic_vehicle),
-                lane_index=str(getattr(traffic_vehicle, "lane_index", None)),
-                side=getattr(traffic_vehicle, "_arood_traffic_side", None),
-                raw_speed_mps=raw_speed,
-                clamped_speed_mps=safe_speed,
-            )
-
     def step(self, action, sampled_action=None, safety_info=None):
-        """Execute the policy's hybrid action with an instantaneous lane change.
+        """Execute one 0.2s policy action over three 15Hz physics updates.
 
         The policy chooses KEEP or CHANGE and selects a physically adjacent target.
         No TTC/EDM safety shield, speed controller, or action override is applied.
@@ -1737,12 +1481,12 @@ class HighwaySimulator:
         policy_dt = 1.0 / float(base_env.config["policy_frequency"])
         physical_action = np.asarray([acceleration, 0.0], dtype=np.float32)
 
-        # Sanitize managed traffic before the native update, then again
-        # immediately after it. The post-update pass is essential because
-        # highway-env may integrate a slot vehicle into a negative speed during
+        # Sanitize the complete background population before the native update,
+        # then again immediately after it. The post-update pass is essential
+        # because highway-env may integrate a traffic vehicle into a negative speed during
         # this very update; slot maintenance and safety evaluation must never see
         # that invalid value.
-        self._sanitize_traffic_slot_speeds("pre_env_step")
+        self._sanitize_all_traffic_speeds("pre_env_step")
         traffic_speeds_before = self._snapshot_managed_traffic_slots()
         # Preserve the exact collision-proximate scene before native physics can
         # alter/remove a vehicle and make its TTC appear to reset to infinity.
@@ -1758,7 +1502,7 @@ class HighwaySimulator:
         self._record_first_negative_speed_transition(
             traffic_speeds_before, traffic_speeds_after, physical_action, env_info
         )
-        self._sanitize_traffic_slot_speeds("post_env_step")
+        self._sanitize_all_traffic_speeds("post_env_step")
         ego_after = base_env.vehicle
         speed_after = float(ego_after.speed)
         lane_after_env_update = int(ego_after.lane_index[2])
@@ -1809,10 +1553,10 @@ class HighwaySimulator:
                   f"speed={speed_after:.3f}")
 
         self.step_count += 1
-        self._maintain_six_vehicle_traffic()
+        self._maintain_continuous_traffic()
         obs = base_env.observation_type.observe()
         next_state = self._encode_state(obs)
-        self._assert_traffic_invariant("instant_step")
+        self._assert_continuous_traffic_invariant("instant_step")
 
         # Shared TTC risk is logged after the simulator update and traffic-slot
         # maintenance. It does not intervene in the action or enter the reward.
@@ -1873,7 +1617,10 @@ class HighwaySimulator:
             "position_before_env_update": position_before_env_update.copy(),
             "position_after_env_update": position_after_env_update.copy(),
             "lane_change_completed_instantly": bool(lane_changed),
-            "one_env_update_per_policy_action": True,
+            "one_env_update_per_policy_action": bool(SIMULATION_SUBSTEPS_PER_POLICY == 1),
+            "simulator_updates_per_policy_action": int(SIMULATION_SUBSTEPS_PER_POLICY),
+            "simulation_step_duration_s": float(SIMULATION_STEP_DURATION_S),
+            "policy_step_duration_s": float(POLICY_STEP_DURATION_S),
             "lane_change_rejection_reason": lane_rejection_reason,
             "sampled_policy_action": (np.asarray(sampled_action, dtype=np.float32).copy()
                                       if sampled_action is not None else incoming_action.copy()),
@@ -1888,8 +1635,9 @@ class HighwaySimulator:
             "ttc_risk_diagnostics": ttc_risk_diagnostics,
             "ttc_risk_aggregation": "max_front_rear",
             "ttc_risk_thresholds_s": {
-                "critical": float(TTC_RISK_CRITICAL),
-                "warning": float(TTC_RISK_WARNING),
+                "comfortable": float(EDM_TTC_COMFORTABLE_S),
+                "danger": float(EDM_TTC_DANGER_S),
+                "critical": float(EDM_TTC_CRITICAL_S),
             },
             "edm_pre_action_by_lane": edm_pre_action,
             "edm_pre_env_step_by_lane": edm_pre_env_step,
@@ -1968,7 +1716,7 @@ class ContinuousTrafficVehicle(Vehicle):
 
 
 # ---------------------------------------------------------------------------
-# 3. Replace the old six-vehicle traffic manager
+# 3. Continuous traffic population and boundary management
 # ---------------------------------------------------------------------------
 
 _ORIGINAL_ROAD_LONGITUDINAL_POSITION = HighwaySimulator._road_longitudinal_position
@@ -2091,7 +1839,7 @@ def _safe_spawn_position(self, lane_id, longitudinal, minimum_gap):
 
 
 def _initialize_continuous_traffic(self):
-    """Create a distributed population; never use six-slot replacement spawning."""
+    """Initialize density-based traffic across the full reference and buffer span."""
     env = self.env.unwrapped
     ego = env.vehicle
     env.road.vehicles = [ego]
@@ -2099,12 +1847,12 @@ def _initialize_continuous_traffic(self):
 
     spawned = 0
     attempts = 0
+    longitudinal_min = -TRAFFIC_REAR_RECYCLE_BOUNDARY_M
+    longitudinal_max = TRAFFIC_FRONT_RECYCLE_BOUNDARY_M
     while spawned < TRAFFIC_TARGET_COUNT and attempts < INITIAL_SPAWN_MAX_ATTEMPTS:
         attempts += 1
         lane_id = random.randrange(NUM_LANES)
-        longitudinal = ego_s + random.uniform(
-            -INITIAL_PLACEMENT_RANGE_M, INITIAL_PLACEMENT_RANGE_M
-        )
+        longitudinal = ego_s + random.uniform(longitudinal_min, longitudinal_max)
         if not _safe_spawn_position(self, lane_id, longitudinal, MIN_INITIAL_GAP_M):
             continue
         speed = random.uniform(TRAFFIC_MIN_SPEED_MPS, TRAFFIC_MAX_SPEED_MPS)
@@ -2113,18 +1861,15 @@ def _initialize_continuous_traffic(self):
 
     if spawned < TRAFFIC_TARGET_COUNT:
         raise RuntimeError(
-            f"Could initialize only {spawned}/{TRAFFIC_TARGET_COUNT} traffic vehicles. "
-            "Increase the placement range or reduce the minimum initial spacing."
+            f"Could initialize only {spawned}/{TRAFFIC_TARGET_COUNT} traffic vehicles "
+            f"over [{longitudinal_min:.0f}, {longitudinal_max:.0f}]m. "
+            "Review density and minimum spacing."
         )
 
     self._traffic_population_target = TRAFFIC_TARGET_COUNT
     self._traffic_spawn_count = spawned
     self._traffic_removal_count = 0
-    self._traffic_pending_replacements = 0
-    self._adt_front_coverage_spawn_count = 0
-    self._adt_front_coverage_attempt_failures = 0
-    # Fill any lane that lacks a front vehicle before the first observation.
-    _ensure_lane_front_coverage(self)
+    self._traffic_pending_replacements_by_side = {"front": 0, "rear": 0}
     self._adt_background_lane_change_count = 0
     self._adt_slot_replacement_count = 0
     self._adt_slot_observation_count = 0
@@ -2137,11 +1882,11 @@ def _initialize_continuous_traffic(self):
     print(
         "[ADT TRAFFIC INITIALIZED]",
         f"vehicles={spawned}",
+        f"density={TRAFFIC_DENSITY_PER_KM_PER_LANE:.1f}/km/lane",
         f"profiles={self._adt_profile_counts}",
-        f"profile_targets={dict(ADT_PROFILE_MIX)}",
-        f"reference=±{REFERENCE_RANGE_M:.0f}m",
-        f"recycling=±{RECYCLING_BOUNDARY_M:.0f}m",
-        "ego_observation_slots=6",
+        f"reference=+{TRAFFIC_REFERENCE_FRONT_M:.0f}/-{TRAFFIC_REFERENCE_REAR_M:.0f}m",
+        f"recycling=+{TRAFFIC_FRONT_RECYCLE_BOUNDARY_M:.0f}/-{TRAFFIC_REAR_RECYCLE_BOUNDARY_M:.0f}m",
+        "six_nearest_slots=observation_only",
     )
 
 
@@ -2196,7 +1941,7 @@ def _adt_vehicle_acceleration(self, vehicle):
 
     # Unstable drivers occasionally brake hard or accelerate in short pulses.
     # Event rates are scaled by simulation dt rather than policy-step count.
-    dt = 1.0 / max(1.0, float(SIMULATION_FREQUENCY_HZ))
+    dt = 1.0 / max(1.0, float(simulation_frequency))
     if profile == "unstable":
         remaining = int(getattr(vehicle, "_arood_brake_steps_remaining", 0))
         if remaining > 0:
@@ -2217,8 +1962,6 @@ def _adt_vehicle_acceleration(self, vehicle):
 def _adt_try_lane_change(self, vehicle):
     """Occasional independent lane changes with explicit collision-avoidance gaps."""
     profile = getattr(vehicle, "_arood_adt_profile", "normal")
-    if getattr(vehicle, "_arood_front_coverage_guard", False):
-        return False
     if profile not in ("aggressive", "unstable"):
         return False
     cooldown = int(getattr(vehicle, "_arood_lane_change_cooldown", 0))
@@ -2238,7 +1981,7 @@ def _adt_try_lane_change(self, vehicle):
         if gap < current_front_gap:
             current_front, current_front_gap = other, gap
 
-    dt = 1.0 / max(1.0, float(SIMULATION_FREQUENCY_HZ))
+    dt = 1.0 / max(1.0, float(simulation_frequency))
     rate = PROFILE_LANE_CHANGE_RATE_PER_S.get(profile, 0.0)
     should_consider = (
         current_front is not None
@@ -2302,7 +2045,7 @@ def _adt_try_lane_change(self, vehicle):
     vehicle.position = np.asarray(lane.position(current_s, 0.0), dtype=float)
     vehicle.heading = float(lane.heading_at(current_s))
     vehicle._arood_lane_change_cooldown = int(round(
-        ADT_LANE_CHANGE_COOLDOWN_S * SIMULATION_FREQUENCY_HZ
+        ADT_LANE_CHANGE_COOLDOWN_S * simulation_frequency
     ))
     self._adt_background_lane_change_count = int(
         getattr(self, "_adt_background_lane_change_count", 0)
@@ -2311,7 +2054,7 @@ def _adt_try_lane_change(self, vehicle):
 
 
 def _adt_slot_diagnostics(self, slots):
-    """Count changes in the identities occupying the six observation slots."""
+    """Count identity changes in the six slots, considering only the reference window."""
     current = {}
     ego = self.env.unwrapped.vehicle
     ego_s = _road_s(self, ego)
@@ -2322,6 +2065,8 @@ def _adt_slot_diagnostics(self, slots):
                 if vehicle is ego or int(vehicle.lane_index[2]) != lane_id:
                     continue
                 delta = _road_s(self, vehicle) - ego_s
+                if delta > TRAFFIC_REFERENCE_FRONT_M or delta < -TRAFFIC_REFERENCE_REAR_M:
+                    continue
                 if (side == "front" and delta > 0.0) or (side == "rear" and delta < 0.0):
                     candidates.append((abs(delta), getattr(
                         vehicle, "_arood_traffic_uid", str(id(vehicle))
@@ -2338,100 +2083,56 @@ def _adt_slot_diagnostics(self, slots):
     self._adt_last_slot_uids = current
 
 
-def _lane_has_front_vehicle(self, lane_id, ego_s):
-    """Whether a lane has a front vehicle inside the active reference range."""
-    for vehicle in _traffic_in_lane(self, lane_id):
-        delta = _road_s(self, vehicle) - ego_s
-        if 0.0 < delta <= FRONT_COVERAGE_MAX_DISTANCE_M:
-            return True
-    return False
-
-
-def _ensure_lane_front_coverage(self):
-    """Ensure all three lanes have a front vehicle within the reference range.
-
-    Coverage vehicles are placed 180–420m ahead, subject to safe spacing.
-    They are protected from background lane changes so one lane cannot be
-    repeatedly emptied by the traffic manager's own coverage vehicles.
-    """
+def _spawn_boundary_replacement(self, side):
+    """Spawn a replacement in the appropriate outer entry buffer, never in-view."""
+    if side not in ("front", "rear"):
+        raise ValueError(f"Unknown traffic entry side: {side}")
     ego = self.env.unwrapped.vehicle
     ego_s = _road_s(self, ego)
     ego_speed = max(0.0, float(ego.speed))
-    inserted = 0
 
-    for lane_id in range(NUM_LANES):
-        if _lane_has_front_vehicle(self, lane_id, ego_s):
-            continue
-
-        # A slower front vehicle creates a future closing/acceleration decision
-        # while remaining far enough away to avoid an artificial immediate hazard.
+    if side == "front":
         speed = max(
             TRAFFIC_MIN_SPEED_MPS,
-            ego_speed - random.uniform(
-                FRONT_COVERAGE_SPEED_OFFSET_MIN_MPS,
-                FRONT_COVERAGE_SPEED_OFFSET_MAX_MPS,
-            ),
+            ego_speed - random.uniform(2.0, 8.0),
         )
-        speed = min(speed, TRAFFIC_MAX_SPEED_MPS)
-
-        spawned = False
-        for _ in range(LANE_COVERAGE_SPAWN_MAX_ATTEMPTS):
-            longitudinal = ego_s + random.uniform(
-                FRONT_COVERAGE_SPAWN_MIN_DISTANCE_M,
-                FRONT_COVERAGE_SPAWN_MAX_DISTANCE_M,
-            )
-            if not _safe_spawn_position(
-                self, lane_id, longitudinal, MIN_INSERTION_GAP_M
-            ):
-                continue
-
-            vehicle = _spawn_traffic_vehicle(self, lane_id, longitudinal, speed)
-            vehicle._arood_front_coverage_guard = True
-            self._traffic_spawn_count += 1
-            self._adt_front_coverage_spawn_count += 1
-            inserted += 1
-            spawned = True
-            break
-
-        if not spawned:
-            self._adt_front_coverage_attempt_failures += 1
-
-    return inserted
-
-
-def _spawn_boundary_replacement(self):
-    """Insert only beyond the active reference range, with a safe-gap check."""
-    ego = self.env.unwrapped.vehicle
-    ego_s = _road_s(self, ego)
-    ego_speed = max(0.0, float(ego.speed))
-
-    # A slower vehicle is placed ahead so the ego can approach it; a faster
-    # vehicle is placed behind so it can approach the ego. Both enter gradually.
-    if random.random() < 0.5:
-        side = 1.0
-        speed = max(TRAFFIC_MIN_SPEED_MPS, ego_speed - random.uniform(BOUNDARY_SPAWN_SPEED_OFFSET_MIN_MPS, BOUNDARY_SPAWN_SPEED_OFFSET_MAX_MPS))
+        longitudinal_offset = random.uniform(
+            TRAFFIC_FRONT_SPAWN_MIN_M, TRAFFIC_FRONT_SPAWN_MAX_M
+        )
     else:
-        side = -1.0
-        speed = min(TRAFFIC_MAX_SPEED_MPS, ego_speed + random.uniform(2.0, 6.0))
+        speed = min(
+            TRAFFIC_MAX_SPEED_MPS,
+            ego_speed + random.uniform(2.0, 6.0),
+        )
+        longitudinal_offset = -random.uniform(
+            TRAFFIC_REAR_SPAWN_MIN_M, TRAFFIC_REAR_SPAWN_MAX_M
+        )
 
     for _ in range(BOUNDARY_SPAWN_MAX_ATTEMPTS):
         lane_id = random.randrange(NUM_LANES)
-        longitudinal = ego_s + side * random.uniform(
-            REFERENCE_RANGE_M + BOUNDARY_SPAWN_EXTRA_RANGE_M, RECYCLING_BOUNDARY_M - BOUNDARY_SPAWN_DISTANCE_BUFFER_M
-        )
+        longitudinal = ego_s + longitudinal_offset
         if not _safe_spawn_position(self, lane_id, longitudinal, MIN_INSERTION_GAP_M):
+            # Re-sample the location on the next attempt, retaining the same side.
+            if side == "front":
+                longitudinal_offset = random.uniform(
+                    TRAFFIC_FRONT_SPAWN_MIN_M, TRAFFIC_FRONT_SPAWN_MAX_M
+                )
+            else:
+                longitudinal_offset = -random.uniform(
+                    TRAFFIC_REAR_SPAWN_MIN_M, TRAFFIC_REAR_SPAWN_MAX_M
+                )
             continue
         _spawn_traffic_vehicle(self, lane_id, longitudinal, speed)
         self._traffic_spawn_count += 1
-        self._traffic_pending_replacements = max(
-            0, self._traffic_pending_replacements - 1
+        self._traffic_pending_replacements_by_side[side] = max(
+            0, self._traffic_pending_replacements_by_side[side] - 1
         )
         return True
     return False
 
 
 def _maintain_continuous_traffic(self):
-    """Keep every vehicle until it crosses the outer recycling boundary."""
+    """Retain traffic through the asymmetric reference window and entry buffers."""
     road = self.env.unwrapped.road
     ego = self.env.unwrapped.vehicle
     ego_s = _road_s(self, ego)
@@ -2455,37 +2156,34 @@ def _maintain_continuous_traffic(self):
             removed += 1
             continue
 
-        if abs(s - ego_s) > RECYCLING_BOUNDARY_M:
+        relative_s = s - ego_s
+        if relative_s > TRAFFIC_FRONT_RECYCLE_BOUNDARY_M:
             removed += 1
+            self._traffic_pending_replacements_by_side["front"] += 1
             continue
-
-        # No vehicle is removed merely because it is outside the six slots or
-        # outside the ±500m active reference interval.
+        if relative_s < -TRAFFIC_REAR_RECYCLE_BOUNDARY_M:
+            removed += 1
+            self._traffic_pending_replacements_by_side["rear"] += 1
+            continue
         kept.append(vehicle)
 
     road.vehicles = kept
-    if removed:
-        self._traffic_removal_count += removed
-        self._traffic_pending_replacements += removed
+    self._traffic_removal_count += removed
 
-    # Retry deferred replacements on subsequent steps if no safe insertion gap
-    # is currently available. No vehicle is inserted close to the ego.
-    while self._traffic_pending_replacements > 0:
-        if not _spawn_boundary_replacement(self):
-            break
-
-    # Refill lane-specific front coverage after removals and background
-    # lane changes. This runs every simulator step, independent of ego lane.
-    front_coverage_inserted = _ensure_lane_front_coverage(self)
+    # Refill only the same side from which a vehicle left. Spawn positions are
+    # outside the observation window, so new vehicles enter by natural motion.
+    for side in ("front", "rear"):
+        while self._traffic_pending_replacements_by_side[side] > 0:
+            if not _spawn_boundary_replacement(self, side):
+                break
 
     return {
         "population": len(road.vehicles) - 1,
-        "front_coverage_inserted": int(front_coverage_inserted),
-        "front_coverage_spawned_total": int(self._adt_front_coverage_spawn_count),
-        "front_coverage_failures": int(self._adt_front_coverage_attempt_failures),
         "spawned_total": int(self._traffic_spawn_count),
         "removed_total": int(self._traffic_removal_count),
-        "pending_replacements": int(self._traffic_pending_replacements),
+        "pending_replacements": int(sum(self._traffic_pending_replacements_by_side.values())),
+        "pending_front_replacements": int(self._traffic_pending_replacements_by_side["front"]),
+        "pending_rear_replacements": int(self._traffic_pending_replacements_by_side["rear"]),
     }
 
 
@@ -2497,6 +2195,13 @@ def _assert_continuous_traffic_invariant(self, where):
         raise RuntimeError(f"Invalid background vehicle speed at {where}.")
     if any(int(v.lane_index[2]) not in range(NUM_LANES) for v in vehicles):
         raise RuntimeError(f"Background vehicle has an invalid lane at {where}.")
+    ego_s = _road_s(self, ego)
+    for vehicle in vehicles:
+        relative_s = _road_s(self, vehicle) - ego_s
+        if relative_s > TRAFFIC_FRONT_RECYCLE_BOUNDARY_M + 1e-6:
+            raise RuntimeError(f"Vehicle beyond front recycling boundary at {where}.")
+        if relative_s < -TRAFFIC_REAR_RECYCLE_BOUNDARY_M - 1e-6:
+            raise RuntimeError(f"Vehicle beyond rear recycling boundary at {where}.")
     return True
 
 
@@ -2559,6 +2264,13 @@ def _six_slot_state(self, obs=None):
         except (AttributeError, TypeError, ValueError, IndexError):
             continue
 
+        # The buffer vehicles are physically simulated but are not yet visible
+        # to the policy/EDM until they cross into the reference window.
+        if (
+            signed_gap > TRAFFIC_REFERENCE_FRONT_M
+            or signed_gap < -TRAFFIC_REFERENCE_REAR_M
+        ):
+            continue
         side = "front" if signed_gap > 0.0 else "rear"
         distance = abs(signed_gap)
         if distance < nearest[(lane_id, side)]:
@@ -2634,10 +2346,10 @@ HighwaySimulator.idm_acceleration = _idm_acceleration
 HighwaySimulator.adt_vehicle_acceleration = _adt_vehicle_acceleration
 HighwaySimulator.adt_try_lane_change = _adt_try_lane_change
 HighwaySimulator._spawn_traffic_vehicle = _spawn_traffic_vehicle
-HighwaySimulator._initialize_six_vehicle_traffic = _initialize_continuous_traffic
-HighwaySimulator._maintain_six_vehicle_traffic = _maintain_continuous_traffic
-HighwaySimulator._assert_traffic_invariant = _assert_continuous_traffic_invariant
-HighwaySimulator._sanitize_traffic_slot_speeds = _sanitize_all_traffic_speeds
+HighwaySimulator._initialize_continuous_traffic = _initialize_continuous_traffic
+HighwaySimulator._maintain_continuous_traffic = _maintain_continuous_traffic
+HighwaySimulator._assert_continuous_traffic_invariant = _assert_continuous_traffic_invariant
+HighwaySimulator._sanitize_all_traffic_speeds = _sanitize_all_traffic_speeds
 HighwaySimulator._encode_state = _six_slot_state
 
 
@@ -3118,7 +2830,7 @@ def update_policy(policy, state, action, reward, next_state, done,
     with torch.no_grad():
         nv = policy.value(nst)
         terminal = bool(done) if terminated is None else bool(terminated)
-        target = rew if terminal else rew + 0.99 * nv
+        target = rew if terminal else rew + GAMMA * nv
     adv = target - value
     critic_loss = F.mse_loss(value, target)
 
@@ -3306,7 +3018,7 @@ def collect_reference_rollouts(simulator, policy, reward_function):
         simulator._trace_phase = "reference_collection"
         simulator._trace_episode = episode + 1
         state = np.asarray(
-            simulator.reset(randomize_traffic_gaps=True), dtype=np.float32
+            simulator.reset(), dtype=np.float32
         )
         record_episode_start(simulator, "reference_collection", episode + 1, state)
         lane_change_processing_remaining = 0
@@ -3447,7 +3159,7 @@ def collect_reference_rollouts(simulator, policy, reward_function):
         returns = np.zeros(len(trajectory["rewards"]), dtype=np.float32)
         running_return = 0.0
         for i in range(len(returns) - 1, -1, -1):
-            running_return = trajectory["rewards"][i] + 0.99 * running_return
+            running_return = trajectory["rewards"][i] + GAMMA * running_return
             returns[i] = running_return
         trajectory["returns"] = returns
         trajectories.append(trajectory)
@@ -3610,10 +3322,29 @@ def train_pure_rl(simulator, policy):
             "state_dim": STATE_DIM, "policy_action_dim": POLICY_ACTION_DIM,
             "execution_action_dim": ACTION_DIM, "num_lanes": NUM_LANES,
             "simulation_frequency_hz": simulation_frequency,
+            "simulation_step_duration_s": SIMULATION_STEP_DURATION_S,
             "policy_frequency_hz": policy_frequency,
+            "policy_step_duration_s": POLICY_STEP_DURATION_S,
+            "simulation_substeps_per_policy_action": SIMULATION_SUBSTEPS_PER_POLICY,
+            "episode_duration_s": EPISODE_DURATION_S,
+            "max_policy_steps_per_episode": MAX_STEPS,
+            "discount_gamma_per_policy_step": GAMMA,
+            "discount_reference_gamma": GAMMA_REFERENCE_PER_STEP,
+            "discount_reference_policy_frequency_hz": GAMMA_REFERENCE_POLICY_FREQUENCY_HZ,
+            "discount_time_constant_s": DISCOUNT_TIME_CONSTANT_S,
+            "traffic_reference_front_m": TRAFFIC_REFERENCE_FRONT_M,
+            "traffic_reference_rear_m": TRAFFIC_REFERENCE_REAR_M,
+            "traffic_entry_buffer_m": TRAFFIC_ENTRY_BUFFER_M,
+            "traffic_recycling_buffer_m": TRAFFIC_RECYCLING_BUFFER_M,
+            "traffic_front_recycle_boundary_m": TRAFFIC_FRONT_RECYCLE_BOUNDARY_M,
+            "traffic_rear_recycle_boundary_m": TRAFFIC_REAR_RECYCLE_BOUNDARY_M,
+            "traffic_density_vehicles_per_km_per_lane": TRAFFIC_DENSITY_PER_KM_PER_LANE,
+            "traffic_initial_population_target": TRAFFIC_TARGET_COUNT,
+            "traffic_expected_reference_population": TRAFFIC_EXPECTED_REFERENCE_POPULATION,
+            "six_nearest_slots_are_observation_only": True,
+            "boundary_only_vehicle_replacement": True,
             "speed_limit_mps": SPEED_LIMIT,
             "max_physical_acceleration_mps2": MAX_PHYSICAL_ACCELERATION,
-            "policy_step_duration_s": POLICY_STEP_DURATION_S,
             "max_acceleration_per_step_mps": MAX_ACCELERATION_PER_STEP_MPS,
             "acceleration_reward_formula": "(abs(delta_v_step) + delta_v_step) / (2 * max_acceleration_per_step)",
             "speed_reward_formula": "(current_speed - speed_limit) / speed_limit",
@@ -3655,7 +3386,7 @@ def train_pure_rl(simulator, policy):
         simulator._trace_phase = "pure_rl"
         simulator._trace_episode = episode + 1
         start_time = time.time()
-        state = simulator.reset(randomize_traffic_gaps=True)
+        state = simulator.reset()
         record_episode_start(simulator, "pure_rl", episode + 1, state)
         episode_return = 0.0
         episode_steps = 0
@@ -3912,7 +3643,12 @@ def train_pure_rl(simulator, policy):
                 break
 
         elapsed = time.time() - start_time
+        episode_simulated_duration_s = episode_steps * POLICY_STEP_DURATION_S
         mean_step_reward = episode_return / max(episode_steps, 1)
+        mean_reward_per_simulated_second = (
+            episode_return / episode_simulated_duration_s
+            if episode_simulated_duration_s > 0.0 else 0.0
+        )
         speed_array = np.asarray(episode_speed_samples, dtype=np.float64)
         mean_speed_mps = float(np.mean(speed_array)) if speed_array.size else 0.0
         max_speed_mps = float(np.max(speed_array)) if speed_array.size else 0.0
@@ -3931,7 +3667,16 @@ def train_pure_rl(simulator, policy):
         # collision_rate is a per-episode indicator (0/1), not a per-step rate.
         # safe_step_count excludes the collision transition itself.
         collision_rate = float(first_collision_step is not None)
-        lane_change_rate = float(lane_stats.get("completed", 0)) / max(episode_steps, 1)
+        completed_lane_changes = int(lane_stats.get("completed", 0))
+        lane_change_rate = completed_lane_changes / max(episode_steps, 1)
+        lane_changes_per_minute = (
+            completed_lane_changes / (episode_simulated_duration_s / 60.0)
+            if episode_simulated_duration_s > 0.0 else 0.0
+        )
+        lane_changes_per_safe_km = (
+            completed_lane_changes / (safe_travel_dis / 1000.0)
+            if safe_travel_dis > 1e-9 else 0.0
+        )
         safe_step_count = int(
             first_collision_step - 1 if first_collision_step is not None else episode_steps
         )
@@ -3973,6 +3718,9 @@ def train_pure_rl(simulator, policy):
             f"no_safe_lane={no_safe_target_lane_fraction:.1%} | "
             f"episode_had_collision={bool(collision_rate)} | "
             f"lane_changes_per_100_steps={100.0 * lane_change_rate:.2f} | "
+            f"lane_changes_per_minute={lane_changes_per_minute:.2f} | "
+            f"lane_changes_per_safe_km={lane_changes_per_safe_km:.2f} | "
+            f"simulated_duration={episode_simulated_duration_s:.1f}s | "
             f"collision_free_distance={safe_travel_dis:.2f}m | "
             f"collision_free_steps={safe_step_count} | "
             f"emergency_braking_rate={emergency_braking_rate:.4f} | "
@@ -3991,7 +3739,9 @@ def train_pure_rl(simulator, policy):
         episode_metrics = {
             "episode": int(episode + 1),
             "episode_return": float(episode_return),
+            "episode_simulated_duration_s": float(episode_simulated_duration_s),
             "mean_reward_per_step": float(mean_step_reward),
+            "mean_reward_per_simulated_second": float(mean_reward_per_simulated_second),
             "mean_speed_mps": mean_speed_mps,
             "max_speed_mps": max_speed_mps,
             "mean_speed_ratio": mean_speed_ratio,
@@ -4004,6 +3754,8 @@ def train_pure_rl(simulator, policy):
             "collision_contact_steps": int(collision_contact_steps),
             "collision_rate": float(collision_rate),
             "lane_change_rate": float(lane_change_rate),
+            "lane_changes_per_minute": float(lane_changes_per_minute),
+            "lane_changes_per_safe_km": float(lane_changes_per_safe_km),
             "safe_travel_dis": float(safe_travel_dis),
             "safe_step_count": int(safe_step_count),
             "emergency_braking_rate": float(emergency_braking_rate),
@@ -4260,8 +4012,11 @@ def main():
     print("Episode termination: ENABLED on the first collision; no post-collision overlap transitions.")
     print("Lane-change processing: DISABLED (no reward suspension after lane changes).")
     print(f"CSV metrics: {METRICS_CSV_PATH}")
-    print(f"Simulator: {NUM_LANES} lanes, ADT target={TRAFFIC_TARGET_COUNT} background vehicles (front-coverage refills may add more), six observation slots, {policy_frequency} Hz policy / {simulation_frequency} Hz simulation.")
-    print(f"ADT: recycling=±{RECYCLING_BOUNDARY_M:.0f}m, initial placement=±{INITIAL_PLACEMENT_RANGE_M:.0f}m, speed={TRAFFIC_MIN_SPEED_MPS:.0f}-{TRAFFIC_MAX_SPEED_MPS:.0f}m/s, profile mix={dict(ADT_PROFILE_MIX)}.")
+    print(f"Simulator: {NUM_LANES} lanes, density-derived population={TRAFFIC_TARGET_COUNT} total vehicles (about {TRAFFIC_EXPECTED_REFERENCE_POPULATION} inside the reference window), six nearest observation slots.")
+    print(f"Timing: simulation={simulation_frequency}Hz, policy={policy_frequency}Hz, {SIMULATION_SUBSTEPS_PER_POLICY} simulator updates/policy action, episode={EPISODE_DURATION_S:.0f}s ({MAX_STEPS} policy steps).")
+    print(f"RL discount: gamma={GAMMA:.6f} per {POLICY_STEP_DURATION_S:.3f}s decision (physical discount time constant={DISCOUNT_TIME_CONSTANT_S:.2f}s).")
+    print(f"Traffic window: +{TRAFFIC_REFERENCE_FRONT_M:.0f}m front / -{TRAFFIC_REFERENCE_REAR_M:.0f}m rear; entry buffer={TRAFFIC_ENTRY_BUFFER_M:.0f}m; recycling=+{TRAFFIC_FRONT_RECYCLE_BOUNDARY_M:.0f}/-{TRAFFIC_REAR_RECYCLE_BOUNDARY_M:.0f}m.")
+    print(f"ADT: density={TRAFFIC_DENSITY_PER_KM_PER_LANE:.1f} vehicles/km/lane, speed={TRAFFIC_MIN_SPEED_MPS:.0f}-{TRAFFIC_MAX_SPEED_MPS:.0f}m/s, profile mix={dict(ADT_PROFILE_MIX)}.")
     print(f"Acceleration bounds: ±{MAX_PHYSICAL_ACCELERATION:.1f} m/s²; speed limit: {SPEED_LIMIT:.1f} m/s.")
     print(f"Episode evaluator enabled: {ENABLE_EPISODE_EVALUATOR} (fixed reward baseline).")
     #print(f"Diagnostics: {DIAGNOSTIC_LOG_PATH}; trajectories: {EPISODE_TRAJECTORY_PATH if TRAJECTORY_RECORDING_ENABLED else 'disabled'}.")
