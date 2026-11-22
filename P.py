@@ -882,8 +882,10 @@ def interpret_edm_ttc(ttc_seconds):
 
 
 class HighwaySimulator:
-    """Highway-env wrapper with six managed traffic vehicles.
+    """Highway-env wrapper with ADT background traffic and six ego observation slots.
 
+    The simulator maintains a distributed dynamic traffic population. The
+    policy observes only the nearest front/rear vehicle in each of three lanes.
     State includes vehicle rows, ego-relative context, six physical lane
     metrics plus four EDM interpretation features for each of the roles
     [current, left, right]. State dimension is derived from configuration.
@@ -5795,7 +5797,8 @@ def main():
     print("Episode termination: ENABLED on the first collision; no post-collision overlap transitions.")
     print("Lane-change processing: DISABLED (no reward suspension after lane changes).")
     print(f"CSV metrics: {METRICS_CSV_PATH}")
-    print(f"Simulator: {NUM_LANES} lanes, {NUM_SURROUNDING_VEHICLES} managed traffic slots, {policy_frequency} Hz policy / {simulation_frequency} Hz simulation.")
+    print(f"Simulator: {NUM_LANES} lanes, ADT target={TRAFFIC_TARGET_COUNT} background vehicles (front-coverage refills may add more), six observation slots, {policy_frequency} Hz policy / {simulation_frequency} Hz simulation.")
+    print(f"ADT: recycling=±{RECYCLING_BOUNDARY_M:.0f}m, initial placement=±{INITIAL_PLACEMENT_RANGE_M:.0f}m, speed={TRAFFIC_MIN_SPEED_MPS:.0f}-{TRAFFIC_MAX_SPEED_MPS:.0f}m/s, profile mix={dict(ADT_PROFILE_MIX)}.")
     print(f"Acceleration bounds: ±{MAX_PHYSICAL_ACCELERATION:.1f} m/s²; speed limit: {SPEED_LIMIT:.1f} m/s.")
     print(f"Episode evaluator enabled: {ENABLE_EPISODE_EVALUATOR} (fixed reward baseline).")
     #print(f"Diagnostics: {DIAGNOSTIC_LOG_PATH}; trajectories: {EPISODE_TRAJECTORY_PATH if TRAJECTORY_RECORDING_ENABLED else 'disabled'}.")
