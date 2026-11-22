@@ -1777,746 +1777,7 @@ class HighwaySimulator:
             }
         return result
 
-    def _speed_matching_acceleration(self, front_speed, front_gap):
-        """
-        Return normalized acceleration in [-1, 1].
-        Uses both relative speed and desired following distance.
-        """
-        ego = self.env.unwrapped.vehicle
-        ego_speed = max(0.0, float(ego.speed))
-        front_speed = max(0.0, float(front_speed))
-        front_gap = max(0.0, float(front_gap))
-
-        desired_gap = MIN_FOLLOWING_GAP + DESIRED_TIME_HEADWAY * ego_speed
-
-        # Positive relative speed means the front vehicle is faster.
-        speed_error = front_speed - ego_speed
-        gap_error = front_gap - desired_gap
-
-        # Physical acceleration in m/s^2.
-        physical_acceleration = SPEED_MATCH_KV * speed_error + SPEED_MATCH_KD * gap_error
-
-        physical_acceleration = float(np.clip(physical_acceleration, -MAX_PHYSICAL_ACCELERATION, MAX_PHYSICAL_ACCELERATION,))
-
-        # Highway ContinuousAction expects normalized acceleration.
-        normalized_acceleration = physical_acceleration / MAX_PHYSICAL_ACCELERATION
-
-        return float(np.clip(normalized_acceleration, -1.0, 1.0))
-
-
-
-
-
-    def _legacy_filter_ttc_action(self, sampled_action):
-        """
-        Apply TTC-based emergency braking and lane-change safety checks.
-        Hybrid policy representation:
-            action[0] = normalized acceleration in [-1, 1]
-            action[1] = categorical lane-action index (0/1/2)
-
-        Semantic relative lane action:
-            index 0 -> delta -1 = LEFT
-            index 1 -> delta  0 = KEEP
-            index 2 -> delta +1 = RIGHT
-
-        Absolute Highway lane IDs remain simulator geometry IDs. Low-level
-        executed steering is computed separately by the steering controller.
-        Requires _min_ttc_by_lane() to return:
-            {lane_id: {
-                    "front_ttc": float,
-                    "rear_ttc": float,
-                    "min_ttc": float,}}
-        Returns:
-            filtered_action: np.ndarray
-            safety_info: dict
-        """
-
-        # Identify each filter invocation so logs from different steps
-        # can be correlated.
-        self._ttc_filter_call_count = getattr(self, "_ttc_filter_call_count", 0) + 1
-        ttc_filter_call_id = self._ttc_filter_call_count
-
-        # Normalize the hybrid action to a 1-D pair:
-        # [normalized_acceleration, lane_action]
-        if hasattr(sampled_action, "detach"):
-            sampled_action = sampled_action.detach()
-            if hasattr(sampled_action, "cpu"):
-                sampled_action = sampled_action.cpu()
-            if hasattr(sampled_action, "numpy"):
-                sampled_action = sampled_action.numpy()
-
-        sampled_array = np.asarray(sampled_action, dtype=np.float32)
-        original_shape = sampled_array.shape
-
-        sampled_action = sampled_array.reshape(-1)
-
-        if sampled_action.size != 2:
-            raise ValueError(
-                "filter_ttc_action expects exactly two values: "
-                "[normalized_acceleration, lane_action]. "
-                f"Received shape={original_shape}, "
-                f"value={sampled_action.tolist()}"
-            )
-
-
-
-        sampled_action = np.asarray(sampled_action, dtype=np.float32).reshape(-1)
-
-
-        if sampled_action.size != 2:
-            raise ValueError(
-                f"Expected action with 2 elements, "
-                f"received shape {sampled_action.shape}"
-            )
-
-        filtered_action = sampled_action.copy()
-
-        base_env = self.env.unwrapped
-        vehicle = base_env.vehicle
-        lanes_count = int(base_env.config["lanes_count"])
-
-        emergency_threshold = float(SAFETY_OVERRIDE_TTC)
-        lane_change_threshold = float(LANE_CHANGE_MIN_REAR_TTC)
-
-        # ---------------------------------------------------------
-        # 1. Assess current-lane emergency risk.
-        # ---------------------------------------------------------
-        lane_ttc_current = self._min_ttc_by_lane()
-
-        current_lane = int(vehicle.lane_index[2])
-
-        default_ttc = {
-            "front_ttc": float("inf"),
-            "rear_ttc": float("inf"),
-            "min_ttc": float("inf"),
-        }
-
-        current_values = lane_ttc_current.get(current_lane, default_ttc)
-
-        # Maneuver-aware safety: assess both lanes on every policy decision.
-        # A lane change is a commitment over several steps, not a fresh one-step
-        # decision. Do not abort into a source lane whose rear gap is collapsing.
-        active_lane_safety_event = None
-        active_maneuver_progress = None
-        active_source_rear_critical = False
-        active_target_rear_critical = False
-        active_target_front_critical = False
-        if self._lane_change_active and self._lane_change_source_index is not None:
-            try:
-                source_lane_id_active = int(self._lane_change_source_index[2])
-                target_lane_id_active = int(self.target_lane_index[2])
-                source_values_active = lane_ttc_current.get(source_lane_id_active, default_ttc)
-                target_values_active = lane_ttc_current.get(target_lane_id_active, default_ttc)
-
-                source_front_ttc_active = float(source_values_active.get("front_ttc", float("inf")))
-                source_rear_ttc_active = float(source_values_active.get("rear_ttc", float("inf")))
-                target_front_ttc_active = float(target_values_active.get("front_ttc", float("inf")))
-                target_rear_ttc_active = float(target_values_active.get("rear_ttc", float("inf")))
-                source_front_gap_active = float(source_values_active.get("front_gap", float("inf")))
-                source_rear_gap_active = float(source_values_active.get("rear_gap", float("inf")))
-                target_front_gap_active = float(target_values_active.get("front_gap", float("inf")))
-                target_rear_gap_active = float(target_values_active.get("rear_gap", float("inf")))
-                ego_speed_active = float(vehicle.speed)
-
-                target_lane_active_geometry = base_env.road.network.get_lane(self.target_lane_index)
-                _, target_lateral_active = target_lane_active_geometry.local_coordinates(vehicle.position)
-                source_lane_active_geometry = base_env.road.network.get_lane(self._lane_change_source_index)
-                _, source_lateral_active = source_lane_active_geometry.local_coordinates(vehicle.position)
-                source_is_nearer_active = abs(float(source_lateral_active)) < abs(float(target_lateral_active))
-                active_maneuver_progress = "SOURCE_SIDE" if source_is_nearer_active else "TARGET_SIDE"
-
-                active_source_rear_critical = (
-                    source_rear_ttc_active <= LANE_CHANGE_ACTIVE_ABORT_TTC
-                    or source_rear_gap_active <= LANE_CHANGE_ACTIVE_ABORT_GAP
-                )
-                active_target_rear_critical = (
-                    target_rear_ttc_active <= LANE_CHANGE_ACTIVE_ABORT_TTC
-                    or target_rear_gap_active <= LANE_CHANGE_ACTIVE_ABORT_GAP
-                )
-                active_target_front_critical = target_front_ttc_active <= SAFETY_OVERRIDE_TTC
-
-                source_lane_safe_for_abort = (
-                    source_front_ttc_active > SAFETY_OVERRIDE_TTC
-                    and source_rear_ttc_active > LANE_CHANGE_ACTIVE_ABORT_TTC
-                    and source_front_gap_active >= LANE_CHANGE_ACTIVE_ABORT_GAP
-                    and source_rear_gap_active >= LANE_CHANGE_ACTIVE_ABORT_GAP
-                )
-                target_lane_safe_to_complete = (
-                    target_front_ttc_active > SAFETY_OVERRIDE_TTC
-                    and target_front_gap_active >= 0.0
-                    and not (
-                        target_rear_ttc_active <= 0.5
-                        or target_rear_gap_active <= 0.0
-                    )
-                )
-
-                # Recovery rule:
-                # 1) If the target lane becomes dangerous while ego is still
-                #    nearer the source, return only if the source is safe.
-                # 2) If source rear pressure makes returning unsafe, do NOT
-                #    switch target back to the source lane. If the target is
-                #    viable, keep tracking it; if both lanes are dangerous,
-                #    retain the target trajectory and use longitudinal control.
-                should_recover_to_source = (
-                    active_target_rear_critical
-                    and source_is_nearer_active
-                    and source_lane_safe_for_abort
-                )
-                if should_recover_to_source:
-                    aborted_target = tuple(self.target_lane_index)
-                    source_target = tuple(self._lane_change_source_index)
-                    aborted_maneuver_id = self._active_lane_maneuver_id
-                    aborted_request_id = self._active_lane_request_trace_id
-                    self.target_lane_index = source_target
-                    self._lane_change_active = False
-                    self._lane_change_cooldown = int(max(
-                        LANE_CHANGE_COOLDOWN_STEPS,
-                        LANE_CHANGE_RECOVERY_COOLDOWN_STEPS,
-                    ))
-                    self._lane_change_source_index = None
-                    self._lane_change_started_step = None
-                    self._active_lane_maneuver_id = None
-                    self._active_lane_request_trace_id = None
-                    self._lane_change_stable_steps = 0
-                    self._lane_change_timeout_logged = False
-                    if getattr(self, "_lane_change_stats", None) is not None:
-                        self._lane_change_stats["aborted"] = self._lane_change_stats.get("aborted", 0) + 1
-                    active_lane_safety_event = "RECOVER_TO_SOURCE_TARGET_REAR_CRITICAL_SOURCE_SAFE"
-                    write_diagnostic_event(
-                        "lane_maneuver_safety_decision", self,
-                        maneuver_id=aborted_maneuver_id,
-                        request_id=aborted_request_id,
-                        decision="RECOVER_TO_SOURCE",
-                        reason=active_lane_safety_event,
-                        progress=active_maneuver_progress,
-                        source_lane=source_lane_id_active,
-                        target_lane=target_lane_id_active,
-                        source_rear_ttc=source_rear_ttc_active,
-                        source_rear_gap=source_rear_gap_active,
-                        target_rear_ttc=target_rear_ttc_active,
-                        target_rear_gap=target_rear_gap_active,
-                    )
-                elif active_target_rear_critical and not source_lane_safe_for_abort:
-                    active_lane_safety_event = (
-                        "CONTINUE_TARGET_SOURCE_UNSAFE"
-                        if target_lane_safe_to_complete
-                        else "KEEP_TARGET_TRAJECTORY_BOTH_LANES_RISKY"
-                    )
-                    write_diagnostic_event(
-                        "lane_maneuver_safety_decision", self,
-                        maneuver_id=getattr(self, "_active_lane_maneuver_id", None),
-                        request_id=getattr(self, "_active_lane_request_trace_id", None),
-                        decision="CONTINUE_TARGET",
-                        reason=active_lane_safety_event,
-                        progress=active_maneuver_progress,
-                        source_lane=source_lane_id_active,
-                        target_lane=target_lane_id_active,
-                        source_front_ttc=source_front_ttc_active,
-                        source_rear_ttc=source_rear_ttc_active,
-                        source_rear_gap=source_rear_gap_active,
-                        target_front_ttc=target_front_ttc_active,
-                        target_rear_ttc=target_rear_ttc_active,
-                        target_rear_gap=target_rear_gap_active,
-                    )
-                elif active_target_front_critical:
-                    # A target-front hazard is not solved by blindly switching
-                    # lanes. Keep the target plan stable and request braking
-                    # through the normal front-TTC emergency controller below.
-                    active_lane_safety_event = "TARGET_FRONT_CRITICAL_CONTINUE_TARGET_AND_BRAKE"
-
-                print(
-                    "[MANEUVER-AWARE SAFETY]",
-                    f"maneuver_id={getattr(self, '_active_lane_maneuver_id', None)}",
-                    f"progress={active_maneuver_progress}",
-                    f"source_lane={source_lane_id_active}",
-                    f"target_lane={target_lane_id_active}",
-                    f"source_front_ttc={source_front_ttc_active:.3f}",
-                    f"source_rear_ttc={source_rear_ttc_active:.3f}",
-                    f"source_rear_gap={source_rear_gap_active:.3f}",
-                    f"target_front_ttc={target_front_ttc_active:.3f}",
-                    f"target_rear_ttc={target_rear_ttc_active:.3f}",
-                    f"target_rear_gap={target_rear_gap_active:.3f}",
-                    f"event={active_lane_safety_event}",
-                )
-
-            except (AttributeError, KeyError, TypeError, ValueError, IndexError) as exc:
-                print("[ACTIVE LANE SAFETY CHECK WARNING]", f"error={exc}")
-
-        current_front_ttc = float(current_values["front_ttc"])
-        current_rear_ttc = float(current_values["rear_ttc"])
-        current_lane_ttc = min(current_front_ttc, current_rear_ttc)
-
-        # Information about the nearest vehicle ahead.
-        front_gap = float(current_values.get("front_gap", float("inf")))
-        front_speed_raw = current_values.get("front_speed", None)
-        nearest_front_ttc = float(current_values.get("nearest_front_ttc", float("inf")))
-
-        front_vehicle_present = front_speed_raw is not None
-        front_closing_speed = (
-            float(vehicle.speed) - float(front_speed_raw)
-            if front_speed_raw is not None else 0.0
-        )
-        # Positive means the ego is closing on the lead vehicle; negative means
-        # the lead vehicle is pulling away and the gap is naturally increasing.
-        rear_pressure = current_rear_ttc <= ttc_danger_threshold
-        selected_front_vehicle_id = current_values.get("front_vehicle_id")
-
-        # Use the current lane and, during an active lane change,
-        # the source and target lanes for emergency monitoring.
-        # Monitor all lanes relevant to the ego's current trajectory.
-        relevant_lane_ids = self._relevant_lane_ids()
-
-        # Emergency braking is triggered by a closing vehicle AHEAD in a lane
-        # occupied by, or actively entering, the ego. A fast-approaching REAR
-        # vehicle is relevant to lane-change rejection, but should not by itself
-        # trigger maximum braking in the current lane.
-        relevant_front_ttc_values = []
-
-        for lane_id in relevant_lane_ids:
-            values = lane_ttc_current.get(lane_id)
-            if values is None:
-                continue
-            relevant_front_ttc_values.append(float(values["front_ttc"]))
-
-        min_relevant_front_ttc = min(
-            relevant_front_ttc_values,
-            default=float("inf"),
-        )
-        emergency_braking = (min_relevant_front_ttc <= SAFETY_OVERRIDE_TTC)
-
-
-        # Level 1: adaptive car-following / speed matching.
-        desired_gap = MIN_FOLLOWING_GAP + DESIRED_TIME_HEADWAY * max(0.0, float(vehicle.speed))
-        gap_trigger_threshold = desired_gap - SPEED_MATCH_GAP_TOLERANCE
-
-        # TTC is the urgent closing-risk signal. A short gap alone should not
-        # force a speed-matching override when the lead vehicle is pulling away:
-        # in that case the gap is already increasing, so let the policy continue.
-        # If the gap is short and the ego is not closing, regulate headway.
-        front_ttc_trigger = nearest_front_ttc <= SPEED_MATCH_TTC
-        gap_and_closing_trigger = (
-            front_gap < gap_trigger_threshold
-            and front_closing_speed >= -0.1
-        )
-
-        # If a vehicle is rapidly approaching from behind, avoid routine
-        # speed-matching overrides when the front TTC is not time-critical.
-        # This preserves the policy's opportunity to maintain speed or accelerate;
-        # it does NOT override emergency braking for a dangerous lead vehicle.
-        rear_pressure_suppresses_routine_matching = (
-            rear_pressure and nearest_front_ttc > SPEED_MATCH_TTC
-        )
-        # If the sampled policy action requests a lane change that passes all
-        # four lane-selection principles, routine headway regulation should not
-        # cancel the acceleration needed to complete that maneuver. Emergency
-        # braking remains independent and cannot be suppressed.
-        requested_lane_value = int(np.clip(np.rint(float(sampled_action[1])), 0, 1))
-        safe_lane_change_request = False
-        if requested_lane_value == 1 and not self._lane_change_active:
-            lane_snapshot_for_speed_match = self._min_ttc_by_lane()
-            safe_lane_change_request = bool(self._safe_lane_change_candidates(lane_snapshot_for_speed_match))
-
-        speed_match_active = (
-            front_vehicle_present
-            and (front_ttc_trigger or gap_and_closing_trigger)
-            and not rear_pressure_suppresses_routine_matching
-            and not safe_lane_change_request
-        )
-
-
-        controller_accel = None
-
-
-
-        rear_threat_response_active = False
-
-        if emergency_braking:
-            # Critical TTC: request maximum braking.
-            filtered_action[0] = -1.0
-            speed_match_active = False
-
-        elif (
-            current_rear_ttc <= ttc_danger_threshold
-            and current_values.get("rear_speed") is not None
-            and float(current_values["rear_speed"]) > float(vehicle.speed) + 0.1
-            # Do not accelerate away from a rear threat into a close lead vehicle.
-            and (
-                not front_vehicle_present
-                or (
-                    nearest_front_ttc > SPEED_MATCH_TTC
-                    and front_gap >= gap_trigger_threshold
-                )
-            )
-            and (
-                not self._lane_change_active
-                or active_source_rear_critical
-                or active_lane_safety_event is not None
-            )
-        ):
-            # Rear-threat response: do not merely suppress speed matching.
-            # When a fast rear vehicle is closing, modestly accelerate to reduce
-            # relative closing speed, unless a critical front TTC already requires
-            # braking. The ordinary speed-limit stage still bounds this command.
-            rear_ttc_now = float(current_rear_ttc)
-            rear_escape_accel = 0.25 if rear_ttc_now > 1.5 else 0.45
-            policy_accel_before_rear_response = float(filtered_action[0])
-            filtered_action[0] = max(policy_accel_before_rear_response, rear_escape_accel)
-            speed_match_active = False
-            rear_threat_response_active = True
-            print(
-                "[REAR-THREAT RESPONSE]",
-                f"rear_ttc={rear_ttc_now:.3f}",
-                f"rear_gap={float(current_values.get('rear_gap', float('inf'))):.3f}",
-                f"rear_speed={float(current_values['rear_speed']):.3f}",
-                f"ego_speed={float(vehicle.speed):.3f}",
-                f"policy_accel={policy_accel_before_rear_response:+.3f}",
-                f"escape_accel={rear_escape_accel:+.3f}",
-                f"executed_accel={float(filtered_action[0]):+.3f}",
-                f"active_maneuver={bool(self._lane_change_active)}",
-                f"active_event={active_lane_safety_event}",
-            )
-            write_diagnostic_event(
-                "rear_threat_response", self,
-                rear_ttc=rear_ttc_now,
-                rear_gap=float(current_values.get("rear_gap", float("inf"))),
-                rear_speed=float(current_values["rear_speed"]),
-                ego_speed=float(vehicle.speed),
-                policy_accel=policy_accel_before_rear_response,
-                executed_accel=float(filtered_action[0]),
-                active_maneuver=bool(self._lane_change_active),
-                active_event=active_lane_safety_event,
-            )
-
-        elif speed_match_active:
-            # Speed matching may cap positive acceleration, but it must never
-            # cancel a stronger braking request sampled by the RL policy.
-            # This preserves the policy's negative acceleration while still
-            # preventing unnecessary acceleration toward a close lead vehicle.
-            controller_accel = self._speed_matching_acceleration(
-                front_speed=float(front_speed_raw),
-                front_gap=front_gap,
-            )
-            policy_accel_before_speed_match = float(filtered_action[0])
-            filtered_action[0] = min(
-                policy_accel_before_speed_match,
-                float(controller_accel),
-            )
-            print(
-                "[SPEED MATCH ARBITRATION]",
-                f"policy_accel={policy_accel_before_speed_match:+.6f}",
-                f"controller_accel={float(controller_accel):+.6f}",
-                f"executed_accel={float(filtered_action[0]):+.6f}",
-                f"policy_braking_preserved={policy_accel_before_speed_match < 0.0 and filtered_action[0] == policy_accel_before_speed_match}",
-            )
-
-
-
-        # DIAGNOSTIC A: identify changes from emergency braking
-        # or speed matching.
-        accel_after_ttc_control = float(filtered_action[0])
-
-        # ---------------------------------------------------------
-        # 2. Decode high-level KEEP/CHANGE and select a target separately.
-        # ---------------------------------------------------------
-        policy_requested_lane_action = int(np.clip(np.rint(float(sampled_action[1])), 0, 1))
-        requested_lane_action = policy_requested_lane_action
-        requested_lane_name = ("KEEP", "CHANGE")[policy_requested_lane_action]
-        requested_lane_delta = 0
-        candidate_lane = current_lane
-        filtered_lane_action = requested_lane_action
-        filtered_lane_name = requested_lane_name
-        lane_change_rejection_reasons = []
-        lane_change_blocked = False
-        candidate_front_ttc = float("inf")
-        candidate_rear_ttc = float("inf")
-        candidate_front_gap = float("inf")
-        candidate_rear_gap = float("inf")
-        candidate_front_gap_limit = LANE_CHANGE_MIN_GAP
-        candidate_rear_gap_limit = LANE_CHANGE_MIN_GAP
-        candidate_lane_available = False
-        selected_candidate = None
-
-        if policy_requested_lane_action == 1:
-            if getattr(self, "_lane_change_stats", None) is not None:
-                self._lane_change_stats["requested"] += 1
-            if self._lane_change_active:
-                lane_change_rejection_reasons.append("lane_change_already_in_progress")
-            if self._lane_change_cooldown > 0:
-                lane_change_rejection_reasons.append("lane_change_cooldown")
-            if not lane_change_rejection_reasons:
-                selected_candidate = self._select_best_safe_lane_candidate(lane_ttc_current)
-                if selected_candidate is None:
-                    lane_change_rejection_reasons.append("no_safe_adjacent_lane")
-                else:
-                    candidate_lane = int(selected_candidate["target_lane"])
-                    candidate_lane_available = True
-                    requested_lane_delta = int(candidate_lane - current_lane)
-                    requested_lane_name = "CHANGE_LEFT" if candidate_lane > current_lane else "CHANGE_RIGHT"
-                    candidate_values = lane_ttc_current[candidate_lane]
-                    candidate_front_ttc = float(candidate_values.get("front_ttc", float("inf")))
-                    candidate_rear_ttc = float(candidate_values.get("rear_ttc", float("inf")))
-                    candidate_front_gap = float(candidate_values.get("front_gap", float("inf")))
-                    candidate_rear_gap = float(candidate_values.get("rear_gap", float("inf")))
-                    lane_change_rejection_reasons.extend(self._lane_change_principle_reasons(
-                        candidate_lane, lane_ttc_current, current_lane=current_lane,
-                        ego_speed=float(vehicle.speed),
-                    ))
-                    print("[LANE-CHANGE SAFETY SNAPSHOT]",
-                          f"filter_call={ttc_filter_call_id}",
-                          f"ego_lane={current_lane}",
-                          f"target_lane={candidate_lane}",
-                          f"direction={requested_lane_name}",
-                          f"front_gap_m={candidate_front_gap:.3f}",
-                          f"rear_gap_m={candidate_rear_gap:.3f}",
-                          f"front_ttc_s={candidate_front_ttc:.3f}",
-                          f"rear_ttc_s={candidate_rear_ttc:.3f}",
-                          f"utility_improvement={selected_candidate.get('utility_improvement', selected_candidate['utility']):.3f}",
-                           f"candidate_utility={selected_candidate.get('candidate_utility', 0.0):.3f}",
-                           f"benefit_horizon_s={selected_candidate.get('prediction_horizon_s', BENEFIT_PREDICTION_HORIZON_SECONDS):.1f}s")
-
-            lane_change_blocked = bool(lane_change_rejection_reasons)
-            if lane_change_blocked:
-                filtered_action[1] = 0.0
-                filtered_lane_action = 0
-                filtered_lane_name = "KEEP"
-                candidate_lane = current_lane
-                requested_lane_delta = 0
-            else:
-                filtered_lane_action = 1
-                filtered_lane_name = "CHANGE"
-
-        lane_change_rejection_reason = (
-            ",".join(lane_change_rejection_reasons)
-            if lane_change_rejection_reasons else "none"
-        )
-        if policy_requested_lane_action == 1 and getattr(self, "_lane_change_stats", None) is not None:
-            if lane_change_blocked:
-                self._lane_change_stats["rejected"] += 1
-            else:
-                self._lane_change_stats["accepted"] += 1
-
-        # ---------------------------------------------------------
-        # 3B. Apply the speed limit to the filtered action.
-        # This must happen before dynamics prediction and execution.
-        # ---------------------------------------------------------
-        # Apply the speed limit before dynamics prediction and execution.
-        speed_limit_override = False
-        current_speed = float(vehicle.speed)
-        max_speed = float(getattr(vehicle, "MAX_SPEED", 40.0))
-
-
-        policy_dt = 1.0 / float(base_env.config["policy_frequency"])
-        if current_speed < -0.1:
-            raise RuntimeError(
-                f"Invalid reverse ego speed: {current_speed:.3f} m/s. "
-                "Reset the episode and inspect the speed dynamics."
-            )
-
-        # DIAGNOSTIC B: inspect the action before the speed-floor constraint.
-        accel_before_speed_floor = float(filtered_action[0])
-
-        min_normalized_accel = None
-
-        if current_speed >= 0.0 and filtered_action[0] < 0.0:
-            # Normalized action u maps to physical acceleration a = u * 5 m/s^2.
-            # Keep predicted speed at or above 0.05 m/s over one policy interval.
-            min_normalized_accel = (
-                (0.05 - current_speed)
-                / (MAX_PHYSICAL_ACCELERATION * policy_dt)
-            )
-
-            if filtered_action[0] < min_normalized_accel:
-                filtered_action[0] = float(np.clip(min_normalized_accel, -1.0, 1.0))
-
-        accel_after_speed_floor = float(filtered_action[0])
-
-        print(
-            "[FILTER STAGE B]",
-            f"speed={current_speed:.6f}",
-            f"policy_dt={policy_dt:.6f}",
-            f"accel_before={accel_before_speed_floor:.6f}",
-            f"min_normalized_accel={min_normalized_accel}",
-            f"accel_units=normalized[-1,1]",
-            f"physical_accel_before_mps2={accel_before_speed_floor * MAX_PHYSICAL_ACCELERATION:+.3f}",
-            f"physical_accel_after_mps2={accel_after_speed_floor * MAX_PHYSICAL_ACCELERATION:+.3f}",
-            f"accel_after={accel_after_speed_floor:.6f}",
-            f"changed={abs(accel_after_speed_floor - accel_before_speed_floor) > 1e-6}",
-        )
-
-
-        # Highway action acceleration range is [-5, 5] m/s^2.
-        policy_dt = 1.0 / float(policy_frequency)
-        max_physical_acceleration = 5.0
-
-        if filtered_action[0] > 0.0:
-            predicted_speed = (
-                    current_speed
-                    + filtered_action[0]
-                    * max_physical_acceleration
-                    * policy_dt
-            )
-
-            if predicted_speed > max_speed:
-                max_allowed_normalized_accel = (max_speed - current_speed) / (max_physical_acceleration * policy_dt)
-
-                filtered_action[0] = float(np.clip(max_allowed_normalized_accel, 0.0, 1.0))
-                speed_limit_override = True
-
-        filtered_action[1] = float(np.clip(np.rint(filtered_action[1]), 0, 1))
-
-
-
-
-        # ---------------------------------------------------------
-        # 4. Diagnostics.
-        # ---------------------------------------------------------
-        safety_info = {
-            "current_lane": current_lane,
-            "current_speed": float(vehicle.speed),
-            "candidate_lane": candidate_lane,
-
-            "requested_lane_action": requested_lane_action,  # categorical index
-            "requested_lane_name": requested_lane_name,
-            "requested_lane_action_index": policy_requested_lane_action,
-            "requested_lane_delta": requested_lane_delta,
-            "filtered_lane_action": filtered_lane_action,  # categorical index
-            "filtered_lane_name": filtered_lane_name,
-            "filtered_lane_delta": int(requested_lane_delta if filtered_lane_action == 1 else 0),
-            "lane_action_semantics": "0=KEEP,1=CHANGE",
-            "target_lane_selection": selected_candidate,
-            "current_lane_id": current_lane,
-            "requested_target_lane_id": candidate_lane,
-
-            "current_front_ttc": current_front_ttc,
-            "current_rear_ttc": current_rear_ttc,
-            "current_lane_ttc": float(current_lane_ttc),
-
-            "candidate_front_ttc": float(candidate_front_ttc),
-            "candidate_rear_ttc": float(candidate_rear_ttc),
-            "candidate_front_gap": float(candidate_front_gap),
-            "candidate_rear_gap": float(candidate_rear_gap),
-            "candidate_front_gap_limit": float(candidate_front_gap_limit),
-            "candidate_rear_gap_limit": float(candidate_rear_gap_limit),
-            "candidate_lane_available": bool(candidate_lane_available),
-            "lane_change_principles_passed": bool(
-                policy_requested_lane_action == 0 or not lane_change_rejection_reasons
-            ),
-            "lane_change_rejection_reasons": list(lane_change_rejection_reasons),
-            "lane_change_rejection_reason": lane_change_rejection_reason,
-
-            "emergency_braking": bool(emergency_braking),
-            "lane_change_blocked": bool(lane_change_blocked),
-            "active_lane_safety_event": active_lane_safety_event,
-            "active_maneuver_progress": active_maneuver_progress,
-            "active_source_rear_critical": bool(active_source_rear_critical),
-            "active_target_rear_critical": bool(active_target_rear_critical),
-            "active_target_front_critical": bool(active_target_front_critical),
-            "rear_threat_response": bool(rear_threat_response_active),
-
-            "emergency_threshold": emergency_threshold,
-            "lane_change_threshold": lane_change_threshold,
-
-            "sampled_action": sampled_action.copy(),
-
-            "speed_limit_override": bool(speed_limit_override),
-            "filtered_action": filtered_action.copy(),
-            # Keep a broad flag for diagnostics, but do not use it as a blanket reward penalty.
-            "overridden": bool(emergency_braking or speed_match_active or lane_change_blocked or speed_limit_override),
-            "emergency_intervention": bool(emergency_braking),
-            "routine_controller_intervention": bool(speed_match_active and not emergency_braking),
-            "front_gap": front_gap,
-            "front_speed": (
-                float(front_speed_raw)
-                if front_speed_raw is not None
-                else None),
-            "nearest_front_ttc": nearest_front_ttc,
-            "speed_match_active": bool(speed_match_active),
-            # Distinguish routine longitudinal regulation from a genuine safety intervention.
-            "intervention_reason": (
-                "emergency_ttc_braking" if emergency_braking
-                else f"lane_change_rejected:{lane_change_rejection_reason}" if lane_change_blocked
-                else "speed_matching" if speed_match_active
-                else "speed_limit" if speed_limit_override
-                else "none"
-            ),
-            "reward_safety_penalty": (
-                SAFETY_OVERRIDE_REWARD_PENALTY if emergency_braking
-                else LANE_REJECTION_REWARD_PENALTY if lane_change_blocked
-                else 0.0
-            ),
-        }
-
-
-
-        # Keep one request-level trace for each CHANGE decision. The post-step
-        # [TTC RISK] snapshot separately reports the resulting physical risk.
-        safety_info["ttc_filter_call_id"] = ttc_filter_call_id
-        safety_info["safety_filter_applied"] = True
-
-
-
-
-        # Structured request-level trace: one ID per sampled high-level CHANGE decision.
-        # This intentionally does not equate a request with a unique physical maneuver.
-        if policy_requested_lane_action == 1:
-            request_trace_id = int(getattr(self, "_lane_request_trace_sequence", 0)) + 1
-            self._lane_request_trace_sequence = request_trace_id
-            rejection_reasons = list(lane_change_rejection_reasons)
-            decision_status = "REJECTED" if lane_change_blocked else "ACCEPTED"
-            safety_info.update({
-                "lane_request_trace_id": request_trace_id,
-                "lane_request_direction": requested_lane_name,
-                "lane_request_source_lane": int(current_lane),
-                "lane_request_target_lane": int(candidate_lane),
-                "lane_request_decision": decision_status,
-                "lane_request_rejection_reasons": rejection_reasons,
-                "lane_request_candidate_front_ttc": float(candidate_front_ttc),
-                "lane_request_candidate_rear_ttc": float(candidate_rear_ttc),
-                "lane_request_candidate_front_gap": float(candidate_front_gap),
-                "lane_request_candidate_rear_gap": float(candidate_rear_gap),
-                "lane_request_candidate_front_gap_limit": float(candidate_front_gap_limit),
-                "lane_request_candidate_rear_gap_limit": float(candidate_rear_gap_limit),
-            })
-            write_diagnostic_event(
-                "lane_request_decision", self,
-                request_id=request_trace_id,
-                direction=requested_lane_name,
-                decision=decision_status,
-                rejection_reasons=rejection_reasons,
-                source_lane=int(current_lane),
-                target_lane=int(candidate_lane),
-                candidate_front_ttc=float(candidate_front_ttc),
-                candidate_rear_ttc=float(candidate_rear_ttc),
-                candidate_front_gap=float(candidate_front_gap),
-                candidate_rear_gap=float(candidate_rear_gap),
-                candidate_front_gap_limit=float(candidate_front_gap_limit),
-                candidate_rear_gap_limit=float(candidate_rear_gap_limit),
-                filter_call_id=ttc_filter_call_id,
-                valid_action_mask=getattr(self, "_trace_valid_action_mask", None),
-                sampled_action=np.asarray(sampled_action).tolist(),
-                filtered_action=np.asarray(filtered_action).tolist(),
-            )
-            print(
-                "[LANE REQUEST TRACE]",
-                f"id={request_trace_id}",
-                f"decision={decision_status}",
-                f"direction={requested_lane_name}",
-                f"source_lane={current_lane}",
-                f"target_lane={candidate_lane}",
-                f"reasons={rejection_reasons or ['none']}",
-                f"front_ttc={candidate_front_ttc:.3f}",
-                f"rear_ttc={candidate_rear_ttc:.3f}",
-                f"front_gap={candidate_front_gap:.3f}",
-                f"rear_gap={candidate_rear_gap:.3f}",
-                f"front_gap_limit={candidate_front_gap_limit:.3f}",
-                f"rear_gap_limit={candidate_rear_gap_limit:.3f}",
-                f"active_maneuver={bool(self._lane_change_active)}",
-                f"cooldown={int(self._lane_change_cooldown)}",
-            )
-        return filtered_action, safety_info
-
-
-
+    # Legacy TTC/speed-matching intervention code removed; EDM remains diagnostic/state input only.
 
 
 #???????????????????????????????????????????????????????????????????????????????????????????????????????????
@@ -2953,16 +2214,10 @@ class HighwaySimulator:
         edm_pre_action = self._edm_interpretation_by_lane(edm_pre_action_metrics)
         lane_before_action = int(self.env.unwrapped.vehicle.lane_index[2])
 
-        if apply_safety_filter:
-            # Backward-compatible argument name only: this version's selector
-            # does not override actions. It only chooses a target lane for CHANGE.
-            action, safety_info = self.filter_ttc_action(incoming_action.copy())
-            action = np.asarray(action, dtype=np.float32).reshape(-1).copy()
-            filter_applied_here = False
-        else:
-            action = incoming_action.copy()
-            safety_info = dict(safety_info or {})
-            filter_applied_here = False
+        # Pass the sampled policy action through unchanged.
+        action = incoming_action.copy()
+        safety_info = dict(safety_info or {})
+        filter_applied_here = False
 
         safety_info["simulator_input_action"] = incoming_action.copy()
         safety_info["executed_high_level_action"] = action.copy()
@@ -4253,55 +3508,51 @@ def _physical_target_lane_mask(self):
     return mask
 
 
-def _non_intervening_lane_selector(self, sampled_action, selected_target_lane=None):
-    """Resolve a physically valid target; never use TTC/EDM to veto or alter policy actions."""
+def resolve_policy_lane_action(self, sampled_action, selected_target_lane=None):
+    """Attach the policy-selected adjacent lane without modifying its action."""
     action = np.asarray(sampled_action, dtype=np.float32).reshape(-1)
     if action.size != 2:
         raise ValueError("Expected [normalized acceleration, binary KEEP/CHANGE]")
     current = int(self.env.unwrapped.vehicle.lane_index[2])
-    requested = int(np.clip(np.rint(float(action[1])), 0, 1))
+    requested = int(np.rint(float(action[1])))
+    if requested not in (0, 1):
+        raise ValueError(f"Invalid binary lane action: {requested}")
     mask = _physical_target_lane_mask(self)
     selected = current if selected_target_lane is None else int(selected_target_lane)
     valid = bool(0 <= selected < NUM_LANES and mask[selected])
-    # This is a defensive interface invariant, not a risk-based rejection.
-    # The policy's target distribution is already masked to these physical candidates.
-    executed = requested == 1 and valid
-    target = selected if executed else current
+    if requested == 1 and not valid:
+        raise ValueError(
+            f"Policy selected physically unavailable target lane {selected}; "
+            f"current={current}, valid={np.flatnonzero(mask).tolist()}"
+        )
+    target = selected if requested == 1 else current
     info = {
-        "current_lane_id": current,
-        "requested_target_lane_id": int(selected),
-        "selected_target_lane_id": int(selected),
-        "executed_target_lane_id": int(target),
+        "current_lane_id": current, "requested_target_lane_id": int(selected),
+        "selected_target_lane_id": int(selected), "executed_target_lane_id": int(target),
         "policy_requested_lane_action": "CHANGE" if requested else "KEEP",
-        "executed_lane_action": "CHANGE" if executed else "KEEP",
+        "executed_lane_action": "CHANGE" if requested else "KEEP",
         "policy_requested_binary_action": "CHANGE" if requested else "KEEP",
-        "executed_binary_action": "CHANGE" if executed else "KEEP",
-        "lane_change_blocked": bool(requested and not valid),
-        "lane_change_rejection_reason": "invalid_physical_target" if requested and not valid else "none",
+        "executed_binary_action": "CHANGE" if requested else "KEEP",
+        "lane_change_blocked": False, "lane_change_rejection_reason": "none",
         "lane_request_direction": "LEFT" if target > current else "RIGHT" if target < current else "NONE",
-        "lane_request_source_lane": current,
-        "lane_request_target_lane": int(target),
-        "lane_request_decision": "TARGET_SELECTED" if executed else "KEEP",
+        "lane_request_source_lane": current, "lane_request_target_lane": int(target),
+        "lane_request_decision": "TARGET_SELECTED" if requested else "KEEP",
         "target_selector_mode": "physical_adjacent_lane_mask_only",
-        "safety_filter_applied": False,
-        "overridden": False,
-        "emergency_braking": False,
-        "acceleration_overridden": False,
-        "edm_action_intervention": False,
+        "safety_filter_applied": False, "overridden": False, "emergency_braking": False,
+        "acceleration_overridden": False, "edm_action_intervention": False,
         "valid_adjacent_lane_ids": np.flatnonzero(mask).astype(int).tolist(),
-        "sampled_action": action.copy(),
-        "filtered_action": np.asarray([float(np.clip(action[0], -1.0, 1.0)), float(int(executed))], dtype=np.float32),
-        "proposed_policy_acceleration": float(action[0]),
-        "executed_acceleration": float(np.clip(action[0], -1.0, 1.0)),
+        "sampled_action": action.copy(), "filtered_action": action.copy(),
+        "proposed_policy_acceleration": float(action[0]), "executed_acceleration": float(action[0]),
     }
-    return info["filtered_action"], info
+    return action.copy(), info
+
 
 
 HighwaySimulator._rear_escape_assessment = _rear_escape_assessment
 HighwaySimulator._select_best_safe_lane_candidate = _select_safe_lane_with_rear_escape_priority
 HighwaySimulator.get_valid_lane_action_mask = _physical_lane_action_mask
 HighwaySimulator.get_valid_target_lane_mask = _physical_target_lane_mask
-HighwaySimulator.filter_ttc_action = _non_intervening_lane_selector
+HighwaySimulator.resolve_policy_lane_action = resolve_policy_lane_action
 
 
 
@@ -4872,17 +4123,17 @@ def collect_reference_rollouts(simulator, policy, reward_function):
             sampled_action = np.asarray(sampled_action, dtype=np.float32).reshape(-1)
             pre_tanh_accel = float(policy_aux.get("pre_tanh_accel", 0.0))
             selected_target_lane = int(policy_aux.get("selected_target_lane", -1))
-            filtered_action, safety_info = simulator.filter_ttc_action(
+            policy_action, safety_info = simulator.resolve_policy_lane_action(
                 sampled_action, selected_target_lane=selected_target_lane
             )
-            filtered_action = np.asarray(filtered_action, dtype=np.float32).reshape(-1)
+            policy_action = np.asarray(policy_action, dtype=np.float32).reshape(-1)
             record_lane_request_decision(
                 lane_counters, sampled_action, valid_mask, safety_info or {}
             )
             previous_speed_mps = float(simulator.env.unwrapped.vehicle.speed)
             vehicles_before = snapshot_simulator_vehicles(simulator)
             next_state, _, done, step_info = simulator.step(
-                filtered_action,
+                policy_action,
                 apply_safety_filter=False,
                 sampled_action=sampled_action,
                 safety_info=safety_info,
@@ -5254,10 +4505,10 @@ def train_pure_rl(simulator, policy):
                 valid_target_lane_mask=target_lane_mask,
                 current_lane_id=current_lane_id,
             )
-            filtered_action, safety_info = simulator.filter_ttc_action(
+            policy_action, safety_info = simulator.resolve_policy_lane_action(
                 sampled_action, selected_target_lane=selected_target_lane
             )
-            filtered_action = np.asarray(filtered_action, dtype=np.float32).reshape(-1)
+            policy_action = np.asarray(policy_action, dtype=np.float32).reshape(-1)
             record_lane_request_decision(lane_counters, sampled_action, valid_mask, safety_info)
 
             # Count safety-layer interventions on online-training steps. An acceleration
@@ -5282,7 +4533,7 @@ def train_pure_rl(simulator, policy):
             vehicles_before = snapshot_simulator_vehicles(simulator)
 
             next_state, simulator_reward, done, step_info = simulator.step(
-                filtered_action,
+                policy_action,
                 apply_safety_filter=False,
                 sampled_action=sampled_action,
                 safety_info=safety_info,
