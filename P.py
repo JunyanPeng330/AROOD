@@ -196,6 +196,7 @@ lane_keeping_weight = 0.20
 # MAX_PHYSICAL_ACCELERATION is the simulator's physical acceleration limit and reward normalization scale.
 # Lane selection is judged separately; TTC/gap stay in the independent safety shield.
 SPEED_LIMIT = 50.0
+SPEED_LIMIT_MPS = SPEED_LIMIT  # U_Challenge ADT compatibility alias
 INITIAL_PROGRESS_WEIGHT = 4.0
 INITIAL_COLLISION_PENALTY = 5.0
 # Off-road is not a reward-shaping term: the lane-action mask restricts
@@ -338,6 +339,18 @@ BOUNDARY_SPAWN_EXTRA_RANGE_M = 100.0
 Traffic_relevant_range = REFERENCE_RANGE_M
 TRAFFIC_SPEED_MIN = TRAFFIC_MIN_SPEED_MPS
 TRAFFIC_SPEED_MAX = TRAFFIC_MAX_SPEED_MPS
+
+# Legacy helper compatibility only; the active simulator now uses ADT profiles.
+TRAFFIC_SPEED_MATCHED_PROB = 0.60
+TRAFFIC_SPEED_POSITION_CHALLENGE_PROB = 0.25
+TRAFFIC_SPEED_MATCHED_DELTA_MIN = -3.0
+TRAFFIC_SPEED_MATCHED_DELTA_MAX = 3.0
+TRAFFIC_FRONT_SLOW_DELTA_MIN = -8.0
+TRAFFIC_FRONT_SLOW_DELTA_MAX = -3.0
+TRAFFIC_REAR_FAST_DELTA_MIN = 3.0
+TRAFFIC_REAR_FAST_DELTA_MAX = 6.0
+TRAFFIC_SPEED_BROAD_DELTA_MIN = -8.0
+TRAFFIC_SPEED_BROAD_DELTA_MAX = 6.0
 LANE_CHANGE_COST = 0.0
 LANE_CHANGE_COOLDOWN_STEPS = 0
 
