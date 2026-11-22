@@ -330,8 +330,9 @@ POLICY_ACTION_DIM = 2  # binary KEEP, CHANGE decision; acceleration is a conditi
 HIDDEN_DIM = 128
 
 
-NUM_REFERENCE_EPISODES = 50
-REFERENCE_TRAINING_EPOCHS = 150
+# Cold-start baseline: no reference rollouts or offline warm-start are used.
+NUM_REFERENCE_EPISODES = 0
+REFERENCE_TRAINING_EPOCHS = 0
 REFERENCE_BATCH_SIZE = 256
 NUM_ONLINE_EPISODES = 50
 
@@ -3998,7 +3999,7 @@ def save_policy(policy, path):
 
 
 # ============================================================
-# Phase I: collect reference rollouts, then learn from them
+# Legacy reference-rollout helpers are retained for reproducibility only; cold-start training does not call them.
 # ============================================================
 def build_fixed_reward_function():
     reward_specification = {
@@ -4336,7 +4337,7 @@ def warm_start_policy_from_reference(policy, reference_data):
 
 
 # ============================================================
-# Phase II: online Actor-Critic fine-tuning — no OOD
+# Online Actor-Critic training from a randomly initialized policy — no OOD
 # ============================================================
 def train_pure_rl(simulator, policy):
     reward_history = []
@@ -4376,6 +4377,9 @@ def train_pure_rl(simulator, policy):
     with open(CONFIG_PATH, "w", encoding="utf-8") as _config_file:
         json.dump({
             "algorithm": "hierarchical_stochastic_actor_critic",
+            "training_initialization": "cold_start_random_policy_initialization",
+            "reference_rollout_collection_enabled": False,
+            "reference_offline_warm_start_enabled": False,
             "policy": "KEEP_CHANGE_then_masked_adjacent_target_then_conditional_squashed_gaussian_acceleration",
             "state_dim": STATE_DIM, "policy_action_dim": POLICY_ACTION_DIM,
             "execution_action_dim": ACTION_DIM, "num_lanes": NUM_LANES,
@@ -4413,14 +4417,13 @@ def train_pure_rl(simulator, policy):
         print("[DIAGNOSTIC LOG WARNING]", f"path={DIAGNOSTIC_LOG_PATH}", f"error={exc}")
     '''
 
-    # Phase I: collect trajectories with the initial policy and update it
-    # from those returns before starting ordinary online RL.
-    reference_data = collect_reference_rollouts(simulator, policy, reward_function)
-
-    print("\n[PHASE 2] Online Actor-Critic fine-tuning begins after reference warm-start.")
-
-
-    warm_start_policy_from_reference(policy, reference_data)
+    # Cold-start: do not collect reference trajectories and do not perform
+    # offline actor/critic warm-start. The randomly initialized policy enters
+    # online simulator interaction immediately and learns only from its own
+    # on-policy transitions through the existing Actor-Critic updates.
+    print("\n[COLD START] Reference rollout collection DISABLED.")
+    print("[COLD START] Offline reference warm-start DISABLED.")
+    print("[ONLINE RL] Learning begins immediately from the randomly initialized policy.")
 
     for episode in range(NUM_ONLINE_EPISODES):
         simulator._trace_phase = "pure_rl"
@@ -5025,7 +5028,7 @@ def main():
     print("Selected DEVICE:", DEVICE)
     if torch.cuda.is_available():
         print("GPU:", torch.cuda.get_device_name(0))
-    print("Training: reference-rollout warm start followed by online Actor-Critic updates.")
+    print("Training: COLD START — random policy initialization, no reference rollouts, no offline warm-start; online Actor-Critic updates begin immediately.")
     print(f"Dimensions: state={STATE_DIM}, policy_action={POLICY_ACTION_DIM} [KEEP/CHANGE], execution_action={ACTION_DIM}.")
     print("Control: hierarchical stochastic policy selects KEEP/CHANGE, then a physically valid adjacent target, then conditional acceleration.")
     print("EDM/TTC: interpretation and diagnostics only; no action veto or acceleration override.")
