@@ -212,18 +212,11 @@ ttc_caution_threshold = 7.0
 SPEED_MATCH_TTC = 5.0
 SPEED_MATCH_GAP_TOLERANCE = 10.0  # metres; avoid needless overrides for tiny gap deviations
 # Execution-time safety shield (TTC is measured in seconds).
-SAFETY_OVERRIDE_TTC = 2.0       # Existing emergency-intervention threshold (unchanged)
 TTC_RISK_CRITICAL = 2.0         # Shared continuous-risk scale: full risk at/below this TTC
 TTC_RISK_WARNING = 5.0          # Shared continuous-risk scale: zero risk at/above this TTC
 # Candidate-lane TTC thresholds. Keep front TTC at least as conservative as rear TTC.
-LANE_CHANGE_MIN_FRONT_TTC = 6.0
-LANE_CHANGE_MIN_REAR_TTC = 4.0
-assert LANE_CHANGE_MIN_FRONT_TTC >= LANE_CHANGE_MIN_REAR_TTC, (
-    "Design constraint violated: minimum front TTC must be >= minimum rear TTC."
-)
 LANE_CHANGE_PREDICTION_HORIZON = 1.5  # Retained for transition/diagnostic predictions (seconds)
 LANE_CHANGE_TTC_MARGIN = 0.5     # Extra rear-TTC margin during the transition
-LANE_CHANGE_MIN_GAP = 15.0        # Independent minimum bumper-gap safeguard (metres)
 
 # Maneuver completion uses geometric alignment over consecutive policy decisions.
 LANE_CHANGE_COMPLETE_LATERAL_TOL = 0.45   # metres from target-lane centre
@@ -233,8 +226,6 @@ LANE_CHANGE_COMPLETE_STABLE_STEPS = 2     # consecutive checks before completion
 LANE_CHANGE_TIMEOUT_LATERAL_TOL = 0.90
 LANE_CHANGE_TIMEOUT_HEADING_TOL = 0.20
 LANE_CHANGE_RECOVERY_COOLDOWN_STEPS = 2
-LANE_CHANGE_ACTIVE_ABORT_TTC = 2.0
-LANE_CHANGE_ACTIVE_ABORT_GAP = 6.0
 
 SAFETY_OVERRIDE_REWARD_PENALTY = 1.0  # Applied only for emergency TTC braking, not routine speed matching
 LANE_REJECTION_REWARD_PENALTY = 0.05  # Small signal when an unsafe lane-change request is rejected
@@ -360,10 +351,6 @@ simulation_frequency = SIMULATION_FREQUENCY_HZ
 policy_frequency = POLICY_FREQUENCY_HZ
 
 # Speed-matching controller
-DESIRED_TIME_HEADWAY = 3   # seconds
-MIN_FOLLOWING_GAP = 10.0      # metres
-SPEED_MATCH_KV = 0.5         # 1/second
-SPEED_MATCH_KD = 0.08        # 1/second^2
 
 MAX_PHYSICAL_ACCELERATION = 5.0  # m/s^2; matches ContinuousAction acceleration_range [-5, 5].
 POLICY_STEP_DURATION_S = 1.0 / float(policy_frequency)
@@ -1330,277 +1317,6 @@ class HighwaySimulator:
                         pass
         return lane_ids
 
-    def _lane_change_principle_reasons(self, candidate_lane, lane_ttc, current_lane=None, ego_speed=None):
-        """Return blocking reasons for a candidate lane change.
-
-        Core target-lane safety rules:
-          1) Candidate front TTC must meet LANE_CHANGE_MIN_FRONT_TTC.
-          2) Candidate rear TTC must meet LANE_CHANGE_MIN_REAR_TTC.
-          3) Front TTC threshold is constrained to be >= rear TTC threshold.
-          4) Front/rear bumper gaps must satisfy the independent minimum-gap
-             safeguard whenever a corresponding vehicle exists.
-
-        TTC is calculated from bumper gap and positive closing speed. If a
-        vehicle is not closing on the ego, its TTC is infinite. An absent
-        vehicle is also treated as infinite TTC, but its gap is not fabricated.
-        """
-        base_env = self.env.unwrapped
-        ego = base_env.vehicle
-        current_lane = int(ego.lane_index[2] if current_lane is None else current_lane)
-        ego_speed = max(0.0, float(ego.speed if ego_speed is None else ego_speed))
-
-        if candidate_lane not in lane_ttc:
-            print("[MASK DEBUG][INVALID CANDIDATE]",
-                  f"candidate_lane={candidate_lane}",
-                  f"available_lane_ids={sorted(lane_ttc.keys())}")
-            return ["target_lane_traffic_data_unavailable"]
-
-        if LANE_CHANGE_MIN_FRONT_TTC < LANE_CHANGE_MIN_REAR_TTC:
-            # Guard at the decision point as well as in the configuration.
-            raise ValueError("Minimum front TTC must be >= minimum rear TTC.")
-
-        values = lane_ttc[candidate_lane]
-        front_ttc = float(values.get("front_ttc", float("inf")))
-        rear_ttc = float(values.get("rear_ttc", float("inf")))
-        front_gap = float(values.get("front_gap", float("inf")))
-        rear_gap = float(values.get("rear_gap", float("inf")))
-        front_speed = values.get("front_speed")
-        rear_speed = values.get("rear_speed")
-
-        reasons = []
-        if front_ttc < LANE_CHANGE_MIN_FRONT_TTC:
-            reasons.append("candidate_front_ttc_below_threshold")
-        if rear_ttc < LANE_CHANGE_MIN_REAR_TTC:
-            reasons.append("candidate_rear_ttc_below_threshold")
-        if values.get("front_vehicle_id") is not None and front_gap < LANE_CHANGE_MIN_GAP:
-            reasons.append("candidate_front_gap_below_minimum")
-        if values.get("rear_vehicle_id") is not None and rear_gap < LANE_CHANGE_MIN_GAP:
-            reasons.append("candidate_rear_gap_below_minimum")
-
-        return reasons
-
-    def _lane_benefit_utility(self, lane_values):
-        """Estimate safety, efficiency, and stability over a physical-time horizon.
-
-        Traffic vehicles are assumed to maintain constant speed during this
-        short-horizon estimate. This is a lane-ranking signal, not a safety
-        shield: immediate TTC and minimum-gap constraints are checked separately.
-        """
-        ego = self.env.unwrapped.vehicle
-        ego_speed = max(0.0, float(ego.speed))
-        horizon = float(BENEFIT_PREDICTION_HORIZON_SECONDS)
-        sample_count = max(2, int(BENEFIT_PREDICTION_SAMPLES))
-        times = np.linspace(0.0, horizon, sample_count)
-
-        front_speed_raw = lane_values.get("front_speed")
-        rear_speed_raw = lane_values.get("rear_speed")
-        front_gap = float(lane_values.get("front_gap", float("inf")))
-        rear_gap = float(lane_values.get("rear_gap", float("inf")))
-        front_present = front_speed_raw is not None and np.isfinite(front_gap)
-        rear_present = rear_speed_raw is not None and np.isfinite(rear_gap)
-        front_speed = float(front_speed_raw) if front_present else SPEED_LIMIT
-        rear_speed = float(rear_speed_raw) if rear_present else ego_speed
-
-        safety_series = []
-        efficiency_series = []
-        gap_reference = max(1.0, float(BENEFIT_SAFETY_GAP_REFERENCE))
-        headway = max(0.1, float(DESIRED_TIME_HEADWAY))
-        following_gap = max(0.0, float(MIN_FOLLOWING_GAP))
-        speed_reference = max(1.0, float(SPEED_LIMIT))
-
-        for elapsed in times:
-            predicted_front_gap = (
-                max(0.0, front_gap + (front_speed - ego_speed) * float(elapsed))
-                if front_present else float("inf")
-            )
-            predicted_rear_gap = (
-                max(0.0, rear_gap + (ego_speed - rear_speed) * float(elapsed))
-                if rear_present else float("inf")
-            )
-
-            front_safety = (
-                float(np.clip(predicted_front_gap / gap_reference, 0.0, 1.0))
-                if front_present else 1.0
-            )
-            rear_safety = (
-                float(np.clip(predicted_rear_gap / gap_reference, 0.0, 1.0))
-                if rear_present else 1.0
-            )
-            safety_series.append(min(front_safety, rear_safety))
-
-            # Estimate the speed that can be sustained behind the front vehicle
-            # while preserving the desired time headway.
-            if front_present:
-                sustainable_speed = front_speed + max(
-                    0.0, predicted_front_gap - following_gap
-                ) / headway
-            else:
-                sustainable_speed = speed_reference
-            efficiency_series.append(
-                float(np.clip(sustainable_speed / speed_reference, 0.0, 1.0))
-            )
-
-        safety_score = float(np.mean(safety_series))
-        efficiency_score = float(np.mean(efficiency_series))
-
-        # Stability rewards a lane whose predicted safety/efficiency profile
-        # does not fluctuate sharply over the evaluation horizon.
-        profile_variation = (
-            float(np.std(safety_series)) + float(np.std(efficiency_series))
-        ) / 2.0
-        stability_score = float(np.clip(1.0 - profile_variation, 0.0, 1.0))
-
-        utility = (
-            BENEFIT_SAFETY_WEIGHT * safety_score
-            + BENEFIT_EFFICIENCY_WEIGHT * efficiency_score
-            + BENEFIT_STABILITY_WEIGHT * stability_score
-        )
-        return {
-            "utility": float(utility),
-            "safety_score": safety_score,
-            "efficiency_score": efficiency_score,
-            "stability_score": stability_score,
-            "prediction_horizon_s": horizon,
-        }
-
-    def _safe_lane_change_candidates(self, lane_ttc=None):
-        """Return adjacent lanes that are safe and meaningfully beneficial.
-
-        TTC and minimum-gap thresholds determine admissibility only. They do not
-        rank lanes or require an adjacent lane to have a larger front TTC than
-        the current lane. If no adjacent lane is safe, return the current lane
-        as a compatibility fallback; target-lane masks exclude it for CHANGE.
-        """
-        base_env = self.env.unwrapped
-        vehicle = base_env.vehicle
-        if lane_ttc is None:
-            lane_ttc = self._min_ttc_by_lane()
-        start_node, end_node, current_lane = vehicle.lane_index
-        available_lanes = base_env.road.network.graph[start_node][end_node]
-        valid_ids = set(range(len(available_lanes)))
-        current_lane = int(current_lane)
-        current_values = lane_ttc.get(current_lane, {})
-        current_profile = self._lane_benefit_utility(current_values)
-        safe_adjacent = []
-
-        # A real current-lane rear emergency can bypass the benefit threshold,
-        # but never the hard safety checks applied to the destination lane.
-        rear_assessment = self._rear_escape_assessment(lane_ttc)
-        current_front_ttc = float(current_values.get("front_ttc", float("inf")))
-        current_front_gap = float(current_values.get("front_gap", float("inf")))
-        current_front_emergency = (
-            current_front_ttc <= SAFETY_OVERRIDE_TTC
-            or current_front_gap <= MIN_FOLLOWING_GAP
-        )
-        emergency_benefit_override = bool(
-            rear_assessment.get("rear_escape_needed", False)
-            or current_front_emergency
-        )
-
-        for candidate_lane in (current_lane - 1, current_lane + 1):
-            if candidate_lane not in valid_ids or candidate_lane not in lane_ttc:
-                continue
-            reasons = self._lane_change_principle_reasons(
-                candidate_lane, lane_ttc, current_lane=current_lane,
-                ego_speed=float(vehicle.speed),
-            )
-            if reasons:
-                continue
-
-            values = lane_ttc[candidate_lane]
-            candidate_profile = self._lane_benefit_utility(values)
-            utility_improvement = (
-                float(candidate_profile["utility"])
-                - float(current_profile["utility"])
-            )
-
-            if (
-                not emergency_benefit_override
-                and utility_improvement < BENEFIT_MIN_UTILITY_IMPROVEMENT
-            ):
-                continue
-
-            safe_adjacent.append({
-                "target_lane": int(candidate_lane),
-                "utility": float(utility_improvement),
-                "candidate_utility": float(candidate_profile["utility"]),
-                "current_lane_utility": float(current_profile["utility"]),
-                "utility_improvement": float(utility_improvement),
-                "candidate_safety_score": float(candidate_profile["safety_score"]),
-                "candidate_efficiency_score": float(candidate_profile["efficiency_score"]),
-                "candidate_stability_score": float(candidate_profile["stability_score"]),
-                "current_safety_score": float(current_profile["safety_score"]),
-                "current_efficiency_score": float(current_profile["efficiency_score"]),
-                "current_stability_score": float(current_profile["stability_score"]),
-                "prediction_horizon_s": float(BENEFIT_PREDICTION_HORIZON_SECONDS),
-                "benefit_threshold_bypassed_for_emergency": emergency_benefit_override,
-                "front_gap": float(values.get("front_gap", float("inf"))),
-                "rear_gap": float(values.get("rear_gap", float("inf"))),
-                "front_ttc": float(values.get("front_ttc", float("inf"))),
-                "rear_ttc": float(values.get("rear_ttc", float("inf"))),
-                "front_speed": values.get("front_speed"),
-                "rear_speed": values.get("rear_speed"),
-                "selection_principle": (
-                    "emergency_safe_lane_selection"
-                    if emergency_benefit_override
-                    else "persistent_safety_efficiency_stability_improvement"
-                ),
-                "is_current_lane": False,
-            })
-
-        if safe_adjacent:
-            selected_candidates = safe_adjacent
-        else:
-            selected_candidates = [{
-                "target_lane": current_lane,
-                "utility": 0.0,
-                "candidate_utility": float(current_profile["utility"]),
-                "current_lane_utility": float(current_profile["utility"]),
-                "utility_improvement": 0.0,
-                "candidate_safety_score": float(current_profile["safety_score"]),
-                "candidate_efficiency_score": float(current_profile["efficiency_score"]),
-                "candidate_stability_score": float(current_profile["stability_score"]),
-                "current_safety_score": float(current_profile["safety_score"]),
-                "current_efficiency_score": float(current_profile["efficiency_score"]),
-                "current_stability_score": float(current_profile["stability_score"]),
-                "prediction_horizon_s": float(BENEFIT_PREDICTION_HORIZON_SECONDS),
-                "benefit_threshold_bypassed_for_emergency": False,
-                "front_gap": float(current_values.get("front_gap", float("inf"))),
-                "rear_gap": float(current_values.get("rear_gap", float("inf"))),
-                "front_ttc": float(current_values.get("front_ttc", float("inf"))),
-                "rear_ttc": float(current_values.get("rear_ttc", float("inf"))),
-                "front_speed": current_values.get("front_speed"),
-                "rear_speed": current_values.get("rear_speed"),
-                "selection_principle": "current_lane_fallback_no_beneficial_safe_adjacent",
-                "is_current_lane": True,
-            }]
-
-        return selected_candidates
-
-    def _select_best_safe_lane_candidate(self, lane_ttc=None):
-        """Choose the highest-utility safe target lane, or None if none is safe."""
-        candidates = self._safe_lane_change_candidates(lane_ttc)
-        if not candidates:
-            return None
-        selected = max(candidates, key=lambda item: (item["utility"], -item["target_lane"]))
-        return selected
-
-    def get_valid_lane_action_mask(self):
-        """Two-action mask: [KEEP, CHANGE]; CHANGE is valid if any safe target exists."""
-        vehicle = self.env.unwrapped.vehicle
-        if self._lane_change_active:
-            mask = np.array([True, False], dtype=bool)
-            return mask
-
-        lane_ttc = self._min_ttc_by_lane()
-        candidates = self._safe_lane_change_candidates(lane_ttc)
-        safe_adjacent = [
-            item for item in candidates
-            if int(item["target_lane"]) != int(vehicle.lane_index[2])
-        ]
-        mask = np.array([True, bool(safe_adjacent)], dtype=bool)
-        return mask
-
     def _min_ttc_by_lane(self):
         """Return the nearest front/rear vehicle and TTC for every lane.
 
@@ -1786,7 +1502,7 @@ class HighwaySimulator:
         Legacy persistent-target helper for the non-instantaneous controller.
 
         The active instantaneous KEEP/CHANGE policy selects its safe target in
-        filter_ttc_action() and executes it in step(), so this legacy controller
+        the policy-selected adjacent target and executes it in step(), so this legacy controller
         must not reinterpret the binary action as LEFT/KEEP/RIGHT.
         """
         if INSTANT_LANE_CHANGE_MODE:
@@ -2197,12 +1913,10 @@ class HighwaySimulator:
             )
 
     def step(self, action, apply_safety_filter=False, sampled_action=None, safety_info=None):
-        """Execute the proposed hybrid action with instantaneous lane changes.
+        """Execute the policy's hybrid action with an instantaneous lane change.
 
-        The policy chooses KEEP or CHANGE. For CHANGE, the separate target-lane
-        selector supplies an adjacent lane. The upstream safety layer may reject
-        the request or adjust acceleration; this method performs the accepted lane
-        relocation instantaneously before one native simulator update.
+        The policy chooses KEEP or CHANGE and selects a physically adjacent target.
+        No TTC/EDM safety shield, speed controller, or action override is applied.
         """
         action = np.asarray(action, dtype=np.float32).reshape(-1)
         if action.size != 2:
@@ -3328,165 +3042,6 @@ def print_action_mask_counters(tag, counters):
 
 
 
-# ============================================================
-# Predictive current-lane rear-threat feasibility
-# ============================================================
-
-REAR_ESCAPE_PREDICTION_HORIZON = 2.0
-REAR_ESCAPE_PREDICTION_SAMPLES = 21
-REAR_ESCAPE_MIN_GAP = float(LANE_CHANGE_ACTIVE_ABORT_GAP)
-
-
-def _rear_escape_assessment(self, lane_ttc=None):
-    """Test whether maximum front-safe acceleration can preserve a rear gap.
-
-    This is a decision-support signal, not permission to violate adjacent-lane
-    safety constraints. Traffic vehicles are assumed to maintain constant
-    speed over the short prediction horizon (conservative acceleration
-    uncertainty can be added in a later experiment).
-    """
-    if lane_ttc is None:
-        lane_ttc = self._min_ttc_by_lane()
-
-    ego = self.env.unwrapped.vehicle
-    current_lane = int(ego.lane_index[2])
-    values = lane_ttc.get(current_lane, {})
-    rear_speed = values.get("rear_speed")
-    rear_gap = float(values.get("rear_gap", float("inf")))
-    rear_ttc = float(values.get("rear_ttc", float("inf")))
-    ego_speed = max(0.0, float(ego.speed))
-
-    result = {
-        "rear_threat": False,
-        "rear_escape_needed": False,
-        "rear_ttc": rear_ttc,
-        "rear_gap": rear_gap,
-        "rear_speed": rear_speed,
-        "max_front_safe_acceleration_mps2": 0.0,
-        "predicted_min_rear_gap_m": rear_gap,
-        "predicted_min_front_gap_m": float(values.get("front_gap", float("inf"))),
-        "prediction_horizon_s": float(REAR_ESCAPE_PREDICTION_HORIZON),
-        "reason": "no_imminent_rear_threat",
-    }
-
-    if rear_speed is None or float(rear_speed) <= ego_speed + 0.1 or rear_ttc > ttc_danger_threshold:
-        return result
-
-    result["rear_threat"] = True
-    front_speed = values.get("front_speed")
-    front_gap = float(values.get("front_gap", float("inf")))
-    rear_speed = float(rear_speed)
-    horizon = float(REAR_ESCAPE_PREDICTION_HORIZON)
-    times = np.linspace(0.0, horizon, int(REAR_ESCAPE_PREDICTION_SAMPLES))
-
-    # highway-env's continuous longitudinal action is physically bounded to
-    # approximately +/-5 m/s^2; MAX_PHYSICAL_ACCELERATION is a reward scale.
-    physical_accel_limit = float(min(
-        5.0, max(0.0, float(getattr(ego, "MAX_ACCELERATION", 5.0)))
-    ))
-    feasible_accelerations = []
-    best_rear_min_gap = -float("inf")
-    best_acceleration = 0.0
-    best_front_min_gap = front_gap
-
-    for acceleration in np.linspace(0.0, physical_accel_limit, 51):
-        ego_positions = ego_speed * times + 0.5 * acceleration * times ** 2
-        predicted_rear_gap = rear_gap + (ego_speed - rear_speed) * times + 0.5 * acceleration * times ** 2
-        min_rear_gap = float(np.min(predicted_rear_gap))
-
-        if front_speed is not None and np.isfinite(front_gap):
-            predicted_front_gap = (
-                front_gap
-                + (float(front_speed) - ego_speed) * times
-                - 0.5 * acceleration * times ** 2
-            )
-            min_front_gap = float(np.min(predicted_front_gap))
-            front_safe = min_front_gap >= float(MIN_FOLLOWING_GAP)
-        else:
-            min_front_gap = float("inf")
-            front_safe = True
-
-        if front_safe:
-            feasible_accelerations.append((float(acceleration), min_rear_gap, min_front_gap))
-            if min_rear_gap > best_rear_min_gap:
-                best_rear_min_gap = min_rear_gap
-                best_acceleration = float(acceleration)
-                best_front_min_gap = min_front_gap
-
-    # Zero acceleration should normally remain feasible unless the front gap
-    # is already below the minimum. In that case, avoid treating acceleration
-    # as safe and leave the acceleration decision to the ordinary front shield.
-    if feasible_accelerations:
-        max_front_safe_acceleration = max(item[0] for item in feasible_accelerations)
-        # Re-evaluate rear clearance using the strongest acceleration that
-        # remains front-safe, rather than choosing acceleration solely by rear gap.
-        chosen = max(item for item in feasible_accelerations if item[0] == max_front_safe_acceleration)
-        max_front_safe_acceleration, predicted_rear_min_gap, predicted_front_min_gap = chosen
-    else:
-        max_front_safe_acceleration = 0.0
-        predicted_rear_min_gap = rear_gap + (ego_speed - rear_speed) * horizon
-        predicted_front_min_gap = front_gap
-
-    escape_needed = predicted_rear_min_gap < REAR_ESCAPE_MIN_GAP
-    result.update({
-        "rear_escape_needed": bool(escape_needed),
-        "max_front_safe_acceleration_mps2": float(max_front_safe_acceleration),
-        "predicted_min_rear_gap_m": float(predicted_rear_min_gap),
-        "predicted_min_front_gap_m": float(predicted_front_min_gap),
-        "reason": (
-            "max_front_safe_acceleration_insufficient"
-            if escape_needed else "rear_threat_manageable_by_front_safe_acceleration"
-        ),
-    })
-    return result
-
-
-def _select_safe_lane_with_rear_escape_priority(self, lane_ttc=None):
-    """Keep learned target ranking normally; prioritize rear clearance in escape cases."""
-    if lane_ttc is None:
-        lane_ttc = self._min_ttc_by_lane()
-    candidates = [
-        item for item in self._safe_lane_change_candidates(lane_ttc)
-        if int(item["target_lane"]) != int(self.env.unwrapped.vehicle.lane_index[2])
-    ]
-    if not candidates:
-        return None
-
-    assessment = self._rear_escape_assessment(lane_ttc)
-    if assessment["rear_escape_needed"]:
-        selected = max(
-            candidates,
-            key=lambda item: (
-                float(item.get("rear_ttc", float("inf"))),
-                float(item.get("rear_gap", float("inf"))),
-                float(item.get("front_ttc", float("inf"))),
-            ),
-        )
-        selected = dict(selected)
-        selected["selection_principle"] = "rear_escape_priority_then_front_rear_safety"
-        print(
-            "[REAR-ESCAPE TARGET PRIORITY]",
-            f"safe_targets={[int(c['target_lane']) for c in candidates]}",
-            f"selected={int(selected['target_lane'])}",
-            f"selected_rear_ttc={float(selected.get('rear_ttc', float('inf'))):.3f}",
-            f"selected_rear_gap={float(selected.get('rear_gap', float('inf'))):.3f}",
-        )
-        return selected
-
-    selected = max(
-        candidates,
-        key=lambda item: (
-            float(item.get("utility_improvement", item["utility"])),
-            -int(item["target_lane"]),
-        ),
-    )
-    return selected
-
-
-# ============================================================
-# Non-intervening lane selector and prompt-ready episode evaluator
-# ============================================================
-
 def _physical_lane_action_mask(self):
     """Binary [KEEP, CHANGE] mask based only on physical lane existence."""
     current = int(self.env.unwrapped.vehicle.lane_index[2])
@@ -3548,8 +3103,6 @@ def resolve_policy_lane_action(self, sampled_action, selected_target_lane=None):
 
 
 
-HighwaySimulator._rear_escape_assessment = _rear_escape_assessment
-HighwaySimulator._select_best_safe_lane_candidate = _select_safe_lane_with_rear_escape_priority
 HighwaySimulator.get_valid_lane_action_mask = _physical_lane_action_mask
 HighwaySimulator.get_valid_target_lane_mask = _physical_target_lane_mask
 HighwaySimulator.resolve_policy_lane_action = resolve_policy_lane_action
@@ -4164,8 +3717,8 @@ def collect_reference_rollouts(simulator, policy, reward_function):
                 behavior_description="",
                 safety_violation=safety_violation,
                 action=np.asarray(
-                    step_info.get("filtered_policy_action", filtered_action)
-                    if isinstance(step_info, dict) else filtered_action,
+                    step_info.get("filtered_policy_action", policy_action)
+                    if isinstance(step_info, dict) else policy_action,
                     dtype=np.float32,
                 ),
                 lane_deviation=lane_deviation,
@@ -4211,8 +3764,8 @@ def collect_reference_rollouts(simulator, policy, reward_function):
                 vehicles_before=vehicles_before,
                 sampled_action=sampled_action.tolist(),
                 executed_action=np.asarray(
-                    step_info.get("filtered_policy_action", filtered_action)
-                    if isinstance(step_info, dict) else filtered_action,
+                    step_info.get("filtered_policy_action", policy_action)
+                    if isinstance(step_info, dict) else policy_action,
                     dtype=np.float32,
                 ).reshape(-1).tolist(),
                 selected_target_lane=selected_target_lane,
