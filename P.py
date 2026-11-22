@@ -203,10 +203,6 @@ INITIAL_COLLISION_PENALTY = 5.0
 # still handled as a defensive episode terminal in the training loops.
 INITIAL_OFFROAD_PENALTY = 0.0
 
-ttc_critical_threshold = 3.0
-ttc_danger_threshold = 5.0
-ttc_caution_threshold = 7.0
-
 TTC_RISK_CRITICAL = 2.0         # Shared continuous-risk scale: full risk at/below this TTC
 TTC_RISK_WARNING = 5.0          # Shared continuous-risk scale: zero risk at/above this TTC
 
@@ -221,19 +217,6 @@ RANDOMIZED_FRONT_GAP_MIN = 50.0
 RANDOMIZED_FRONT_GAP_MAX = 500.0
 RANDOMIZED_REAR_GAP_MIN = 20.0
 RANDOMIZED_REAR_GAP_MAX = 500.0
-
-# A lane change is beneficial only when its expected combined utility improves
-# meaningfully over staying in the current lane across a physical-time horizon.
-# The weights are explicit experiment parameters and sum to one.
-BENEFIT_PREDICTION_HORIZON_SECONDS = 5.0
-BENEFIT_PREDICTION_SAMPLES = 11
-BENEFIT_SAFETY_WEIGHT = 0.40
-BENEFIT_EFFICIENCY_WEIGHT = 0.40
-BENEFIT_STABILITY_WEIGHT = 0.20
-BENEFIT_MIN_UTILITY_IMPROVEMENT = 0.1
-BENEFIT_SAFETY_GAP_REFERENCE = 50.0
-
-
 
 # Aggressive Dynamic Traffic (ADT) simulator configuration.
 # The simulator maintains a distributed background population; the policy
@@ -1639,7 +1622,7 @@ class HighwaySimulator:
                 clamped_speed_mps=safe_speed,
             )
 
-    def step(self, action, apply_safety_filter=False, sampled_action=None, safety_info=None):
+    def step(self, action, sampled_action=None, safety_info=None):
         """Execute the policy's hybrid action with an instantaneous lane change.
 
         The policy chooses KEEP or CHANGE and selects a physically adjacent target.
@@ -1658,14 +1641,8 @@ class HighwaySimulator:
         # Pass the sampled policy action through unchanged.
         action = incoming_action.copy()
         safety_info = dict(safety_info or {})
-        filter_applied_here = False
-
         safety_info["simulator_input_action"] = incoming_action.copy()
         safety_info["executed_high_level_action"] = action.copy()
-        safety_info["safety_filter_applied_in_step"] = filter_applied_here
-        safety_info["safety_filter_applied"] = bool(
-            safety_info.get("safety_filter_applied", False) or filter_applied_here
-        )
 
         base_env = self.env.unwrapped
         ego = base_env.vehicle
@@ -1901,11 +1878,11 @@ class HighwaySimulator:
             "sampled_policy_action": (np.asarray(sampled_action, dtype=np.float32).copy()
                                       if sampled_action is not None else incoming_action.copy()),
             "policy_action": np.asarray([acceleration, lane_action_id], dtype=np.float32),
-            "filtered_policy_action": np.asarray([acceleration, lane_action_id], dtype=np.float32),
+            "executed_policy_action": np.asarray([acceleration, lane_action_id], dtype=np.float32),
             "executed_action": physical_action.copy(),
             "executed_acceleration": float(acceleration),
             "executed_steering": 0.0,
-            "ttc_safety_filter": safety_info,  # legacy field name; now non-intervening assessment
+            "policy_action_context": safety_info,
             "episode_evaluator_assessment": {
                 "target_selector_mode": safety_info.get("target_selector_mode"),
                 "lane_change_candidate_front_ttc": safety_info.get("lane_change_candidate_front_ttc"),
@@ -1936,43 +1913,6 @@ class HighwaySimulator:
         })
         self.state = next_state
         return next_state.copy(), float(env_reward), bool(effective_terminated or truncated), info
-
-    def get_lane_keeping_steering(
-            self,
-            k_lateral=0.08,
-            k_heading=0.8,
-            max_steering= 0.02,
-    ):
-        """
-        Return normalized steering to keep the ego vehicle
-        near the target lane selected during reset().
-
-        The returned steering is in [-1, 1], matching the
-        ContinuousAction interface.
-        """
-        base_env = self.env.unwrapped
-        ego_vehicle = base_env.vehicle
-        road = base_env.road
-
-        target_lane_index = getattr(self, "target_lane_index", ego_vehicle.lane_index)
-        lane = road.network.get_lane(target_lane_index)
-        longitudinal, lateral = lane.local_coordinates(ego_vehicle.position)
-        target_heading = lane.heading_at(longitudinal)
-        heading_error = (ego_vehicle.heading - target_heading + np.pi) % (2.0 * np.pi) - np.pi
-
-        # Feedback controller: correct lateral and heading errors.
-        raw_steering = -k_lateral * lateral - k_heading * heading_error
-        steering = float(np.clip(raw_steering, -max_steering, max_steering))
-        print(
-            "[STEERING DEBUG]",
-            f"lateral={lateral:.3f}",
-            f"heading_error={heading_error:.3f}",
-            f"raw_steering={raw_steering:.4f}",
-            f"executed_normalized_steering={steering:.4f}",
-        )
-
-        return steering, float(lateral), float(heading_error)
-
 
     def get_lane_information(self):
         base_env = self.env.unwrapped
@@ -2820,10 +2760,10 @@ def resolve_policy_lane_action(self, sampled_action, selected_target_lane=None):
         "lane_request_source_lane": current, "lane_request_target_lane": int(target),
         "lane_request_decision": "TARGET_SELECTED" if requested else "KEEP",
         "target_selector_mode": "physical_adjacent_lane_mask_only",
-        "safety_filter_applied": False, "overridden": False, "emergency_braking": False,
+        "overridden": False, "emergency_braking": False,
         "acceleration_overridden": False, "edm_action_intervention": False,
         "valid_adjacent_lane_ids": np.flatnonzero(mask).astype(int).tolist(),
-        "sampled_action": action.copy(), "filtered_action": action.copy(),
+        "sampled_action": action.copy(), "policy_action": action.copy(),
         "proposed_policy_acceleration": float(action[0]), "executed_acceleration": float(action[0]),
     }
     return action.copy(), info
@@ -3414,8 +3354,7 @@ def collect_reference_rollouts(simulator, policy, reward_function):
             vehicles_before = snapshot_simulator_vehicles(simulator)
             next_state, _, done, step_info = simulator.step(
                 policy_action,
-                apply_safety_filter=False,
-                sampled_action=sampled_action,
+                    sampled_action=sampled_action,
                 safety_info=safety_info,
             )
             next_state = np.asarray(next_state, dtype=np.float32)
@@ -3444,7 +3383,7 @@ def collect_reference_rollouts(simulator, policy, reward_function):
                 behavior_description="",
                 safety_violation=safety_violation,
                 action=np.asarray(
-                    step_info.get("filtered_policy_action", policy_action)
+                    step_info.get("executed_policy_action", policy_action)
                     if isinstance(step_info, dict) else policy_action,
                     dtype=np.float32,
                 ),
@@ -3491,7 +3430,7 @@ def collect_reference_rollouts(simulator, policy, reward_function):
                 vehicles_before=vehicles_before,
                 sampled_action=sampled_action.tolist(),
                 executed_action=np.asarray(
-                    step_info.get("filtered_policy_action", policy_action)
+                    step_info.get("executed_policy_action", policy_action)
                     if isinstance(step_info, dict) else policy_action,
                     dtype=np.float32,
                 ).reshape(-1).tolist(),
@@ -3814,13 +3753,12 @@ def train_pure_rl(simulator, policy):
 
             next_state, simulator_reward, done, step_info = simulator.step(
                 policy_action,
-                apply_safety_filter=False,
-                sampled_action=sampled_action,
+                    sampled_action=sampled_action,
                 safety_info=safety_info,
             )
             next_state = np.asarray(next_state, dtype=np.float32)
             executed_action = np.asarray(
-                step_info.get("filtered_policy_action", policy_action),
+                step_info.get("executed_policy_action", policy_action),
                 dtype=np.float32,
             ).reshape(-1)
 
