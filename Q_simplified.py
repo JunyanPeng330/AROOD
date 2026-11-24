@@ -215,7 +215,7 @@ Vehicle.LENGTH = VEHICLE_LENGTH_M
 
 def _longitudinal_bumper_gap(center_delta_m):
     """Signed bumper-to-bumper clearance for equal-length 5 m vehicles."""
-    return abs(float(center_delta_m)) - VEHICLE_LENGTH_M
+    return abs(float(center_delta_m)) - 2.0 * VEHICLE_HALF_LENGTH_M
 
 
 DEVICE = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
@@ -1847,15 +1847,6 @@ _ORIGINAL_STATE_ENCODER = HighwaySimulator._encode_state
 
 def _road_s(self, vehicle):
     return float(_ORIGINAL_ROAD_LONGITUDINAL_POSITION(self, vehicle))
-
-
-def _vehicle_length(vehicle):
-    """Return the experiment-wide shared vehicle length (metres)."""
-    try:
-        vehicle.LENGTH = VEHICLE_LENGTH_M
-    except (AttributeError, TypeError):
-        pass
-    return VEHICLE_LENGTH_M
 
 
 def _traffic_in_lane(self, lane_id, exclude=None):
