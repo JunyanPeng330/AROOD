@@ -205,6 +205,19 @@ if not getattr(Vehicle, "_arood_simulator_nonnegative_speed_guard", False):
 
 
 
+# Shared physical geometry: every vehicle, including ego, is exactly 5 m long.
+VEHICLE_LENGTH_M = 5.0
+VEHICLE_HALF_LENGTH_M = VEHICLE_LENGTH_M / 2.0
+
+# Keep HighwayEnv native collision geometry consistent with the distance model.
+Vehicle.LENGTH = VEHICLE_LENGTH_M
+
+
+def _longitudinal_bumper_gap(center_delta_m):
+    """Signed bumper-to-bumper clearance for equal-length 5 m vehicles."""
+    return abs(float(center_delta_m)) - VEHICLE_LENGTH_M
+
+
 DEVICE = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 # Structured diagnostics: one JSON object per line.
 DIAGNOSTIC_LOG_PATH = os.path.join("Q_EDM", "training_diagnostics_Q_reward4.jsonl")
@@ -484,7 +497,7 @@ def snapshot_simulator_vehicles(simulator):
             "speed_mps": float(getattr(vehicle, "speed", 0.0)),
             "heading_rad": float(getattr(vehicle, "heading", 0.0)),
             "crashed": bool(getattr(vehicle, "crashed", False)),
-            "length_m": float(getattr(vehicle, "LENGTH", getattr(vehicle, "length", 5.0))),
+            "length_m": VEHICLE_LENGTH_M,
             "width_m": float(getattr(vehicle, "WIDTH", getattr(vehicle, "width", 2.0))),
         })
     return records
@@ -1115,6 +1128,8 @@ class HighwaySimulator:
         # a fresh impact on every subsequent policy step.
         self._collision_contact_active = False
         base_env = self.env.unwrapped
+        # Apply the shared 5 m body length to ego before any traffic is spawned.
+        base_env.vehicle.LENGTH = VEHICLE_LENGTH_M
         self._initialize_continuous_traffic()
         obs = base_env.observation_type.observe()
 
@@ -1214,7 +1229,7 @@ class HighwaySimulator:
         ego_lane = int(ego.lane_index[2])
         ego_speed = max(0.0, float(ego.speed))
         ego_s = float(self._road_longitudinal_position(ego))
-        ego_length = float(getattr(ego, "LENGTH", getattr(ego, "length", 5.0)))
+        ego.LENGTH = VEHICLE_LENGTH_M
 
         lane_ttc = {
             lane_id: {
@@ -1245,13 +1260,10 @@ class HighwaySimulator:
                     continue
                 other_s = float(self._road_longitudinal_position(other))
                 other_speed = max(0.0, float(other.speed))
-                other_length = float(getattr(
-                    other, "LENGTH", getattr(other, "length", 5.0)
-                ))
+                other.LENGTH = VEHICLE_LENGTH_M
             except (AttributeError, TypeError, ValueError, IndexError, KeyError):
                 continue
-            if not (np.isfinite(other_s) and np.isfinite(other_speed)
-                    and np.isfinite(other_length) and other_length > 0.0):
+            if not (np.isfinite(other_s) and np.isfinite(other_speed)):
                 continue
 
             center_gap = other_s - ego_s
@@ -1263,7 +1275,7 @@ class HighwaySimulator:
             if center_gap == 0.0:
                 # Longitudinal overlap/alignment is represented as an immediate
                 # collision-risk signal on both sides of this lane.
-                overlap_gap = -0.5 * (ego_length + other_length)
+                overlap_gap = -VEHICLE_LENGTH_M
                 values = lane_ttc[lane_id]
                 values.update({
                     "front_gap": overlap_gap, "rear_gap": overlap_gap,
@@ -1276,7 +1288,7 @@ class HighwaySimulator:
                 continue
 
             side = "front" if center_gap > 0.0 else "rear"
-            bumper_gap = abs(center_gap) - 0.5 * (ego_length + other_length)
+            bumper_gap = _longitudinal_bumper_gap(center_gap)
             # Select by nearest longitudinal centre, matching the six-slot
             # front/rear observation convention; retain signed bumper clearance.
             distance = abs(center_gap)
@@ -1838,7 +1850,12 @@ def _road_s(self, vehicle):
 
 
 def _vehicle_length(vehicle):
-    return float(getattr(vehicle, "LENGTH", getattr(vehicle, "length", 5.0)))
+    """Return the experiment-wide shared vehicle length (metres)."""
+    try:
+        vehicle.LENGTH = VEHICLE_LENGTH_M
+    except (AttributeError, TypeError):
+        pass
+    return VEHICLE_LENGTH_M
 
 
 def _traffic_in_lane(self, lane_id, exclude=None):
@@ -1869,7 +1886,7 @@ def _idm_acceleration(self, vehicle):
         gap_center = _road_s(self, other) - ego_s
         if gap_center <= 0.0:
             continue
-        bumper_gap = gap_center - 0.5 * (_vehicle_length(vehicle) + _vehicle_length(other))
+        bumper_gap = _longitudinal_bumper_gap(gap_center)
         if bumper_gap < front_gap:
             front_gap = bumper_gap
             front = other
@@ -1907,6 +1924,7 @@ def _spawn_traffic_vehicle(self, lane_id, longitudinal, speed):
     vehicle = ContinuousTrafficVehicle.make_on_lane(
         road, lane_index, longitudinal=float(longitudinal), speed=speed
     )
+    vehicle.LENGTH = VEHICLE_LENGTH_M
     vehicle._arood_traffic_manager = self
     profile_names = [item[0] for item in ADT_PROFILE_MIX]
     profile_weights = [item[1] for item in ADT_PROFILE_MIX]
@@ -1950,10 +1968,11 @@ def _safe_spawn_position(self, lane_id, longitudinal, minimum_gap):
     # Keep an insertion buffer around ego in every lane, not only the
     # currently occupied lane, so an adjacent-lane vehicle cannot begin
     # immediately alongside ego and create an artificial lane-change hazard.
-    if abs(longitudinal - ego_s) < minimum_gap:
+    ego_bumper_gap = _longitudinal_bumper_gap(longitudinal - ego_s)
+    if ego_bumper_gap < minimum_gap:
         return False
     for other in _traffic_in_lane(self, lane_id):
-        gap = abs(_road_s(self, other) - longitudinal)
+        gap = _longitudinal_bumper_gap(_road_s(self, other) - longitudinal)
         if gap < minimum_gap:
             return False
     return True
@@ -2037,7 +2056,7 @@ def _adt_vehicle_acceleration(self, vehicle):
         delta = _road_s(self, other) - vehicle_s
         if delta <= 0.0:
             continue
-        gap = delta - 0.5 * (_vehicle_length(vehicle) + _vehicle_length(other))
+        gap = _longitudinal_bumper_gap(delta)
         if gap < front_gap:
             front, front_gap = other, gap
 
@@ -2121,7 +2140,7 @@ def _adt_try_lane_change(self, vehicle):
         delta = _road_s(self, other) - current_s
         if delta <= 0.0:
             continue
-        gap = delta - 0.5 * (_vehicle_length(vehicle) + _vehicle_length(other))
+        gap = _longitudinal_bumper_gap(delta)
         if gap < current_front_gap:
             current_front, current_front_gap = other, gap
 
@@ -2145,9 +2164,7 @@ def _adt_try_lane_change(self, vehicle):
         front_gap, rear_gap = float("inf"), float("inf")
         for other in _traffic_in_lane(self, target_lane, exclude=vehicle):
             delta = _road_s(self, other) - current_s
-            bumper_gap = abs(delta) - 0.5 * (
-                _vehicle_length(vehicle) + _vehicle_length(other)
-            )
+            bumper_gap = _longitudinal_bumper_gap(delta)
             if delta > 0.0 and bumper_gap < front_gap:
                 front, front_gap = other, bumper_gap
             elif delta < 0.0 and bumper_gap < rear_gap:
