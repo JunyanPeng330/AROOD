@@ -218,7 +218,7 @@ EPISODE_TRAJECTORY_PATH = os.path.join("Q_EDM", "episode_trajectories_Q_EDM_rewa
 TRAJECTORY_RECORDING_ENABLED = os.environ.get("TRAJECTORIES_Q", "4").strip().lower() not in {"0", "false", "no", "off"}
 # Consolidated I experiment outputs and agreed policy-processing mechanism.
 OUTPUT_DIR = os.path.join("Q_EDM")
-TRAFFIC_DIAGNOSTIC_STEPS = 300  # 20 seconds at the current 15 Hz policy clock
+TRAFFIC_DIAGNOSTIC_STEPS = 20  # 20 seconds at the current 15 Hz policy clock
 TRAFFIC_DIAGNOSTIC_OUTPUT_DIR = os.path.join(OUTPUT_DIR, "traffic_diagnostic")
 RESUME_RL_AFTER_TRAFFIC_DIAGNOSTIC = (
     os.environ.get("AROOD_RESUME_RL_AFTER_TRAFFIC_DIAGNOSTIC", "4").strip().lower()
@@ -261,7 +261,7 @@ SIMULATION_FREQUENCY_HZ = 4       # Physical simulator updates per second
 POLICY_FREQUENCY_HZ = 4           # RL decisions per second
 MAX_EPISODE_STEPS = 1200          # Episode limit in RL policy decisions
 EDM_HORIZON_POLICY_STEPS = 8      # EDM prediction horizon in policy steps
-GAMMA = 0.99                      # Direct per-policy-step discount; may be set to 1.0
+GAMMA = 0.6                      # Direct per-policy-step discount; may be set to 1.0
 
 LANE_CHANGE_PROCESSING_STEPS = 0  # Disabled: every transition receives its normal reward.
 
