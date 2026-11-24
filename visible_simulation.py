@@ -12,30 +12,36 @@ from collections import OrderedDict
 import matplotlib.pyplot as plt
 from matplotlib.animation import FuncAnimation
 from matplotlib.patches import Polygon
-import U_Challenge_env
+# Keep this replay utility independent of Q_simplified.py: importing the training
+# module would initialize PyTorch/simulator code and is unnecessary for playback.
+DEFAULT_ARCHIVE = os.path.join("Q_EDM", "episode_trajectories_Q_EDM_reward4.jsonl")
+DEFAULT_REPLAY_PATH = os.path.join("Q_EDM", "videos", "Q_EDM_reward4_episode.gif")
+DEFAULT_PHASE = "pure_rl"
+DEFAULT_EPISODE = 1
 
-DEFAULT_ARCHIVE = U_Challenge_env.base.EPISODE_TRAJECTORY_PATH
-DEFAULT_REPLAY_PATH = os.path.join("figure", "videos", "U_Challenge_3.gif")
-Episode = 48
 
+def load_archive(path, strict=False):
+    """
+    Read Q_simplified.py's append-only JSONL trajectory archive.
 
-def load_archive(path):
-
+    By default, keep every valid record and report malformed lines explicitly.
+    Use strict=True to stop at the first malformed line. Invalid records are
+    never silently repaired because changing a vehicle snapshot would corrupt
+    the recorded trajectory.
+    """
     with open(path, "rb") as stream:
         raw = stream.read()
 
     if not raw:
         raise ValueError(f"Trajectory archive is empty: {path}")
 
-    # Prefer BOM-indicated encodings. For BOM-less files, UTF-8 is the
-    # canonical JSON encoding; UTF-16 variants and GBK are compatibility
-    # fallbacks for archives produced or re-saved on Windows.
-    if raw.startswith((b"\\xff\\xfe", b"\\xfe\\xff")):
+    # Q_simplified.py writes UTF-8 JSONL. Retain compatibility with BOM-marked
+    # UTF-16/GBK archives without treating a JSON syntax error as an encoding error.
+    if raw.startswith((b"\xff\xfe", b"\xfe\xff")):
         encodings = ["utf-16"]
-    elif raw.startswith(b"\\xef\\xbb\\xbf"):
+    elif raw.startswith(b"\xef\xbb\xbf"):
         encodings = ["utf-8-sig", "utf-8"]
     else:
-        # Detect common BOM-less UTF-16 JSON by its NUL-byte distribution.
         sample = raw[:4096]
         even_nuls = sample[0::2].count(0)
         odd_nuls = sample[1::2].count(0)
@@ -44,51 +50,69 @@ def load_archive(path):
         elif even_nuls > len(sample) * 0.15 and even_nuls > odd_nuls * 3:
             encodings = ["utf-16-be", "utf-8-sig", "gbk"]
         else:
-            encodings = ["utf-8-sig", "utf-16", "gbk"]
+            encodings = ["utf-8-sig", "gbk"]
 
-    failures = []
+    decoded = None
+    decode_errors = []
     for encoding in encodings:
         try:
             decoded = raw.decode(encoding)
+            print(f"[ARCHIVE] Decoded using encoding={encoding}")
+            break
         except UnicodeDecodeError as exc:
-            failures.append(f"{encoding}: decoding failed at byte {exc.start}")
-            continue
+            decode_errors.append(f"{encoding}: byte {exc.start}: {exc.reason}")
 
-        records = []
-        try:
-            for line_number, line in enumerate(decoded.splitlines(), 1):
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    record = json.loads(line)
-                except json.JSONDecodeError as exc:
-                    raise ValueError(
-                        f"Invalid JSON in {path}, line {line_number}: "
-                        f"{exc.msg} (column {exc.colno})"
-                    ) from exc
-                if not isinstance(record, dict):
-                    raise ValueError(
-                        f"Unexpected JSON value in {path}, line {line_number}: "
-                        f"expected an object, got {type(record).__name__}"
-                    )
-                records.append(record)
-        except ValueError as exc:
-            failures.append(f"{encoding}: {exc}")
-            continue
-
-        print(
-            f"[ARCHIVE] Loaded {len(records)} records "
-            f"using encoding={encoding}"
+    if decoded is None:
+        raise RuntimeError(
+            f"Could not decode trajectory archive {path}: "
+            + "; ".join(decode_errors)
         )
-        return records
 
-    details = "\\n  - ".join(failures)
-    raise RuntimeError(
-        f"Could not load trajectory archive {path}. Tried: "
-        f"\\n  - {details}\\n"
-        "The archive may be corrupted, mixed-encoding, or not JSONL."
-    )
+    records = []
+    invalid_lines = []
+    for line_number, line in enumerate(decoded.splitlines(), 1):
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            record = json.loads(line)
+            if not isinstance(record, dict):
+                raise ValueError(
+                    f"expected a JSON object, got {type(record).__name__}"
+                )
+        except (json.JSONDecodeError, ValueError) as exc:
+            message = f"line {line_number}: {exc}"
+            invalid_lines.append(message)
+            if strict:
+                raise RuntimeError(
+                    f"Invalid trajectory record in {path}, {message}"
+                ) from exc
+            if len(invalid_lines) <= 20:
+                print(f"[ARCHIVE WARNING] Skipping malformed record: {message}")
+            continue
+        records.append(record)
+
+    if invalid_lines:
+        print(
+            f"[ARCHIVE WARNING] Recovered {len(records)} valid records; "
+            f"skipped {len(invalid_lines)} malformed line(s)."
+        )
+        if len(invalid_lines) > 20:
+            print(
+                f"[ARCHIVE WARNING] {len(invalid_lines) - 20} additional "
+                "malformed-line messages were suppressed."
+            )
+        print(
+            "[ARCHIVE WARNING] No malformed record was reconstructed or "
+            "silently modified. Check the original JSONL before using the "
+            "replay for quantitative analysis."
+        )
+    else:
+        print(f"[ARCHIVE] Loaded {len(records)} valid records; no malformed lines.")
+
+    if not records:
+        raise RuntimeError(f"No valid trajectory records found in {path}")
+    return records
 
 def grouped_episodes(records):
     episodes = OrderedDict()
@@ -319,12 +343,21 @@ def replay_episode(start, frames, playback_speed=1.0, save_path=DEFAULT_REPLAY_P
         step_info = frame.get("step_info") or {}
         reward = frame.get("reward")
         reward_text = "n/a" if reward is None else f"{float(reward):+.3f}"
+        reward_components = frame.get("reward_components") or {}
+        edm = reward_components.get("edm_warning") or {}
+        edm_score = edm.get("warning_score", edm.get("edm_warning_score", "n/a"))
+        ego_speed = next(
+            (v.get("speed_mps") for v in vehicles if v.get("is_ego")), None
+        )
+        speed_text = "n/a" if ego_speed is None else f"{float(ego_speed):.1f} m/s"
+        edm_text = "n/a" if not isinstance(edm_score, (int, float)) else f"{float(edm_score):.3f}"
         info_text.set_text(
             f"phase: {start.get('phase')}   episode: {start.get('episode_number')}\n"
             f"step: {frame.get('step')} / {len(frames) - 1}   "
             f"action: {frame.get('action')}   target lane: {frame.get('target_lane')}\n"
-            f"reward: {reward_text}   "
-            f"lane change: {step_info.get('lane_change_completed_instantly', False)}\n"
+            f"speed: {speed_text}   reward: {reward_text}   EDM warning: {edm_text}\n"
+            f"lane change: {step_info.get('lane_change_completed_instantly', False)}   "
+            f"collision: {step_info.get('collision', False)}\n"
             f"blocked: {safety.get('lane_change_blocked', False)}   "
             f"reason: {safety.get('lane_change_rejection_reason', 'n/a')}"
         )
@@ -357,20 +390,21 @@ def replay_episode(start, frames, playback_speed=1.0, save_path=DEFAULT_REPLAY_P
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Replay a previously recorded U.py episode; no new environment is created."
+        description="Replay a Q_simplified.py recorded episode; no new environment or policy is created."
     )
     parser.add_argument("--archive", default=DEFAULT_ARCHIVE, help=f"JSONL archive (default: {DEFAULT_ARCHIVE}).")
-    parser.add_argument("--phase", default="U_ADT_pure_RL",
-                        help="Recorded phase to replay (default: U_ADT_pure_RL; this is the phase label written by U_ADT_env.py).")
-    parser.add_argument("--episode", type=int, default=Episode, help="1-based episode number within the selected phase.")
+    parser.add_argument("--phase", default=DEFAULT_PHASE,
+                        help=f"Recorded phase to replay (default: {DEFAULT_PHASE}; Q_simplified.py records online training as pure_rl).")
+    parser.add_argument("--episode", type=int, default=DEFAULT_EPISODE, help="1-based episode number within the selected phase.")
     parser.add_argument("--run-id", default=None, help="Optional exact run_id; without it, the newest matching episode is used.")
     parser.add_argument("--speed", type=float, default=1.0, help="Playback speed multiplier (default: 1.0).")
     parser.add_argument("--list", action="store_true", help="List recorded episodes and exit.")
+    parser.add_argument("--strict-archive", action="store_true", help="Stop at the first malformed JSONL record instead of skipping malformed lines.")
     parser.add_argument("--save", default=DEFAULT_REPLAY_PATH,
                         help=f"Output .gif path (default: {DEFAULT_REPLAY_PATH}).")
     args = parser.parse_args()
 
-    records = load_archive(args.archive)
+    records = load_archive(args.archive, strict=args.strict_archive)
     episodes = grouped_episodes(records)
     if args.list:
         list_episodes(episodes)
@@ -381,6 +415,7 @@ def main():
     print(f"[REPLAY] archive: {os.path.abspath(args.archive)}")
     print(f"[REPLAY] episode key: {key}")
     print(f"[REPLAY] recorded frames: {len(frames)} (including initial state)")
+    print("[REPLAY] source: Q_simplified.py JSONL snapshots")
     print("[REPLAY] policy inference: disabled; simulator stepping: disabled")
     replay_episode(start, frames, playback_speed=args.speed, save_path=args.save)
 
