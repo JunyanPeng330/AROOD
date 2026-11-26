@@ -321,7 +321,7 @@ EPISODE_TRAJECTORY_PATH = os.path.join("Q_EDM", "episode_trajectories_Q_EDM8.jso
 TRAJECTORY_RECORDING_ENABLED = os.environ.get("TRAJECTORIES_Q", "8").strip().lower() not in {"0", "false", "no", "off"}
 # Consolidated I experiment outputs and agreed policy-processing mechanism.
 OUTPUT_DIR = os.path.join("Q_EDM")
-TRAFFIC_DIAGNOSTIC_STEPS = 20  # 20 seconds at the current 15 Hz policy clock
+TRAFFIC_DIAGNOSTIC_STEPS = 20  # 20 policy decisions (4 seconds at 5 Hz)
 TRAFFIC_DIAGNOSTIC_OUTPUT_DIR = os.path.join(OUTPUT_DIR, "traffic_diagnostic")
 RESUME_RL_AFTER_TRAFFIC_DIAGNOSTIC = (
     os.environ.get("AROOD_RESUME_RL_AFTER_TRAFFIC_DIAGNOSTIC", "8").strip().lower()
@@ -362,11 +362,11 @@ POLICY_LR = 3e-4
 # Edit only these values; all physical times are derived below.
 # The simulator uses seconds, while the RL policy and EDM use policy steps.
 # ============================================================
-SIMULATION_FREQUENCY_HZ = 8       # Physical simulator updates per second
-POLICY_FREQUENCY_HZ = 4           # RL decisions per second
+SIMULATION_FREQUENCY_HZ = 10      # Physical simulator updates per second
+POLICY_FREQUENCY_HZ = 5           # RL decisions per second
 MAX_EPISODE_STEPS = 1000          # Episode limit in RL policy decisions
 EDM_HORIZON_POLICY_STEPS = 10      # EDM prediction horizon in policy steps
-GAMMA = 0.7                     # Direct per-policy-step discount; may be set to 1.0
+GAMMA = 1.0                     # Direct per-policy-step discount
 
 LANE_CHANGE_PROCESSING_STEPS = 1  # Disabled: every transition receives its normal reward.
 
@@ -403,6 +403,8 @@ policy_frequency = POLICY_FREQUENCY_HZ
 SIMULATION_STEP_DURATION_S = SIMULATION_DT_S
 POLICY_STEP_DURATION_S = POLICY_DT_S
 SIMULATION_SUBSTEPS_PER_POLICY = SIMULATION_STEPS_PER_POLICY_STEP
+TRAFFIC_UPDATE_FREQUENCY_HZ = SIMULATION_FREQUENCY_HZ
+TRAFFIC_UPDATE_DT_S = SIMULATION_DT_S
 MAX_STEPS = MAX_EPISODE_STEPS
 
 
@@ -423,10 +425,11 @@ INITIAL_COLLISION_PENALTY = 5.0
 # The simulator maintains every vehicle in a moving ego-relative population
 # window plus entry buffers. The policy independently observes six nearest slots.
 NUM_LANES = 3
-TRAFFIC_REFERENCE_FRONT_M = 1000.0
-TRAFFIC_REFERENCE_REAR_M = 500.0
+TRAFFIC_REFERENCE_FRONT_M = 600.0
+TRAFFIC_REFERENCE_REAR_M = 400.0
 TRAFFIC_ENTRY_BUFFER_M = 200.0
 TRAFFIC_RECYCLING_BUFFER_M = 200.0
+TRAFFIC_CROSS_LANE_STAGGER_MIN_M = 20.0  # Avoid routinely spawning vehicles side by side.
 TRAFFIC_FRONT_RECYCLE_BOUNDARY_M = (
     TRAFFIC_REFERENCE_FRONT_M + TRAFFIC_ENTRY_BUFFER_M + TRAFFIC_RECYCLING_BUFFER_M
 )
@@ -443,7 +446,7 @@ TRAFFIC_REAR_SPAWN_MAX_M = TRAFFIC_REFERENCE_REAR_M + TRAFFIC_ENTRY_BUFFER_M
 # Hard population cap counts surrounding traffic only; ego is additional.
 # Each episode samples a smaller initial target so 12 is never a required/fixed
 # population. Boundary replacements may restore only that episode's target.
-MAX_SURROUNDING_TRAFFIC_VEHICLES = 20
+MAX_SURROUNDING_TRAFFIC_VEHICLES = 12
 MIN_INITIAL_SURROUNDING_TRAFFIC_VEHICLES = 4
 TRAFFIC_TARGET_COUNT = MAX_SURROUNDING_TRAFFIC_VEHICLES  # compatibility alias
 TRAFFIC_EXPECTED_REFERENCE_POPULATION = MAX_SURROUNDING_TRAFFIC_VEHICLES
@@ -454,7 +457,8 @@ TRAFFIC_MAX_SPEED_MPS = 50.0
 
 # Ordinary background-traffic dynamics. Emergency braking is a separate,
 # infrequent response to an imminent closing conflict.
-IDM_MAX_ACCEL_MPS2 = 3.0
+TRAFFIC_MAX_ACCEL_KMH_PER_S = 10.0
+IDM_MAX_ACCEL_MPS2 = TRAFFIC_MAX_ACCEL_KMH_PER_S / 3.6
 IDM_COMFORTABLE_BRAKING_MPS2 = 3.0
 ADT_EMERGENCY_BRAKING_MPS2 = 6.0
 IDM_MIN_GAP_M = 20.0
@@ -469,7 +473,7 @@ ADT_PROFILE_MIX = (
 )
 ADT_TAILGATE_HEADWAY_S = 0.70
 ADT_TAILGATE_MIN_GAP_M = 3.0
-ADT_AGGRESSIVE_MAX_ACCEL_MPS2 = 3.0  # compatibility alias; hard cap is 3.0
+ADT_AGGRESSIVE_MAX_ACCEL_MPS2 = IDM_MAX_ACCEL_MPS2  # compatibility alias
 ADT_AGGRESSIVE_BRAKING_MPS2 = 3.0  # ordinary braking; emergency cap is separate
 ADT_OVERTAKER_LANE_CHANGE_RATE_PER_S = 0.20
 ADT_UNSTABLE_LANE_CHANGE_RATE_PER_S = 0.12
@@ -484,7 +488,7 @@ ADT_SUDDEN_BRAKE_EVENT_RATE_PER_S = 0.02
 ADT_SUDDEN_BRAKE_ACCEL_MPS2 = -5.5
 ADT_SUDDEN_BRAKE_DURATION_S = 0.5
 ADT_UNSTABLE_ACCEL_EVENT_RATE_PER_S = 0.04
-ADT_UNSTABLE_ACCEL_PULSE_MPS2 = 3.0
+ADT_UNSTABLE_ACCEL_PULSE_MPS2 = IDM_MAX_ACCEL_MPS2
 ADT_SPEED_VARIATION_MPS = 3.0
 
 PROFILE_DESIRED_SPEED_RANGES_MPS = {"normal": (28.0, 42.0), "aggressive": (36.0, 50.0), "unstable": (25.0, 45.0), "slow": (25.0, 32.0),}
@@ -616,6 +620,8 @@ def record_episode_start(simulator, phase, episode_number, initial_state):
         "policy_step_duration_s": float(POLICY_STEP_DURATION_S),
         "simulation_frequency_hz": int(simulation_frequency),
         "simulation_step_duration_s": float(SIMULATION_STEP_DURATION_S),
+        "traffic_update_frequency_hz": int(TRAFFIC_UPDATE_FREQUENCY_HZ),
+        "traffic_update_step_duration_s": float(TRAFFIC_UPDATE_DT_S),
         "simulation_substeps_per_policy_action": int(SIMULATION_SUBSTEPS_PER_POLICY),
         "episode_duration_s": float(MAX_EPISODE_DURATION_S),
         "discount_gamma_per_policy_step": float(GAMMA),
@@ -1120,7 +1126,7 @@ class HighwaySimulator:
                 "offroad_terminal": False,
 
                 # HighwayEnv advances an integer number of physical updates per
-                # policy action: 15 Hz / 5 Hz = 3 simulator updates per decision.
+                # policy action: 10 Hz / 5 Hz = 2 simulator updates per decision.
                 "simulation_frequency": simulation_frequency,
                 "policy_frequency": policy_frequency,
 
@@ -1209,6 +1215,21 @@ class HighwaySimulator:
 
 
 
+    def _install_simulator_rate_traffic_maintenance(self):
+        """Run population-boundary maintenance after every physical road update."""
+        road = self.env.unwrapped.road
+        if bool(getattr(road, "_arood_traffic_maintenance_wrapper_installed", False)):
+            return
+        original_road_step = road.step
+
+        def _road_step_then_maintain(dt):
+            result = original_road_step(dt)
+            self._maintain_continuous_traffic()
+            return result
+
+        road.step = _road_step_then_maintain
+        road._arood_traffic_maintenance_wrapper_installed = True
+
     def reset(self, seed=None):
 
         if seed is None:
@@ -1234,7 +1255,7 @@ class HighwaySimulator:
             f"profile_mix={dict(ADT_PROFILE_MIX)}",
             f"simulation_frequency={simulation_frequency}Hz",
             "ego_observation_slots=6",
-            "traffic_speed_floor_applies_to_desired_and_spawn_speeds_only",
+            "traffic_speed_floor_applies_to_all_non_crashed_managed_vehicles",
         )
 
         self.step_count = 0
@@ -1244,6 +1265,7 @@ class HighwaySimulator:
         # a fresh impact on every subsequent policy step.
         self._collision_contact_active = False
         base_env = self.env.unwrapped
+        self._install_simulator_rate_traffic_maintenance()
         # Apply the shared 5 m body length to ego before any traffic is spawned.
         base_env.vehicle.LENGTH = VEHICLE_LENGTH_M
         self._initialize_continuous_traffic()
@@ -1827,7 +1849,8 @@ class HighwaySimulator:
                   f"speed={speed_after:.3f}")
 
         self.step_count += 1
-        self._maintain_continuous_traffic()
+        # Population maintenance runs after each 10 Hz Road.step(), rather
+        # than once per 5 Hz policy decision.
         obs = base_env.observation_type.observe()
         next_state = self._encode_state(obs)
         self._assert_continuous_traffic_invariant("instant_step")
@@ -1906,6 +1929,8 @@ class HighwaySimulator:
             "lane_change_completed_instantly": bool(lane_changed),
             "one_env_update_per_policy_action": bool(SIMULATION_SUBSTEPS_PER_POLICY == 1),
             "simulator_updates_per_policy_action": int(SIMULATION_SUBSTEPS_PER_POLICY),
+            "traffic_update_frequency_hz": int(TRAFFIC_UPDATE_FREQUENCY_HZ),
+            "traffic_update_step_duration_s": float(TRAFFIC_UPDATE_DT_S),
             "simulation_step_duration_s": float(SIMULATION_STEP_DURATION_S),
             "policy_step_duration_s": float(POLICY_STEP_DURATION_S),
             "lane_change_rejection_reason": lane_rejection_reason,
@@ -2122,9 +2147,22 @@ def _safe_spawn_position(self, lane_id, longitudinal, minimum_gap):
     ego_bumper_gap = _longitudinal_bumper_gap(longitudinal - ego_s)
     if ego_bumper_gap < minimum_gap:
         return False
-    for other in _traffic_in_lane(self, lane_id):
-        gap = _longitudinal_bumper_gap(_road_s(self, other) - longitudinal)
-        if gap < minimum_gap:
+    for other in list(self.env.unwrapped.road.vehicles):
+        if other is ego:
+            continue
+        try:
+            other_s = _road_s(self, other)
+            other_lane_id = int(other.lane_index[2])
+        except (AttributeError, TypeError, ValueError, IndexError):
+            continue
+        if other_lane_id == int(lane_id):
+            gap = _longitudinal_bumper_gap(other_s - longitudinal)
+            if gap < minimum_gap:
+                return False
+        elif abs(other_s - float(longitudinal)) < TRAFFIC_CROSS_LANE_STAGGER_MIN_M:
+            # Keep initial and boundary-replenished traffic longitudinally
+            # staggered across lanes; transient side-by-side interactions can
+            # still emerge naturally through vehicle motion and lane changes.
             return False
     return True
 
@@ -4603,12 +4641,16 @@ def main():
     print(f"Timing: simulation={SIMULATION_FREQUENCY_HZ}Hz, policy={POLICY_FREQUENCY_HZ}Hz, "
         f"{SIMULATION_STEPS_PER_POLICY_STEP} simulator updates/policy action, "
         f"episode={MAX_EPISODE_STEPS} policy steps ({MAX_EPISODE_DURATION_S:.1f}s).")
+    print(f"Traffic management: {TRAFFIC_UPDATE_FREQUENCY_HZ}Hz / {TRAFFIC_UPDATE_DT_S:.3f}s per update; "
+        f"boundary maintenance runs after every physical road update.")
     discount_tau_text = (
         "infinite" if math.isinf(DISCOUNT_TIME_CONSTANT_S)
         else f"{DISCOUNT_TIME_CONSTANT_S:.2f}s"
     )
     print(f"RL discount: gamma={GAMMA:.6f} per {POLICY_STEP_DURATION_S:.3f}s decision (discount time constant={discount_tau_text}).")
-    print(f"Traffic window: +{TRAFFIC_REFERENCE_FRONT_M:.0f}m front / -{TRAFFIC_REFERENCE_REAR_M:.0f}m rear; entry buffer={TRAFFIC_ENTRY_BUFFER_M:.0f}m; recycling=+{TRAFFIC_FRONT_RECYCLE_BOUNDARY_M:.0f}/-{TRAFFIC_REAR_RECYCLE_BOUNDARY_M:.0f}m.")
+    print(f"Traffic window: +{TRAFFIC_REFERENCE_FRONT_M:.0f}m front / -{TRAFFIC_REFERENCE_REAR_M:.0f}m rear; "
+        f"entry buffer={TRAFFIC_ENTRY_BUFFER_M:.0f}m; recycling=+{TRAFFIC_FRONT_RECYCLE_BOUNDARY_M:.0f}/-{TRAFFIC_REAR_RECYCLE_BOUNDARY_M:.0f}m; "
+        f"cross-lane spawn stagger={TRAFFIC_CROSS_LANE_STAGGER_MIN_M:.0f}m.")
     print(
         f"ADT: max surrounding vehicles={MAX_SURROUNDING_TRAFFIC_VEHICLES}, "
         f"randomized initial population={MIN_INITIAL_SURROUNDING_TRAFFIC_VEHICLES}-"
