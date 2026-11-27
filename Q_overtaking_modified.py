@@ -379,7 +379,7 @@ POLICY_FREQUENCY_HZ = 5           # RL decisions per second
 MAX_EPISODE_STEPS = 1000          # Episode limit in RL policy decisions
 GAMMA = 0.99                     # Direct per-policy-step discount
 
-LANE_CHANGE_PROCESSING_STEPS = 1  # Disabled: every transition receives its normal reward.
+LANE_CHANGE_PROCESSING_STEPS = 0  # Instant lane transitions require no reward-suspension steps.
 
 # ============================================================
 # Derived values — formulas are explicit; do not tune these separately.
