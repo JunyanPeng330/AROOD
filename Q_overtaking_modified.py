@@ -1418,7 +1418,7 @@ class HighwaySimulator:
         metrics = self._min_ttc_by_lane()
         ego_lane = int(self.env.unwrapped.vehicle.lane_index[2])
         features = []
-        for lane_id in (ego_lane, ego_lane - 1, ego_lane + 1):
+        for lane_id in (ego_lane, ego_lane + 1, ego_lane - 1):
             values = metrics.get(lane_id, {})
             for ttc_key, gap_key in (
                 ("front_ttc_buffer", "front_gap"),
