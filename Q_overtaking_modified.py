@@ -1813,43 +1813,8 @@ class HighwaySimulator:class HighwaySimulator:
         next_state = self._encode_state(obs)
         self._assert_continuous_traffic_invariant("instant_step")
 
-        # Shared TTC risk is logged after the simulator update and traffic-slot
-        # maintenance. It does not intervene in the action or enter the reward.
-        ttc_risk_snapshot = self._min_ttc_by_lane()
-        ttc_risk_diagnostics = {}
-        for lane_id, lane_values in sorted(ttc_risk_snapshot.items()):
-            ttc_risk_diagnostics[int(lane_id)] = {
-                "front_ttc_s": float(lane_values.get("front_ttc", float("inf"))),
-                "rear_ttc_s": float(lane_values.get("rear_ttc", float("inf"))),
-                "front_ttc_buffer_s": float(lane_values.get("front_ttc_buffer", float("inf"))),
-                "rear_ttc_buffer_s": float(lane_values.get("rear_ttc_buffer", float("inf"))),
-                "front_physical_gap_m": float(lane_values.get("front_gap", float("inf"))),
-                "rear_physical_gap_m": float(lane_values.get("rear_gap", float("inf"))),
-                "front_effective_gap_m": float(lane_values.get("front_ttc_effective_gap", float("inf"))),
-                "rear_effective_gap_m": float(lane_values.get("rear_ttc_effective_gap", float("inf"))),
-                "front_body_overlap": bool(lane_values.get("front_body_overlap", False)),
-                "rear_body_overlap": bool(lane_values.get("rear_body_overlap", False)),
-                "front_risk": float(lane_values.get("front_risk", 0.0)),
-                "rear_risk": float(lane_values.get("rear_risk", 0.0)),
-                "lane_risk": float(lane_values.get("lane_risk", 0.0)),
-            }
-        edm_post_step = self._edm_interpretation_by_lane(ttc_risk_snapshot)
-        current_lane_risk = ttc_risk_diagnostics.get(int(ego_after.lane_index[2]), {})
-        lane_risk_summary = " | ".join(
-            f"L{lane_id}:Fphys={v['front_ttc_s']:.2f}s/"
-            f"Fbuf={v['front_ttc_buffer_s']:.2f}s/{v['front_risk']:.2f},"
-            f"Rphys={v['rear_ttc_s']:.2f}s/"
-            f"Rbuf={v['rear_ttc_buffer_s']:.2f}s/{v['rear_risk']:.2f},"
-            f"MAX={v['lane_risk']:.2f}"
-            for lane_id, v in ttc_risk_diagnostics.items()
-        )
-        print(
-            "[TTC RISK]",
-            f"step={self.step_count}",
-            f"current_lane={int(ego_after.lane_index[2])}",
-            f"current_lane_max_risk={float(current_lane_risk.get('lane_risk', 0.0)):.3f}",
-            f"lanes=({lane_risk_summary})",
-        )
+        # Instantaneous post-step TTC/GAP diagnostics only.
+        edm_post_step = self._edm_interpretation_by_lane(self._min_ttc_by_lane())
 
         info = dict(env_info or {})
         info.update({
@@ -3516,7 +3481,6 @@ def collect_reference_rollouts(simulator, policy, reward_function):
             record_action_mask(action_mask_counters, valid_mask)
             target_lane_mask = np.asarray(simulator.get_valid_target_lane_mask(), dtype=bool)
             current_lane_id = int(simulator.env.unwrapped.vehicle.lane_index[2])
-            critic_edm_features = simulator.get_critic_edm_features()
             sampled_action, policy_aux = policy.act(
                 state, deterministic=False, valid_action_mask=valid_mask,
                 valid_target_lane_mask=target_lane_mask,
@@ -4069,6 +4033,7 @@ def train_pure_rl(simulator, policy):
             else:
                 no_safe_target_lane_steps += 1
             current_lane_id = int(simulator.env.unwrapped.vehicle.lane_index[2])
+            critic_edm_features = simulator.get_critic_edm_features()
             lane_occupancy_counts[current_lane_id] += 1
             sampled_action, policy_aux = policy.act(
                 state, deterministic=False, valid_action_mask=valid_mask,
@@ -4123,7 +4088,7 @@ def train_pure_rl(simulator, policy):
                 dtype=np.float32,
             ).reshape(-1)
 
-            min_ttc, closing_vehicle_count = calculate_min_ttc(simulator)            min_ttc, closing_vehicle_count = calculate_min_ttc(simulator)
+            min_ttc, closing_vehicle_count = calculate_min_ttc(simulator)
             collision_occurred = bool(
                 step_info.get("collision", step_info.get("safety_violation", False))
                 if isinstance(step_info, dict) else step_info
@@ -4168,7 +4133,7 @@ def train_pure_rl(simulator, policy):
             current_speed_mps = float(simulator.env.unwrapped.vehicle.speed)
             episode_speed_samples.append(current_speed_mps)
 
-            reward = compute_reward(            reward = compute_reward(
+            reward = compute_reward(
                 reward_function=reward_function,
                 behavior_description="",
                 safety_violation=safety_violation,
