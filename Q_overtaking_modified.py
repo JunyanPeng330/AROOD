@@ -1924,15 +1924,23 @@ class HighwaySimulator:
                 try:
                     source_lane_index = tuple(ego.lane_index)
                     source_lane = base_env.road.network.get_lane(source_lane_index)
-                    longitudinal, _ = source_lane.local_coordinates(np.asarray(ego.position, dtype=float))
+                    longitudinal, _ = source_lane.local_coordinates(
+                        np.asarray(ego.position, dtype=float)
+                    )
+                    speed_before_lateral_snap = float(ego.speed)
                     target_lane_index = (
                         source_lane_index[0], source_lane_index[1], int(requested_target_lane_id)
                     )
                     target_lane = base_env.road.network.get_lane(target_lane_index)
-                    # Apply the lane transition to the actual Highway-env vehicle
-                    # before env.step(), not just to the wrapper's bookkeeping.
-                    # Preserve longitudinal position and speed; lateral position
-                    # and heading are snapped to the target lane centre/tangent.
+
+                    # Split the maneuver into independent dimensions:
+                    #   * longitudinal: preserve s and speed exactly at the instant
+                    #     of the lane decision; normal vehicle physics integrates
+                    #     acceleration and forward motion in env.step() below.
+                    #   * lateral: snap directly to the target lane centre now;
+                    #     there is no lateral interpolation or maneuver duration.
+                    # This changes the ego's lane occupancy before native physics,
+                    # so the normal collision geometry sees the destination lane.
                     target_position = np.asarray(
                         target_lane.position(longitudinal, 0.0), dtype=float
                     )
@@ -1940,6 +1948,23 @@ class HighwaySimulator:
                     ego.position = target_position
                     ego.heading = target_heading
                     ego.lane_index = tuple(target_lane_index)
+
+                    # Verify that the lateral snap did not introduce a longitudinal
+                    # jump or alter speed. The subsequent env.step() is responsible
+                    # for all normal longitudinal integration.
+                    target_longitudinal_after_snap, target_lateral_after_snap = (
+                        target_lane.local_coordinates(np.asarray(ego.position, dtype=float))
+                    )
+                    longitudinal_snap_error_m = float(
+                        target_longitudinal_after_snap - longitudinal
+                    )
+                    speed_snap_error_mps = float(ego.speed) - speed_before_lateral_snap
+                    if abs(longitudinal_snap_error_m) > 1e-6 or abs(speed_snap_error_mps) > 1e-9:
+                        raise RuntimeError(
+                            "Instantaneous lateral lane-change altered longitudinal "
+                            f"state: ds={longitudinal_snap_error_m:.9g}m, "
+                            f"dV={speed_snap_error_mps:.9g}m/s"
+                        )
 
                     # ControlledVehicle implementations may also maintain an
                     # internal target_lane_index. Synchronize it when present so
@@ -1969,6 +1994,12 @@ class HighwaySimulator:
                         direction="LEFT" if requested_target_lane_id > source_lane_id else "RIGHT",
                         outcome="COMPLETED_INSTANTLY",
                         longitudinal_position=float(longitudinal),
+                        longitudinal_snap_error_m=float(longitudinal_snap_error_m),
+                        lateral_position_after_snap_m=float(target_lateral_after_snap),
+                        speed_before_lateral_snap_mps=float(speed_before_lateral_snap),
+                        speed_snap_error_mps=float(speed_snap_error_mps),
+                        lateral_transition="instantaneous",
+                        longitudinal_dynamics="normal_simulator_integration",
                         request_id=safety_info.get("lane_request_trace_id"),
                     )
                 except (KeyError, IndexError, TypeError, ValueError) as exc:
@@ -2000,6 +2031,9 @@ class HighwaySimulator:
         lane_before_env_update = int(ego.lane_index[2])
         position_before_env_update = np.asarray(ego.position, dtype=np.float64).copy()
         policy_dt = 1.0 / float(base_env.config["policy_frequency"])
+        # Steering is deliberately zero: lateral lane occupancy was already
+        # changed instantaneously above. Keep the learned acceleration untouched
+        # so longitudinal motion follows the ordinary HighwayEnv dynamics.
         physical_action = np.asarray([acceleration, 0.0], dtype=np.float32)
 
         # Sanitize the complete background population before the native update,
@@ -2174,7 +2208,9 @@ class HighwaySimulator:
             "executed_acceleration": float(acceleration),
             "executed_steering": 0.0,
             "policy_action_context": safety_info,
-            "instant_lane_change_mode": True,
+            "instant_lane_change_mode": bool(INSTANT_LANE_CHANGE_MODE),
+            "lateral_transition_mode": "instantaneous",
+            "longitudinal_motion_mode": "normal_acceleration_dynamics",
             "observed_acceleration": (speed_after - speed_before) / policy_dt,
             "ttc_risk_diagnostics": ttc_risk_diagnostics,
             "ttc_risk_aggregation": "max_front_rear",
