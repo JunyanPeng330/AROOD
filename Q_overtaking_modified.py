@@ -1466,7 +1466,7 @@ class HighwaySimulator:
             for lane_id, values in sorted(lane_metrics.items())
         }
 
-    # EDM provides instantaneous measurements only; it never predicts trajectories or intervenes.    # Legacy TTC/speed-matching intervention code removed; EDM remains diagnostic/state input only.
+    # EDM provides instantaneous measurements only; it never predicts trajectories or intervenes.
 
 
     def _snapshot_managed_traffic_slots(self):
@@ -3955,9 +3955,9 @@ def train_pure_rl(simulator, policy):
             "acceleration_reward_formula": "(abs(delta_v_step) + delta_v_step) / (2 * max_acceleration_per_step)",
             "speed_reward_formula": "(current_speed - speed_limit) / speed_limit",
             "lane_change_processing_steps": LANE_CHANGE_PROCESSING_STEPS,
-            "collision_counting":            "collision_counting": "one_event_per_uninterrupted_collision_contact_episode",
+            "collision_counting": "one_event_per_uninterrupted_collision_contact_episode",
             "collision_contact_steps_logged_separately": True,
-            "edm_is_interpretation_only": True,
+            "edm_is_critic_input_only": True,
             "edm_action_intervention": False,
             "lane_mask": "physical_adjacent_lanes_only; no TTC/EDM veto",
             "lane_state_representation": "ego_relative_roles_current_left_right; absolute_lane_id_not_exposed_in_context",
