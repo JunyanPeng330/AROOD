@@ -3,8 +3,8 @@
 Contains the HighwayEnv adapter, observation/EDM interpretation, physical
 adjacent-lane masks, hierarchical KEEP/CHANGE -> target-lane -> acceleration
 policy, one-step lane-change reward processing, reward construction, online
-Actor-Critic updates, and CSV/JSONL experiment logging. EDM/TTC are descriptive
-signals only and never veto or rewrite the learned action.
+Actor-Critic updates, and CSV/JSONL experiment logging. Instantaneous EDM TTC/GAP
+features condition the Critic only; they never veto or rewrite the learned action.
 """
 
 # Research baseline; lane changes are represented as instantaneous transitions.
@@ -372,7 +372,7 @@ POLICY_LR = 3e-4
 # ============================================================
 # Fundamental time and learning configuration
 # Edit only these values; all physical times are derived below.
-# The simulator uses seconds, while the RL policy and EDM use policy steps.
+# The simulator uses seconds; the RL policy acts in discrete policy steps.
 # ============================================================
 SIMULATION_FREQUENCY_HZ = 10      # Physical simulator updates per second
 POLICY_FREQUENCY_HZ = 5           # RL decisions per second
@@ -1907,7 +1907,8 @@ class HighwaySimulator:
 
 # ---------------------------------------------------------------------------
 # ADT background traffic ported from U_Challenge.py.
-# The existing P.py EDM encoder remains the state representation.
+# Instantaneous EDM features are now supplied separately to the Critic; the
+# Actor state contains only vehicle kinematics and non-EDM context.
 # ---------------------------------------------------------------------------
 
 class ContinuousTrafficVehicle(Vehicle):
