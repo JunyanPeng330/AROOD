@@ -3145,9 +3145,8 @@ def construct_reward(reward_specification, embedding_model=None):
     applied on collision, and collision terminates the episode.
     """
     def reward_function(
-        behavior_description, safety_violation, action, lane_deviation, offroad,
-        min_ttc, lane_change_allowed=True, ego_speed=0.0, ego_speed_change_per_step_mps=0.0,
-        safety_info=None, policy_sampled_action=None, reward_diagnostics=None,
+        safety_violation, ego_speed=0.0,
+        ego_speed_change_per_step_mps=0.0, reward_diagnostics=None,
     ):
         max_acceleration_per_step = float(
             reward_specification.get(
@@ -3217,31 +3216,15 @@ def construct_reward(reward_specification, embedding_model=None):
 
 def compute_reward(
     reward_function,
-    behavior_description,
     safety_violation,
-    action,
-    lane_deviation,
-    offroad,
-    min_ttc=float("inf"),
-    lane_change_allowed=True,
     ego_speed=0.0,
     ego_speed_change_per_step_mps=0.0,
-    safety_info=None,
-    policy_sampled_action=None,
     reward_diagnostics=None,
 ):
     return reward_function(
-        behavior_description=behavior_description,
         safety_violation=safety_violation,
-        action=action,
-        lane_deviation=lane_deviation,
-        offroad=offroad,
-        min_ttc=min_ttc,
-        lane_change_allowed=lane_change_allowed,
         ego_speed=ego_speed,
         ego_speed_change_per_step_mps=ego_speed_change_per_step_mps,
-        safety_info=safety_info,
-        policy_sampled_action=policy_sampled_action,
         reward_diagnostics=reward_diagnostics,
     )
 
@@ -3504,7 +3487,6 @@ def collect_reference_rollouts(simulator, policy, reward_function):
             next_state = np.asarray(next_state, dtype=np.float32)
             sync_lane_completion_counters(lane_counters, simulator, seen_completed)
 
-            min_ttc, _ = calculate_min_ttc(simulator)
             safety_violation = bool(
                 step_info.get("safety_violation", False)
                 if isinstance(step_info, dict) else step_info
@@ -3524,23 +3506,11 @@ def collect_reference_rollouts(simulator, policy, reward_function):
 
             reward = compute_reward(
                 reward_function=reward_function,
-                behavior_description="",
                 safety_violation=safety_violation,
-                action=np.asarray(
-                    step_info.get("executed_policy_action", policy_action)
-                    if isinstance(step_info, dict) else policy_action,
-                    dtype=np.float32,
-                ),
-                lane_deviation=lane_deviation,
-                offroad=offroad,
-                min_ttc=min_ttc,
-                lane_change_allowed=True,
                 ego_speed=float(simulator.env.unwrapped.vehicle.speed),
                 ego_speed_change_per_step_mps=(
                     float(simulator.env.unwrapped.vehicle.speed) - previous_speed_mps
                 ),
-                safety_info=reward_safety_info,
-                policy_sampled_action=sampled_action,
                 reward_diagnostics={},
             )
 
@@ -4133,19 +4103,11 @@ def train_pure_rl(simulator, policy):
 
             reward = compute_reward(
                 reward_function=reward_function,
-                behavior_description="",
                 safety_violation=safety_violation,
-                action=executed_action,
-                lane_deviation=lane_deviation,
-                offroad=offroad,
-                min_ttc=min_ttc,
-                lane_change_allowed=True,
                 ego_speed=current_speed_mps,
                 ego_speed_change_per_step_mps=(
                     current_speed_mps - previous_speed_mps
                 ),
-                safety_info=reward_safety_info,
-                policy_sampled_action=sampled_action,
                 reward_diagnostics=reward_components,
             )
 
