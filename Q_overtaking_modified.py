@@ -351,17 +351,12 @@ CONFIG_PATH = os.path.join(OUTPUT_DIR, "experiment_config_Q_overtake2.json")
 # 1. Configuration — instantaneous lane-change pure-RL mode
 # ============================================================
 
-# Explicit EDM configuration (kept together at the top for easy experiment tuning).
-# These values affect EDM interpretation/diagnostics only; they do not veto or
-# rewrite the hierarchical RL policy's lane or acceleration decisions.
-EDM_TTC_COMFORTABLE_S = 8.0
-EDM_TTC_DANGER_S = 6.0
-EDM_TTC_CRITICAL_S = 4.0
-EDM_HIGH_RISK_SCORE_THRESHOLD = 0.6
-EDM_REWARD_WEIGHT = 1.0  # Continuous TTC warning cost multiplier; tune in ablations.
-EDM_REWARD_ENABLED = True
-EDM_MIN_GAP_REFERENCE_M = 20.0  # Declared for EDM gap scaling; currently not consumed elsewhere in this file.
-TTC_CLEARANCE_MARGIN_M = 5.0  # Extra longitudinal reserve used for conservative TTC warnings.
+# Instantaneous EDM -> Critic inputs. No EDM prediction horizon or risk score.
+# TTC is measured to the agreed 5 m clearance boundary; GAP remains actual
+# bumper-to-bumper clearance. Values are normalized only for neural-network input.
+TTC_CLEARANCE_MARGIN_M = 5.0
+EDM_TTC_INPUT_MAX_S = 30.0
+EDM_GAP_INPUT_MAX_M = 200.0
 
 INSTANT_LANE_CHANGE_MODE = True
 steering_scale = 0.5
@@ -382,7 +377,6 @@ POLICY_LR = 3e-4
 SIMULATION_FREQUENCY_HZ = 10      # Physical simulator updates per second
 POLICY_FREQUENCY_HZ = 5           # RL decisions per second
 MAX_EPISODE_STEPS = 1000          # Episode limit in RL policy decisions
-EDM_HORIZON_POLICY_STEPS = 50      # EDM prediction horizon in policy steps
 GAMMA = 0.99                     # Direct per-policy-step discount
 
 LANE_CHANGE_PROCESSING_STEPS = 1  # Disabled: every transition receives its normal reward.
@@ -396,8 +390,8 @@ if SIMULATION_FREQUENCY_HZ % POLICY_FREQUENCY_HZ != 0:
     raise ValueError(
         "SIMULATION_FREQUENCY_HZ must be an integer multiple of POLICY_FREQUENCY_HZ"
     )
-if MAX_EPISODE_STEPS <= 0 or EDM_HORIZON_POLICY_STEPS <= 0:
-    raise ValueError("Episode length and EDM horizon must be positive policy-step counts")
+if MAX_EPISODE_STEPS <= 0:
+    raise ValueError("Episode length must be a positive policy-step count")
 if not 0.0 < GAMMA <= 1.0:
     raise ValueError("GAMMA must be in (0, 1].")
 if not np.isfinite(TTC_CLEARANCE_MARGIN_M) or TTC_CLEARANCE_MARGIN_M < 0.0:
@@ -408,7 +402,6 @@ POLICY_DT_S = 1.0 / POLICY_FREQUENCY_HZ
 SIMULATION_STEPS_PER_POLICY_STEP = (
     SIMULATION_FREQUENCY_HZ // POLICY_FREQUENCY_HZ
 )
-EDM_REWARD_HORIZON_S = EDM_HORIZON_POLICY_STEPS * POLICY_DT_S
 MAX_EPISODE_DURATION_S = MAX_EPISODE_STEPS * POLICY_DT_S
 DISCOUNT_TIME_CONSTANT_S = (
     float("inf") if GAMMA == 1.0 else -POLICY_DT_S / math.log(GAMMA)
@@ -537,13 +530,13 @@ VEHICLE_FEATURES = 7
 NUM_VEHICLE_ROWS = NUM_SURROUNDING_VEHICLES + 1
 VEHICLE_STATE_DIM = NUM_VEHICLE_ROWS * VEHICLE_FEATURES
 CONTEXT_DIM = 5
-# Per lane: six physical measurements plus front/rear EDM risk scores and
-# normalized categorical severity codes. These are observations only.
-# EDM thresholds are declared in the top-level configuration block above.
-EDM_FEATURES_PER_LANE = 4
-SAFETY_FEATURES_PER_LANE = 6 + EDM_FEATURES_PER_LANE
-SAFETY_FEATURES_DIM = NUM_LANES * SAFETY_FEATURES_PER_LANE
-STATE_DIM = VEHICLE_STATE_DIM + CONTEXT_DIM + SAFETY_FEATURES_DIM
+# Actor sees only kinematics and non-EDM context. The Critic receives a
+# separate four-value-per-lane instantaneous TTC/GAP vector.
+EDM_LANE_ROLES = 3
+EDM_FEATURES_PER_LANE = 4  # front TTC, front bumper GAP, rear TTC, rear bumper GAP
+EDM_FEATURE_DIM = EDM_LANE_ROLES * EDM_FEATURES_PER_LANE
+ACTOR_STATE_DIM = VEHICLE_STATE_DIM + CONTEXT_DIM
+STATE_DIM = ACTOR_STATE_DIM
 ACTION_DIM = 2  # execution action [normalized learned acceleration, binary KEEP/CHANGE]
 POLICY_ACTION_DIM = 2  # binary KEEP, CHANGE decision; acceleration is a conditional continuous head
 
@@ -812,8 +805,9 @@ def to_tensor(x):
 
 
 class ActorCriticPolicy(nn.Module):
-    """Conditional hybrid actor: KEEP/CHANGE -> target lane -> continuous acceleration."""
-    def __init__(self, state_dim, action_dim, hidden_dim, steering_scale=None):
+    """Actor uses ordinary observations; Critic receives instantaneous EDM features."""
+    def __init__(self, state_dim, action_dim, hidden_dim, steering_scale=None,
+                 edm_feature_dim=EDM_FEATURE_DIM):
         super().__init__()
         if action_dim != 2:
             raise ValueError("Expected execution action [acceleration, binary KEEP/CHANGE]")
@@ -829,8 +823,12 @@ class ActorCriticPolicy(nn.Module):
             nn.Linear(hidden_dim // 2, 1)
         )
         self.acceleration_log_std = nn.Parameter(torch.tensor([-0.5], dtype=torch.float32))
-        self.critic = nn.Sequential(nn.Linear(hidden_dim, hidden_dim // 2), nn.ReLU(),
-                                    nn.Linear(hidden_dim // 2, 1))
+        self.edm_feature_dim = int(edm_feature_dim)
+        self.critic = nn.Sequential(
+            nn.Linear(state_dim + self.edm_feature_dim, hidden_dim), nn.ReLU(),
+            nn.Linear(hidden_dim, hidden_dim // 2), nn.ReLU(),
+            nn.Linear(hidden_dim // 2, 1),
+        )
         self.optimizer = Adam(self.parameters(), lr=POLICY_LR)
 
     def features(self, state):
@@ -925,8 +923,28 @@ class ActorCriticPolicy(nn.Module):
                         valid_target_lane_mask=valid_target_lane_mask,
                         current_lane_id=current_lane_id)
 
-    def value(self, state):
-        return self.critic(self.features(state)).squeeze(-1)
+    def value(self, state, edm_features=None):
+        """Estimate expected task return from state plus instantaneous TTC/GAP."""
+        state_tensor = to_tensor(state)
+        if state_tensor.ndim == 1:
+            state_tensor = state_tensor.unsqueeze(0)
+        if edm_features is None:
+            edm_tensor = torch.zeros(
+                (state_tensor.shape[0], self.edm_feature_dim),
+                dtype=state_tensor.dtype, device=state_tensor.device,
+            )
+        else:
+            edm_tensor = to_tensor(edm_features)
+            if edm_tensor.ndim == 1:
+                edm_tensor = edm_tensor.unsqueeze(0)
+            if edm_tensor.shape[0] == 1 and state_tensor.shape[0] > 1:
+                edm_tensor = edm_tensor.expand(state_tensor.shape[0], -1)
+            if edm_tensor.shape != (state_tensor.shape[0], self.edm_feature_dim):
+                raise ValueError(
+                    f"Critic EDM shape {tuple(edm_tensor.shape)} does not match "
+                    f"(batch, {self.edm_feature_dim})"
+                )
+        return self.critic(torch.cat([state_tensor, edm_tensor], dim=-1)).squeeze(-1)
 
 
 def lane_policy_diagnostic(policy, state, valid_action_mask, sampled_action, phase, episode, step,
@@ -956,312 +974,7 @@ def lane_policy_diagnostic(policy, state, valid_action_mask, sampled_action, pha
 # ============================================================
 
 
-def ttc_to_risk(ttc_seconds):
-    """Compatibility wrapper around the single canonical EDM TTC risk scale."""
-    return edm_ttc_risk_score(ttc_seconds)
-
-
-def edm_ttc_risk_score(ttc_seconds):
-    """Map TTC to a warning score: 0 at comfortable TTC, 1 at danger TTC.
-
-    The score rises linearly from zero at EDM_TTC_COMFORTABLE_S to one at
-    EDM_TTC_DANGER_S, then remains saturated at one for more dangerous TTCs.
-    """
-    try:
-        ttc = float(ttc_seconds)
-    except (TypeError, ValueError):
-        return 1.0
-    if np.isnan(ttc):
-        return 1.0
-    if np.isinf(ttc):
-        return 0.0
-    warning_range = EDM_TTC_COMFORTABLE_S - EDM_TTC_DANGER_S
-    if warning_range <= 0.0:
-        raise ValueError(
-            "EDM_TTC_COMFORTABLE_S must be greater than EDM_TTC_DANGER_S"
-        )
-    return float(np.clip(
-        (EDM_TTC_COMFORTABLE_S - ttc) / warning_range, 0.0, 1.0
-    ))
-
-
-def interpret_edm_ttc(ttc_seconds):
-    """Translate TTC into an interpretable band; this never controls actions."""
-    try:
-        ttc = float(ttc_seconds)
-    except (TypeError, ValueError):
-        return {"category": "UNKNOWN", "severity": -1, "risk_score": 1.0}
-    if np.isnan(ttc):
-        return {"category": "UNKNOWN", "severity": -1, "risk_score": 1.0}
-    if np.isinf(ttc):
-        return {"category": "NO_CLOSING_THREAT", "severity": 0, "risk_score": 0.0}
-    if ttc < EDM_TTC_CRITICAL_S:
-        category, severity = "CRITICAL", 3
-    elif ttc <= EDM_TTC_DANGER_S:
-        category, severity = "DANGER", 2
-    elif ttc < EDM_TTC_COMFORTABLE_S:
-        category, severity = "CAUTION", 1
-    else:
-        category, severity = "COMFORTABLE", 0
-    return {
-        "category": category,
-        "severity": severity,
-        "risk_score": edm_ttc_risk_score(ttc),
-    }
-
-
-def estimate_edm_action_warning(
-    edm_pre_action_by_lane,
-    current_lane_id,
-    selected_target_lane,
-    lane_change_action,
-    ego_speed_mps,
-    normalized_acceleration,
-    horizon_s=EDM_REWARD_HORIZON_S,
-):
-    """Sequentially evaluate a candidate lane/action over the EDM horizon.
-
-    The current normalized acceleration is held constant for the prediction;
-    surrounding vehicles retain their observed speeds. The rollout advances
-    once per policy step. A 5 m clearance-buffer breach raises warning risk but
-    is not a physical collision. A predicted physical collision requires both
-    longitudinal bumper overlap and lateral body overlap in the evaluated lane.
-    Evaluation terminates at the first predicted collision.
-    """
-    current_lane_id = int(current_lane_id)
-    target_lane_id = int(selected_target_lane)
-    changing = bool(
-        int(round(float(lane_change_action))) == 1
-        and target_lane_id != current_lane_id
-    )
-    evaluated_lane_id = target_lane_id if changing else current_lane_id
-    lane_values = (
-        edm_pre_action_by_lane.get(evaluated_lane_id)
-        or edm_pre_action_by_lane.get(str(evaluated_lane_id))
-        or {}
-    )
-
-    dt = float(POLICY_DT_S)
-    requested_horizon_s = max(0.0, float(horizon_s))
-    horizon_steps = max(
-        1, int(math.ceil(requested_horizon_s / max(dt, 1e-9)))
-    )
-    horizon_steps = min(horizon_steps, int(EDM_HORIZON_POLICY_STEPS))
-    effective_horizon_s = horizon_steps * dt
-
-    ego_speed = max(0.0, float(ego_speed_mps))
-    ego_acceleration = (
-        float(np.clip(normalized_acceleration, -1.0, 1.0))
-        * MAX_PHYSICAL_ACCELERATION
-    )
-
-    def get_neighbour(side):
-        try:
-            gap = float(lane_values.get(f"{side}_gap_m", float("inf")))
-            speed = float(lane_values.get(f"{side}_speed_mps"))
-        except (TypeError, ValueError):
-            return None
-        if not np.isfinite(gap) or not np.isfinite(speed):
-            return None
-        return {
-            "gap": gap,
-            "speed": max(0.0, speed),
-            "lateral_overlap": bool(
-                lane_values.get(f"{side}_lateral_overlap", True)
-            ),
-            "initial_body_overlap": bool(
-                lane_values.get(f"{side}_body_overlap", False)
-            ),
-        }
-
-    neighbours = {
-        "front": get_neighbour("front"),
-        "rear": get_neighbour("rear"),
-    }
-    side_results = {}
-    for side, neighbour in neighbours.items():
-        side_results[side] = {
-            "initial_gap_m": (
-                float(neighbour["gap"]) if neighbour is not None else float("inf")
-            ),
-            "projected_gap_m": float("inf"),
-            "projected_effective_gap_m": float("inf"),
-            "projected_ttc_s": float("inf"),
-            "projected_ttc_buffer_s": float("inf"),
-            "warning_score": 0.0,
-            "predicted_collision": False,
-            "first_collision_step": None,
-            "first_collision_time_s": None,
-            "lateral_overlap_assumed": (
-                bool(neighbour["lateral_overlap"]) if neighbour is not None else False
-            ),
-        }
-
-    warning_score = 0.0
-    first_collision = None
-    prediction_steps_evaluated = 0
-
-    # An already-overlapping body in the evaluated lane is a collision at t=0.
-    for side, neighbour in neighbours.items():
-        if neighbour is None:
-            continue
-        if (
-            neighbour["gap"] <= 0.0
-            and neighbour["lateral_overlap"]
-        ):
-            side_results[side].update({
-                "predicted_collision": True,
-                "first_collision_step": 0,
-                "first_collision_time_s": 0.0,
-                "warning_score": 1.0,
-            })
-            first_collision = {
-                "side": side, "step": 0, "time_s": 0.0
-            }
-            warning_score = 1.0
-            break
-
-    ego_displacement = 0.0
-    ego_speed_now = ego_speed
-    if first_collision is None:
-        for step in range(1, horizon_steps + 1):
-            # Discrete constant-acceleration prediction, with nonnegative speed.
-            next_ego_speed = max(
-                0.0, ego_speed_now + ego_acceleration * dt
-            )
-            ego_displacement += (
-                0.5 * (ego_speed_now + next_ego_speed) * dt
-            )
-            ego_speed_now = next_ego_speed
-            elapsed_s = step * dt
-            prediction_steps_evaluated = step
-
-            step_collision = None
-            for side, neighbour in neighbours.items():
-                if neighbour is None:
-                    continue
-                neighbour_displacement = neighbour["speed"] * elapsed_s
-                if side == "front":
-                    gap_now = (
-                        neighbour["gap"]
-                        + neighbour_displacement
-                        - ego_displacement
-                    )
-                    closing_speed = ego_speed_now - neighbour["speed"]
-                else:
-                    gap_now = (
-                        neighbour["gap"]
-                        + ego_displacement
-                        - neighbour_displacement
-                    )
-                    closing_speed = neighbour["speed"] - ego_speed_now
-
-                effective_gap = gap_now - float(TTC_CLEARANCE_MARGIN_M)
-                if effective_gap <= 0.0:
-                    buffer_ttc = 0.0
-                elif closing_speed > 1e-6:
-                    buffer_ttc = effective_gap / closing_speed
-                else:
-                    buffer_ttc = float("inf")
-
-                side_warning = float(edm_ttc_risk_score(buffer_ttc))
-                warning_score = max(warning_score, side_warning)
-
-                result = side_results[side]
-                result.update({
-                    "projected_gap_m": float(gap_now),
-                    "projected_effective_gap_m": float(effective_gap),
-                    "projected_ttc_buffer_s": float(buffer_ttc),
-                    "warning_score": max(
-                        float(result["warning_score"]), side_warning
-                    ),
-                })
-                if effective_gap <= 0.0:
-                    result["projected_ttc_s"] = 0.0
-                elif closing_speed > 1e-6 and gap_now > 0.0:
-                    result["projected_ttc_s"] = float(
-                        gap_now / closing_speed
-                    )
-
-                # Longitudinal body overlap alone is insufficient: the bodies
-                # must also overlap laterally in the selected lane corridor.
-                if (
-                    gap_now <= 0.0
-                    and neighbour["lateral_overlap"]
-                ):
-                    result.update({
-                        "predicted_collision": True,
-                        "first_collision_step": step,
-                        "first_collision_time_s": elapsed_s,
-                        "warning_score": 1.0,
-                    })
-                    step_collision = {
-                        "side": side, "step": step, "time_s": elapsed_s
-                    }
-                    warning_score = 1.0
-                    break
-
-            if step_collision is not None:
-                first_collision = step_collision
-                break
-
-    for side, result in side_results.items():
-        if result["predicted_collision"]:
-            result["warning_score"] = 1.0
-
-    front = side_results["front"]
-    rear = side_results["rear"]
-    return {
-        "enabled": bool(EDM_REWARD_ENABLED),
-        "action_type": "CHANGE" if changing else "KEEP",
-        "current_lane_id": current_lane_id,
-        "evaluated_lane_id": evaluated_lane_id,
-        "risk_basis": (
-            "target_lane_entry_front_rear" if changing
-            else "current_lane_front_rear"
-        ),
-        "horizon_s": effective_horizon_s,
-        "horizon_policy_steps": horizon_steps,
-        "prediction_dt_s": dt,
-        "prediction_steps_evaluated": prediction_steps_evaluated,
-        "prediction_terminated": bool(first_collision is not None),
-        "predicted_collision": bool(first_collision is not None),
-        "first_predicted_collision_side": (
-            first_collision["side"] if first_collision is not None else None
-        ),
-        "first_predicted_collision_step": (
-            first_collision["step"] if first_collision is not None else None
-        ),
-        "first_predicted_collision_time_s": (
-            first_collision["time_s"] if first_collision is not None else None
-        ),
-        "ego_acceleration_mps2": ego_acceleration,
-        "ego_speed_end_mps": ego_speed_now,
-        "front_projected_ttc_s": front["projected_ttc_s"],
-        "rear_projected_ttc_s": rear["projected_ttc_s"],
-        "front_projected_ttc_buffer_s": front["projected_ttc_buffer_s"],
-        "rear_projected_ttc_buffer_s": rear["projected_ttc_buffer_s"],
-        "front_projected_gap_m": front["projected_gap_m"],
-        "rear_projected_gap_m": rear["projected_gap_m"],
-        "front_projected_effective_gap_m": front["projected_effective_gap_m"],
-        "rear_projected_effective_gap_m": rear["projected_effective_gap_m"],
-        "front_warning_score": front["warning_score"],
-        "rear_warning_score": rear["warning_score"],
-        "front_predicted_collision": front["predicted_collision"],
-        "rear_predicted_collision": rear["predicted_collision"],
-        "warning_score": float(np.clip(warning_score, 0.0, 1.0)),
-        "warning_score_semantics": (
-            "maximum sequential time-to-5m-clearance risk; 1.0 on first "
-            "predicted physical body collision; not a calibrated probability"
-        ),
-        "prediction_assumption": (
-            "current ego acceleration held constant; neighbour speeds held "
-            "constant; lateral overlap in evaluated lane held constant"
-        ),
-    }
-
-
-class HighwaySimulator:
+class HighwaySimulator:class HighwaySimulator:
     """Highway-env wrapper with ADT background traffic and six ego observation slots.
 
     The simulator maintains a distributed dynamic traffic population. The
@@ -1369,48 +1082,12 @@ class HighwaySimulator:
 
         #print("at the end of _encode_state(), the state becomes: ", state)
 
-        safety = np.zeros(SAFETY_FEATURES_DIM, dtype=np.float32)
-        try:
-            metrics = self._min_ttc_by_lane()
-            # Gap features remain physical; TTC features encode time to the
-            # conservative 5 m clearance boundary. Physical TTC is retained in
-            # the diagnostics snapshot returned by _min_ttc_by_lane().
-            keys = ["front_gap", "rear_gap", "front_ttc_buffer", "rear_ttc_buffer",
-                    "front_speed", "rear_speed"]
-            scales = [100.0, 100.0, 10.0, 10.0, 40.0, 40.0]
-            # Ego-relative lane roles prevent the appended EDM block from
-            # hard-coding physical lane 0/1/2 as different semantic categories:
-            # [current lane, left candidate, right candidate]. Missing boundary
-            # candidates retain neutral sentinel values and are separately
-            # identified by the two availability bits in context.
-            role_lanes = [lane_id, lane_id - 1, lane_id + 1]
-            for role_index, physical_lane_id in enumerate(role_lanes):
-                vals = metrics.get(physical_lane_id, {}) if 0 <= physical_lane_id < NUM_LANES else {}
-                base = role_index * SAFETY_FEATURES_PER_LANE
-                for j, (key, scale) in enumerate(zip(keys, scales)):
-                    value = vals.get(key, scale)
-                    value = float(value) if value is not None else scale
-                    if not np.isfinite(value):
-                        value = scale * 1.5
-                    safety[base + j] = np.clip(value / scale, -1.0, 1.5)
-                front_edm = interpret_edm_ttc(vals.get("front_ttc_buffer", float("inf")))
-                rear_edm = interpret_edm_ttc(vals.get("rear_ttc_buffer", float("inf")))
-                safety[base + 6] = front_edm["risk_score"]
-                safety[base + 7] = rear_edm["risk_score"]
-                safety[base + 8] = (
-                    1.0 if front_edm["severity"] < 0 else front_edm["severity"] / 3.0
-                )
-                safety[base + 9] = (
-                    1.0 if rear_edm["severity"] < 0 else rear_edm["severity"] / 3.0
-                )
-        except (AttributeError, KeyError, TypeError, ValueError, IndexError):
-            pass
-        return np.nan_to_num(np.concatenate([state,safety]),nan=0.0,posinf=1.0,neginf=-1.0).astype(np.float32)
+        # EDM is excluded from the Actor observation and supplied separately
+        # to the Critic as instantaneous TTC/GAP features.
+        return np.nan_to_num(state, nan=0.0, posinf=1.0, neginf=-1.0).astype(np.float32)
 
 
-
-
-    def _install_simulator_rate_traffic_maintenance(self):
+    def _install_simulator_rate_traffic_maintenance(self):    def _install_simulator_rate_traffic_maintenance(self):
         """Run population-boundary maintenance after every physical road update."""
         road = self.env.unwrapped.road
         if bool(getattr(road, "_arood_traffic_maintenance_wrapper_installed", False)):
@@ -1731,52 +1408,67 @@ class HighwaySimulator:
 
         for values in lane_ttc.values():
             values["min_ttc"] = min(values["front_ttc"], values["rear_ttc"])
-            # EDM warning/risk uses the conservative time-to-buffer boundary.
-            values["front_risk"] = ttc_to_risk(values["front_ttc_buffer"])
-            values["rear_risk"] = ttc_to_risk(values["rear_ttc_buffer"])
-            values["lane_risk"] = max(values["front_risk"], values["rear_risk"])
-
         return lane_ttc
 
-    def _edm_interpretation_by_lane(self, lane_metrics=None):
-        """Readable per-lane EDM output from the canonical neighbour/TTC snapshot."""
-        lane_metrics = self._min_ttc_by_lane() if lane_metrics is None else lane_metrics
-        result = {}
-        for lane_id, values in sorted(lane_metrics.items()):
-            # Preserve physical TTC for diagnostics; use time-to-buffer for EDM
-            # warning categories and risk scores.
-            front = interpret_edm_ttc(values.get("front_ttc_buffer", values.get("front_ttc", float("inf"))))
-            rear = interpret_edm_ttc(values.get("rear_ttc_buffer", values.get("rear_ttc", float("inf"))))
-            result[int(lane_id)] = {
-                "front_ttc_s": float(values.get("front_ttc", float("inf"))),
-                "rear_ttc_s": float(values.get("rear_ttc", float("inf"))),
-                "front_ttc_buffer_s": float(values.get("front_ttc_buffer", float("inf"))),
-                "rear_ttc_buffer_s": float(values.get("rear_ttc_buffer", float("inf"))),
-                "front_gap_m": float(values.get("front_gap", float("inf"))),
-                "rear_gap_m": float(values.get("rear_gap", float("inf"))),
-                "front_ttc_effective_gap_m": float(values.get("front_ttc_effective_gap", float("inf"))),
-                "rear_ttc_effective_gap_m": float(values.get("rear_ttc_effective_gap", float("inf"))),
-                "front_speed_mps": values.get("front_speed"),
-                "rear_speed_mps": values.get("rear_speed"),
-                "front_vehicle_id": values.get("front_vehicle_id"),
-                "rear_vehicle_id": values.get("rear_vehicle_id"),
-                "front_body_overlap": bool(values.get("front_body_overlap", False)),
-                "rear_body_overlap": bool(values.get("rear_body_overlap", False)),
-                "front_lane_corridor_overlap": bool(values.get("front_lane_corridor_overlap", False)),
-                "rear_lane_corridor_overlap": bool(values.get("rear_lane_corridor_overlap", False)),
-                "front_lateral_overlap": bool(values.get("front_lateral_overlap", False)),
-                "rear_lateral_overlap": bool(values.get("rear_lateral_overlap", False)),
-                "front_category": front["category"],
-                "rear_category": rear["category"],
-                "front_severity": int(front["severity"]),
-                "rear_severity": int(rear["severity"]),
-                "front_risk_score": float(front["risk_score"]),
-                "rear_risk_score": float(rear["risk_score"]),
-                "lane_max_risk_score": float(max(front["risk_score"], rear["risk_score"])),
-            }
+    def get_critic_edm_features(self):
+        """Normalized instantaneous TTC/GAP for current, left and right lanes.
+
+        Order per role: front TTC-to-5m-clearance, front physical bumper GAP,
+        rear TTC-to-5m-clearance, rear physical bumper GAP. Infinite TTC/GAP
+        maps to the configured maximum; no risk score or future rollout exists.
+        """
+        metrics = self._min_ttc_by_lane()
+        ego_lane = int(self.env.unwrapped.vehicle.lane_index[2])
+        features = []
+        for lane_id in (ego_lane, ego_lane - 1, ego_lane + 1):
+            values = metrics.get(lane_id, {})
+            for ttc_key, gap_key in (
+                ("front_ttc_buffer", "front_gap"),
+                ("rear_ttc_buffer", "rear_gap"),
+            ):
+                try:
+                    ttc = float(values.get(ttc_key, float("inf")))
+                except (TypeError, ValueError):
+                    ttc = float("inf")
+                try:
+                    gap = float(values.get(gap_key, float("inf")))
+                except (TypeError, ValueError):
+                    gap = float("inf")
+                if not np.isfinite(ttc):
+                    ttc = EDM_TTC_INPUT_MAX_S
+                if not np.isfinite(gap):
+                    gap = EDM_GAP_INPUT_MAX_M
+                features.extend((
+                    float(np.clip(ttc / EDM_TTC_INPUT_MAX_S, 0.0, 1.0)),
+                    float(np.clip(gap / EDM_GAP_INPUT_MAX_M, -1.0, 1.0)),
+                ))
+        result = np.asarray(features, dtype=np.float32)
+        if result.shape != (EDM_FEATURE_DIM,) or not np.all(np.isfinite(result)):
+            raise RuntimeError(f"Invalid instantaneous EDM feature vector: {result}")
         return result
 
-    # Legacy TTC/speed-matching intervention code removed; EDM remains diagnostic/state input only.
+    def _edm_interpretation_by_lane(self, lane_metrics=None):
+        """Raw TTC/GAP snapshot for diagnostics; no categories or risk scores."""
+        lane_metrics = self._min_ttc_by_lane() if lane_metrics is None else lane_metrics
+        return {
+            int(lane_id): {
+                "front_ttc_s": float(values.get("front_ttc", float("inf"))),
+                "rear_ttc_s": float(values.get("rear_ttc", float("inf"))),
+                "front_ttc_to_margin_s": float(values.get("front_ttc_buffer", float("inf"))),
+                "rear_ttc_to_margin_s": float(values.get("rear_ttc_buffer", float("inf"))),
+                "front_bumper_gap_m": float(values.get("front_gap", float("inf"))),
+                "rear_bumper_gap_m": float(values.get("rear_gap", float("inf"))),
+                "front_gap_after_margin_m": float(values.get("front_ttc_effective_gap", float("inf"))),
+                "rear_gap_after_margin_m": float(values.get("rear_ttc_effective_gap", float("inf"))),
+                "front_body_overlap": bool(values.get("front_body_overlap", False)),
+                "rear_body_overlap": bool(values.get("rear_body_overlap", False)),
+                "front_vehicle_id": values.get("front_vehicle_id"),
+                "rear_vehicle_id": values.get("rear_vehicle_id"),
+            }
+            for lane_id, values in sorted(lane_metrics.items())
+        }
+
+    # EDM provides instantaneous measurements only; it never predicts trajectories or intervenes.    # Legacy TTC/speed-matching intervention code removed; EDM remains diagnostic/state input only.
 
 
     def _snapshot_managed_traffic_slots(self):
@@ -2212,22 +1904,10 @@ class HighwaySimulator:
             "lateral_transition_mode": "instantaneous",
             "longitudinal_motion_mode": "normal_acceleration_dynamics",
             "observed_acceleration": (speed_after - speed_before) / policy_dt,
-            "ttc_risk_diagnostics": ttc_risk_diagnostics,
-            "ttc_risk_aggregation": "max_front_rear",
-            "ttc_risk_thresholds_s": {
-                "comfortable": float(EDM_TTC_COMFORTABLE_S),
-                "danger": float(EDM_TTC_DANGER_S),
-                "critical": float(EDM_TTC_CRITICAL_S),
-            },
             "edm_pre_action_by_lane": edm_pre_action,
             "edm_pre_env_step_by_lane": edm_pre_env_step,
             "edm_post_step_by_lane": edm_post_step,
-            "edm_thresholds_s": {
-                "comfortable_min": float(EDM_TTC_COMFORTABLE_S),
-                "danger": float(EDM_TTC_DANGER_S),
-                "critical": float(EDM_TTC_CRITICAL_S),
-            },
-            "edm_interpretation_only": True,
+            "edm_role": "instantaneous_ttc_and_bumper_gap_features_for_critic_only",
             "edm_action_intervention": False,
             "lane_before_action": int(lane_before_action),
             "vehicles_pre_env_step": vehicles_pre_env_step,
@@ -3505,7 +3185,6 @@ def construct_reward(reward_specification, embedding_model=None):
         behavior_description, safety_violation, action, lane_deviation, offroad,
         min_ttc, lane_change_allowed=True, ego_speed=0.0, ego_speed_change_per_step_mps=0.0,
         safety_info=None, policy_sampled_action=None, reward_diagnostics=None,
-        edm_warning_score=0.0, edm_warning_details=None,
     ):
         max_acceleration_per_step = float(
             reward_specification.get(
@@ -3543,29 +3222,16 @@ def construct_reward(reward_specification, embedding_model=None):
             if bool(safety_violation) else 0.0
         )
 
-        edm_warning_score = float(np.clip(
-            float(edm_warning_score) if EDM_REWARD_ENABLED else 0.0, 0.0, 1.0
-        ))
-        edm_warning_weight = max(
-            0.0, float(reward_specification.get("edm_reward_weight", EDM_REWARD_WEIGHT))
-        )
-        edm_warning_penalty = edm_warning_weight * edm_warning_score
-
-        reward = float(acceleration_reward - edm_warning_penalty - collision_penalty)
+        reward = float(acceleration_reward - collision_penalty)
         if reward_diagnostics is not None:
             reward_diagnostics.update({
-                "reward_objective": "acceleration_reward_at_or_below_speed_limit_minus_unchanged_collision_penalty",
+                "reward_objective": "acceleration_reward_plus_actual_collision_penalty_only",
                 "acceleration_reward": acceleration_reward,
                 "ego_speed_change_per_step_mps": raw_speed_change,
                 "clipped_speed_change_per_step_mps": clipped_speed_change,
                 "max_acceleration_per_step_mps": float(max_acceleration_per_step),
                 "speed_reward": 0.0,
                 "speed_reward_enabled": False,
-                "edm_warning_enabled": bool(EDM_REWARD_ENABLED),
-                "edm_warning_score": edm_warning_score,
-                "edm_warning_weight": edm_warning_weight,
-                "edm_warning_penalty": edm_warning_penalty,
-                "edm_warning_details": edm_warning_details or {},
                 "ego_speed_mps": current_speed,
                 "speed_limit_mps": speed_limit,
                 "safety_penalty": float(collision_penalty),
@@ -3579,8 +3245,6 @@ def construct_reward(reward_specification, embedding_model=None):
             f"speed_change_per_step={raw_speed_change:+.4f}m/s "
             f"(clipped={clipped_speed_change:+.4f}), "
             f"speed_reward=DISABLED, "
-            f"edm_warning={edm_warning_score:.3f}*{edm_warning_weight:.2f}="
-            f"{edm_warning_penalty:.3f}, "
             f"speed={current_speed:.3f}m/s, limit={speed_limit:.3f}m/s, "
             f"collision_penalty={collision_penalty:.3f}, total={reward:+.3f}"
         )
@@ -3602,8 +3266,6 @@ def compute_reward(
     safety_info=None,
     policy_sampled_action=None,
     reward_diagnostics=None,
-    edm_warning_score=0.0,
-    edm_warning_details=None,
 ):
     return reward_function(
         behavior_description=behavior_description,
@@ -3618,8 +3280,6 @@ def compute_reward(
         safety_info=safety_info,
         policy_sampled_action=policy_sampled_action,
         reward_diagnostics=reward_diagnostics,
-        edm_warning_score=edm_warning_score,
-        edm_warning_details=edm_warning_details,
     )
 
 
@@ -3628,6 +3288,7 @@ def compute_reward(
 # 21. RL Policy Update
 # ============================================================
 def update_policy(policy, state, action, reward, next_state, done,
+                  edm_features=None, next_edm_features=None,
                   valid_action_mask=None, terminated=None, pre_tanh_accel=None,
                   selected_target_lane=-1, valid_target_lane_mask=None,
                   current_lane_id=None, lane_action_overridden=False,
@@ -3642,9 +3303,9 @@ def update_policy(policy, state, action, reward, next_state, done,
     """
     st, nst = to_tensor(state).reshape(1, -1), to_tensor(next_state).reshape(1, -1)
     act, rew = to_tensor(action).reshape(1, -1), to_tensor([reward])
-    value = policy.value(st)
+    value = policy.value(st, edm_features)
     with torch.no_grad():
-        nv = policy.value(nst)
+        nv = policy.value(nst, next_edm_features)
         terminal = bool(done) if terminated is None else bool(terminated)
         target = rew if terminal else rew + GAMMA * nv
     adv = target - value
@@ -3763,10 +3424,8 @@ def build_fixed_reward_function():
             "Below the speed limit, reward positive speed change per policy step using "
             "(abs(delta_v_step) + delta_v_step) / (2 * max_acceleration_per_step). "
             "At or above the speed limit, acceleration_reward is exactly 1.0. "
-            "The separate speed reward remains disabled. Apply a continuous action-conditioned "
-            "EDM TTC warning cost over one policy interval, plus the configured terminal collision "
-            "penalty. EDM does not veto or rewrite actions. Do not include a progress reward or "
-            "lane-change reward/cost. Do not add an off-road reward penalty."
+            "Apply only the configured penalty for an actual collision. No EDM-derived "
+            "reward, progress reward, lane-change reward/cost, or off-road reward."
         ),
         "safety_weight": INITIAL_COLLISION_PENALTY,
         "max_acceleration_per_step_mps": float(MAX_ACCELERATION_PER_STEP_MPS),
@@ -3774,10 +3433,6 @@ def build_fixed_reward_function():
         "speed_limit_mps": float(SPEED_LIMIT),
         "speed_reward_enabled": False,
         "collision_terminates_episode": True,
-        "edm_reward_enabled": bool(EDM_REWARD_ENABLED),
-        "edm_reward_weight": float(EDM_REWARD_WEIGHT),
-        "edm_reward_horizon_s": float(EDM_REWARD_HORIZON_S),
-        "edm_reward_semantics": "action_conditioned_continuous_TTC_risk_proxy_not_calibrated_collision_probability",
     }
     reward_function = construct_reward(reward_specification)
     # The closure and evaluator share this mutable specification. Only the
@@ -3861,6 +3516,7 @@ def collect_reference_rollouts(simulator, policy, reward_function):
             record_action_mask(action_mask_counters, valid_mask)
             target_lane_mask = np.asarray(simulator.get_valid_target_lane_mask(), dtype=bool)
             current_lane_id = int(simulator.env.unwrapped.vehicle.lane_index[2])
+            critic_edm_features = simulator.get_critic_edm_features()
             sampled_action, policy_aux = policy.act(
                 state, deterministic=False, valid_action_mask=valid_mask,
                 valid_target_lane_mask=target_lane_mask,
@@ -4325,21 +3981,19 @@ def train_pure_rl(simulator, policy):
             "speed_limit_mps": SPEED_LIMIT,
             "max_physical_acceleration_mps2": MAX_PHYSICAL_ACCELERATION,
             "ttc_clearance_margin_m": TTC_CLEARANCE_MARGIN_M,
+            "critic_edm_features": ["front_ttc_to_5m_clearance", "front_bumper_gap", "rear_ttc_to_5m_clearance", "rear_bumper_gap"],
+            "critic_edm_lane_roles": ["current", "left", "right"],
+            "critic_edm_feature_dim": EDM_FEATURE_DIM,
+            "actor_receives_edm_features": False,
+            "edm_prediction_horizon_enabled": False,
+            "edm_reward_shaping_enabled": False,
             "ttc_semantics": "physical_ttc_separate_from_time_to_clearance_buffer",
             "nearest_lane_neighbour_selection": "oriented_body_lane_corridor_then_minimum_bumper_clearance",
             "max_acceleration_per_step_mps": MAX_ACCELERATION_PER_STEP_MPS,
             "acceleration_reward_formula": "(abs(delta_v_step) + delta_v_step) / (2 * max_acceleration_per_step)",
             "speed_reward_formula": "(current_speed - speed_limit) / speed_limit",
             "lane_change_processing_steps": LANE_CHANGE_PROCESSING_STEPS,
-            "edm_ttc_thresholds_s": {
-                "comfortable": EDM_TTC_COMFORTABLE_S,
-                "danger": EDM_TTC_DANGER_S,
-                "critical": EDM_TTC_CRITICAL_S,
-            },
-            "edm_high_risk_score_threshold": EDM_HIGH_RISK_SCORE_THRESHOLD,
-            "edm_exposure_metric_snapshot": "edm_pre_action_by_lane",
-            "edm_warning_ttc_basis": "time_to_5m_clearance_buffer",
-            "collision_counting": "one_event_per_uninterrupted_collision_contact_episode",
+            "collision_counting":            "collision_counting": "one_event_per_uninterrupted_collision_contact_episode",
             "collision_contact_steps_logged_separately": True,
             "edm_is_interpretation_only": True,
             "edm_action_intervention": False,
@@ -4385,8 +4039,6 @@ def train_pure_rl(simulator, policy):
         episode_critic_losses = []
         episode_speed_samples = []
         lane_occupancy_counts = {lane: 0 for lane in range(NUM_LANES)}
-        edm_current_lane_risk_sum = 0.0
-        edm_current_lane_high_risk_steps = 0
         lane_change_processing_step_count = 0
         no_safe_target_lane_steps = 0
         valid_target_lane_steps = 0
@@ -4465,25 +4117,13 @@ def train_pure_rl(simulator, policy):
                 safety_info=safety_info,
             )
             next_state = np.asarray(next_state, dtype=np.float32)
+            next_critic_edm_features = simulator.get_critic_edm_features()
             executed_action = np.asarray(
                 step_info.get("executed_policy_action", policy_action),
                 dtype=np.float32,
             ).reshape(-1)
 
-            # EDM exposure is measured from the exact pre-action snapshot
-            # captured by simulator.step(), not from a later reconstructed
-            # scene. The lane is the ego's lane before the policy decision.
-            pre_action_edm = step_info.get("edm_pre_action_by_lane", {}) if isinstance(step_info, dict) else {}
-            pre_action_lane_edm = pre_action_edm.get(current_lane_id, pre_action_edm.get(str(current_lane_id), {}))
-            current_lane_risk = float(pre_action_lane_edm.get("lane_max_risk_score", 0.0))
-            if not np.isfinite(current_lane_risk):
-                current_lane_risk = 1.0
-            current_lane_risk = float(np.clip(current_lane_risk, 0.0, 1.0))
-            edm_current_lane_risk_sum += current_lane_risk
-            if current_lane_risk >= EDM_HIGH_RISK_SCORE_THRESHOLD:
-                edm_current_lane_high_risk_steps += 1
-
-            min_ttc, closing_vehicle_count = calculate_min_ttc(simulator)
+            min_ttc, closing_vehicle_count = calculate_min_ttc(simulator)            min_ttc, closing_vehicle_count = calculate_min_ttc(simulator)
             collision_occurred = bool(
                 step_info.get("collision", step_info.get("safety_violation", False))
                 if isinstance(step_info, dict) else step_info
@@ -4528,32 +4168,7 @@ def train_pure_rl(simulator, policy):
             current_speed_mps = float(simulator.env.unwrapped.vehicle.speed)
             episode_speed_samples.append(current_speed_mps)
 
-            # Use the exact pre-action EDM snapshot captured inside simulator.step().
-            # KEEP evaluates current-lane front/rear interactions; CHANGE evaluates
-            # front/rear lane-entry interactions in the selected target lane.
-            # This only changes reward; it never vetoes or rewrites the policy action.
-            pre_action_edm = (
-                step_info.get("edm_pre_action_by_lane", {})
-                if isinstance(step_info, dict) else {}
-            )
-            reward_lane_id = int(
-                step_info.get("accepted_target_lane_id", current_lane_id)
-                if int(round(float(executed_action[1]))) == 1
-                else current_lane_id
-            )
-            edm_warning_details = estimate_edm_action_warning(
-                edm_pre_action_by_lane=pre_action_edm,
-                current_lane_id=current_lane_id,
-                selected_target_lane=reward_lane_id,
-                lane_change_action=executed_action[1],
-                ego_speed_mps=previous_speed_mps,
-                normalized_acceleration=executed_action[0],
-                horizon_s=EDM_REWARD_HORIZON_S,
-            )
-            edm_warning_score = float(edm_warning_details["warning_score"])
-            reward_components["edm_warning"] = edm_warning_details
-
-            reward = compute_reward(
+            reward = compute_reward(            reward = compute_reward(
                 reward_function=reward_function,
                 behavior_description="",
                 safety_violation=safety_violation,
@@ -4569,8 +4184,6 @@ def train_pure_rl(simulator, policy):
                 safety_info=reward_safety_info,
                 policy_sampled_action=sampled_action,
                 reward_diagnostics=reward_components,
-                edm_warning_score=edm_warning_score,
-                edm_warning_details=edm_warning_details,
             )
 
             # Suspend the complete reward for exactly one policy transition
@@ -4618,6 +4231,8 @@ def train_pure_rl(simulator, policy):
                 reward=reward,
                 next_state=next_state,
                 done=done,
+                edm_features=critic_edm_features,
+                next_edm_features=next_critic_edm_features,
                 valid_action_mask=valid_mask,
                 terminated=bool(step_info.get("terminated", False) or offroad)
                     if isinstance(step_info, dict) else bool(done or offroad),
@@ -4783,11 +4398,6 @@ def train_pure_rl(simulator, policy):
                 str(lane): float(count / max(episode_steps, 1))
                 for lane, count in lane_occupancy_counts.items()
             },
-            "mean_current_lane_edm_risk": float(edm_current_lane_risk_sum / max(episode_steps, 1)),
-            "current_lane_high_risk_exposure_steps": int(edm_current_lane_high_risk_steps),
-            "current_lane_high_risk_exposure_fraction": float(edm_current_lane_high_risk_steps / max(episode_steps, 1)),
-            "edm_high_risk_score_threshold": float(EDM_HIGH_RISK_SCORE_THRESHOLD),
-            "edm_exposure_snapshot": "edm_pre_action_by_lane",
             "lane_change_processing_steps": int(lane_change_processing_step_count),
         }
         episode_metric_history.append(episode_metrics)
@@ -5024,7 +4634,7 @@ def main():
     print(f"Startup: NORMAL ONLINE RL TRAINING ({NUM_ONLINE_EPISODES} episodes); no diagnostic-only phase.")
     print(f"Dimensions: state={STATE_DIM}, policy_action={POLICY_ACTION_DIM} [KEEP/CHANGE], execution_action={ACTION_DIM}.")
     print("Control: hierarchical stochastic policy selects KEEP/CHANGE, then a physically valid adjacent target, then conditional acceleration.")
-    print(f"EDM reward: enabled={EDM_REWARD_ENABLED}, TTC warning weight={EDM_REWARD_WEIGHT:.3f}, horizon={EDM_HORIZON_POLICY_STEPS} policy step(s) / {EDM_REWARD_HORIZON_S:.3f}s; no action veto or acceleration override.")
+    print(f"EDM: instantaneous TTC/GAP only; Critic feature dimension={EDM_FEATURE_DIM}; no horizon, reward shaping, or action intervention.")
     print("Episode termination: ENABLED on the first collision; no post-collision overlap transitions.")
     print("Lane-change processing: DISABLED (no reward suspension after lane changes).")
     print(f"CSV metrics: {METRICS_CSV_PATH}")
@@ -5057,7 +4667,7 @@ def main():
     )
     print(f"Episode evaluator enabled: {ENABLE_EPISODE_EVALUATOR} (fixed reward baseline).")
     #print(f"Diagnostics: {DIAGNOSTIC_LOG_PATH}; trajectories: {EPISODE_TRAJECTORY_PATH if TRAJECTORY_RECORDING_ENABLED else 'disabled'}.")
-    print(f"[REWARD CONFIG] acceleration reward + EDM TTC warning cost (weight={EDM_REWARD_WEIGHT:.2f}) + terminal collision penalty; speed utility remains an observation; collision terminates episode.")
+    print("[REWARD CONFIG] existing acceleration reward + actual terminal collision penalty; no EDM-derived reward terms.")
     simulator = create_highway_simulator()
     print("[ONLINE RL] Starting policy initialization and Actor-Critic training directly.")
     policy = create_initial_policy(
