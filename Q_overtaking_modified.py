@@ -974,14 +974,12 @@ def lane_policy_diagnostic(policy, state, valid_action_mask, sampled_action, pha
 # ============================================================
 
 
-class HighwaySimulator:class HighwaySimulator:
-    """Highway-env wrapper with ADT background traffic and six ego observation slots.
+class HighwaySimulator:
+    """Highway-env wrapper with ADT traffic and six ego observation slots.
 
-    The simulator maintains a distributed dynamic traffic population. The
-    policy observes only the nearest front/rear vehicle in each of three lanes.
-    State includes vehicle rows, ego-relative context, six physical lane
-    metrics plus four EDM interpretation features for each of the roles
-    [current, left, right]. State dimension is derived from configuration.
+    The Actor observation contains vehicle kinematics and ego-relative context.
+    Instantaneous TTC/GAP features for current, left and right lane roles are
+    exposed separately through get_critic_edm_features() for the Critic only.
     """
 
     def __init__(self, state_dim=STATE_DIM, action_dim=ACTION_DIM,
@@ -1087,7 +1085,7 @@ class HighwaySimulator:class HighwaySimulator:
         return np.nan_to_num(state, nan=0.0, posinf=1.0, neginf=-1.0).astype(np.float32)
 
 
-    def _install_simulator_rate_traffic_maintenance(self):    def _install_simulator_rate_traffic_maintenance(self):
+    def _install_simulator_rate_traffic_maintenance(self):
         """Run population-boundary maintenance after every physical road update."""
         road = self.env.unwrapped.road
         if bool(getattr(road, "_arood_traffic_maintenance_wrapper_installed", False)):
@@ -3175,8 +3173,8 @@ def construct_reward(reward_specification, embedding_model=None):
         else:
             acceleration_reward = float((abs(clipped_speed_change) + clipped_speed_change) / (2.0 * max_acceleration_per_step))
 
-        # Speed utility remains an EDM observation for the policy; it is not
-        # added as a second scalar reward in this first controlled experiment.
+        # A separate speed reward remains disabled; acceleration feedback is
+        # retained as the local efficiency signal.
         speed_reward = 0.0
 
         # Use the configured terminal collision penalty only on an actual
