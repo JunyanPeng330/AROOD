@@ -327,6 +327,21 @@ def _vehicle_overlaps_lane_corridor(road, vehicle, lane_index):
         lane = road.network.get_lane(lane_index)
         position = np.asarray(vehicle.position, dtype=float)
         longitudinal, lateral = lane.local_coordinates(position)
+        lane_heading = float(lane.heading_at(longitudinal))
+        lane_width = float(lane.width_at(longitudinal))
+        length, width = _vehicle_length_width(vehicle)
+        heading = float(getattr(vehicle, "heading", lane_heading))
+        relative_heading = heading - lane_heading
+        lateral_half_extent = (
+            0.5 * width * abs(math.cos(relative_heading))
+            + 0.5 * length * abs(math.sin(relative_heading))
+        )
+        return bool(
+            np.isfinite(lateral) and np.isfinite(lane_width)
+            and abs(float(lateral)) <= 0.5 * lane_width + lateral_half_extent
+        )
+    except (AttributeError, TypeError, ValueError, IndexError, KeyError):
+        return False
 
 
 # ============================================================
